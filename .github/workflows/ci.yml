@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # Tier 1: parses committed .csg fixtures and checks geometry against
+  # committed reference metrics. Needs no OpenSCAD binary, so it runs anywhere.
+  fixtures:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --all-extras --dev
+      - run: uv run pytest -q -m "not needs_openscad"
+
+  # Tier 2: differential comparison against OpenSCAD itself. Ubuntu's packaged
+  # OpenSCAD is older than the version the fixtures were generated with, so the
+  # .csg determinism check may legitimately differ; it is informational only.
+  differential:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: Install OpenSCAD
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openscad
+          openscad --version
+      - run: uv sync --all-extras --dev
+      - run: uv run pytest -q

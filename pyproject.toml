@@ -1,0 +1,46 @@
+[project]
+name = "scad123d"
+version = "0.1.0"
+description = "Import OpenSCAD files as native build123d BRep geometry, via OpenSCAD's flattened CSG export"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Evan Jones", email = "evan_t_jones@mac.com" }]
+keywords = ["openscad", "build123d", "cad", "3d", "step", "brep", "csg", "bosl2"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Manufacturing",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = [
+  "build123d>=0.11.1",
+  "solid123d>=0.1.0",
+  "lark>=1.1.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/etjones/scad123d"
+Repository = "https://github.com/etjones/scad123d"
+Issues = "https://github.com/etjones/scad123d/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "watchfiles>=0.21",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scad123d"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "needs_openscad: requires the OpenSCAD binary (skipped when absent)",
+]

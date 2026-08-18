@@ -1,0 +1,37 @@
+// Grammar for OpenSCAD's flattened .csg export format.
+//
+// This is NOT the OpenSCAD language. `openscad -o out.csg in.scad` runs the
+// full language and emits this: a tree of geometry nodes with all variables,
+// modules, functions, loops, conditionals and includes already resolved.
+// There are no identifiers, no expressions and no scoping here -- only
+// literal-valued calls and nesting.
+
+start: node*
+
+node: MODIFIER? NAME "(" [arglist] ")" body
+
+body: "{" node* "}"    -> block
+    | ";"              -> leaf
+
+arglist: arg ("," arg)* ","?
+arg: NAME "=" value    -> named
+   | value             -> positional
+
+?value: NUMBER         -> number
+      | STRING         -> string
+      | "true"         -> true
+      | "false"        -> false
+      | "undef"        -> undef
+      | vector
+
+vector: "[" [value ("," value)* ","?] "]"
+
+MODIFIER: "%" | "#" | "!"
+// `$fn` etc. are ordinary argument names in the CSG output.
+NAME: /\$?[a-zA-Z_][a-zA-Z_0-9]*/
+NUMBER: /-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/
+STRING: /"(?:[^"\\]|\\.)*"/
+
+COMMENT: "//" /[^\n]*/
+%ignore COMMENT
+%ignore /\s+/
