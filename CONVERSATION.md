@@ -345,3 +345,47 @@ mesh volume. That flips when a curved feature is *subtracted* — an exact
 cylindrical hole removes more material than a faceted one. Replaced with a
 direction-agnostic convergence assertion (raising $fn must move OpenSCAD's
 volume toward ours).
+
+---
+
+## 2026-08-18 — Committed; patched solid123d's minkowski() upstream
+
+### User
+
+> Yes, commit this and do rung 2
+> [Request interrupted by user]
+> Let's not do rung 2 yet, but let's commit. Also, can you tell me how
+> solid123d handles hull & minkowski? It seems like there could be a problem
+> with those calls that our rung 1 solution would resolve for most use cases
+
+### Assistant
+
+Committed scad123d's v1 scaffold (`fb5b59d`).
+
+Checked `src/solid123d/booleans.py`: `hull()` and `minkowski()` both raised
+`NotImplementedError` **unconditionally**, regardless of arguments -- so
+`minkowski()(box, sphere(3))`, the single most common real-world Minkowski
+call, hard-failed for every SolidPython-bridge user. Confirmed this was a
+better fit to fix upstream than to route around: the analytic-offset trick
+needs no OpenSCAD binary (pure `build123d.offset`), so it's a zero-dependency,
+strictly backward-compatible addition to solid123d itself.
+
+Patched `~/Dropbox/Projects/3D_geometry/scad_2_build123d` directly (with the
+user's go-ahead): `minkowski()` now detects a bare, untransformed
+`sphere()`/`circle()` at the origin as either argument (`BRepAdaptor_Surface`/
+`BRepAdaptor_Curve`, checking `GeomType` and that the center is within 1e-6 of
+the origin) and computes the sum as `offset(A, r)`. Verified exact against the
+3D and 2D Steiner formulas, commutative in either argument order, and correct
+on `minkowski(sphere(2), sphere(3))` -> radius-5 sphere. Everything else still
+raises `NotImplementedError` exactly as before. Added 6 tests to
+`tests/test_solid123d.py`; all 50 pass. Committed as `5ba9785`, with a
+CONVERSATION.md entry in that repo per its own house convention (`9037aa0`).
+
+**Note for later**: this fix lives in the local solid123d repo, not yet
+released. scad123d depends on `solid123d>=0.1.0` from PyPI but does not
+actually call `solid123d.minkowski()` -- scad123d's own rung 1
+(`src/scad123d/minkowski.py`) is an independent implementation that the CSG
+walker (`build.py`) calls directly, so scad123d is unaffected either way.
+The solid123d fix only reaches solid123d's own (SolidPython-bridge) users once
+it's released as a new version to PyPI -- that's a separate decision for the
+user to make, not bundled into this session.
