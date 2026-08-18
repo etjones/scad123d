@@ -48,10 +48,13 @@ def test_require_openscad_reports_the_bad_override_path(monkeypatch, tmp_path):
     # Plain substring containment, not pytest.raises(match=...): that's a
     # regex match, and a real filesystem path contains characters (Windows
     # backslashes especially) that are regex metacharacters/escapes, so a
-    # path-shaped string is exactly the wrong thing to hand it.
+    # path-shaped string is exactly the wrong thing to hand it. And it's
+    # repr(bad_path) that must appear, not bad_path itself: the source embeds
+    # the path via !r, and repr() doubles each backslash, so the raw path is
+    # never literally a substring of the message on Windows.
     with pytest.raises(osc.OpenSCADNotFoundError) as exc_info:
         osc.require_openscad()
-    assert bad_path in str(exc_info.value)
+    assert repr(bad_path) in str(exc_info.value)
 
 
 def test_require_openscad_generic_message_with_no_override(monkeypatch):
