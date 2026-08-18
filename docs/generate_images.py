@@ -85,6 +85,33 @@ def hull_analytic() -> None:
     export_gltf(ok, str(MODELS / "hull_ok.glb"))
 
 
+def boss_stl_vs_step() -> None:
+    """A cylinder emerging from a cube: OpenSCAD's own STL export (a coarse
+    $fn=48 facet approximation) next to scad123d's STEP-equivalent geometry
+    (an exact cylindrical face). Screenshot both with viewer.html's
+    edges=1 -- it draws a line at every dihedral angle over ~5 degrees, which
+    reveals every one of the STL's ~48 facet boundaries but only the real
+    edges (cube edges, the two circular rims) on the analytic version, since
+    build123d's fine tessellation keeps neighboring facets nearly coplanar.
+    """
+    source = (
+        "union() {\n"
+        "    cube([20, 20, 10], center = true);\n"
+        "    translate([0, 0, 5]) cylinder(h = 8, r = 6, $fn = 48, center = false);\n"
+        "}\n"
+    )
+    scad = write("boss.scad", source)
+
+    stl_path = export_mesh(source, suffix=".stl")
+    try:
+        shutil.copy(stl_path, MODELS / "boss_openscad.stl")
+    finally:
+        shutil.rmtree(stl_path.parent, ignore_errors=True)
+
+    part = scad123d.import_scad(scad)
+    export_gltf(part, str(MODELS / "boss_step.glb"))
+
+
 def mcad_gear() -> None:
     """An MCAD involute gear -- a second library, to show this isn't
     BOSL2-specific.
@@ -117,6 +144,7 @@ def hull_fallback() -> None:
 if __name__ == "__main__":
     bosl2_tube_filleted()
     minkowski_before_and_after()
+    boss_stl_vs_step()
     mcad_gear()
     hull_analytic()
     hull_fallback()

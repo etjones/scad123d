@@ -20,6 +20,7 @@
 <script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
 const params = new URLSearchParams(window.location.search);
 const modelUrl = params.get("model") || "model.glb";
@@ -30,6 +31,18 @@ const elevation = parseFloat(params.get("el") || "28");  // degrees above horizo
 const zoom = parseFloat(params.get("zoom") || "1.0");
 const bg = params.get("bg") || "#ffffff";
 const color = params.get("color") || "#c9862f"; // a warm bronze-ish default, override per shot
+
+// Edge highlighting: draws a line wherever two adjacent triangles meet at more
+// than edge_angle degrees. A finely tessellated curved BREP face (scad123d's
+// glTF export) has near-zero dihedral angle between neighboring facets, so
+// only its true edges cross the threshold. A coarse OpenSCAD STL facets a
+// curve as flat panels meeting at real, larger angles, so *every* facet
+// boundary crosses the same threshold -- the same detector reveals two very
+// different stories depending only on how fine the input mesh is.
+const showEdges = params.get("edges") === "1";
+const edgeAngleDeg = parseFloat(params.get("edge_angle") || "5");
+const edgeColor = params.get("edge_color") || "#111111";
+const isSTL = /\.stl($|\?)/i.test(modelUrl);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(bg);
@@ -44,7 +57,8 @@ document.body.appendChild(renderer.domElement);
 
 // near/far are set once the model's real scale is known -- build123d's
 // export_gltf follows glTF's meter convention, so a 20mm CAD part becomes
-// 0.02 scene units; a fixed near=0.1 clips it entirely.
+// 0.02 scene units; a fixed near=0.1 clips it entirely. STL has no such
+// convention (units are whatever the exporter used, unconverted).
 const camera = new THREE.PerspectiveCamera(28, W / H, 0.001, 10000);
 
 const hemi = new THREE.HemisphereLight(0xffffff, 0xcccccc, 0.7);
@@ -69,25 +83,39 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-const loader = new GLTFLoader();
-loader.load(modelUrl, (gltf) => {
-  const model = gltf.scene;
+function addEdgesTo(mesh) {
+  const edgesGeom = new THREE.EdgesGeometry(mesh.geometry, edgeAngleDeg);
+  const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(edgeColor) });
+  const lines = new THREE.LineSegments(edgesGeom, lineMat);
+  mesh.add(lines);
+}
 
+function finish(model) {
   model.traverse((child) => {
-    if (child.isMesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
-      if (params.get("recolor") === "1") {
-        child.material = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(color),
-          metalness: 0.15,
-          roughness: 0.45,
-        });
-      } else {
-        child.material.metalness = 0.15;
-        child.material.roughness = 0.5;
-      }
+    if (!child.isMesh) return;
+    child.castShadow = true;
+    child.receiveShadow = true;
+    if (isSTL) {
+      // STLLoader gives non-indexed, per-triangle-normal geometry -- flat
+      // shading is not a style choice here, it's what makes each real facet
+      // of a coarse mesh visible as a distinct flat panel under lighting.
+      child.material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color),
+        metalness: 0.1,
+        roughness: 0.55,
+        flatShading: true,
+      });
+    } else if (params.get("recolor") === "1") {
+      child.material = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color),
+        metalness: 0.15,
+        roughness: 0.45,
+      });
+    } else {
+      child.material.metalness = 0.15;
+      child.material.roughness = 0.5;
     }
+    if (showEdges) addEdgesTo(child);
   });
 
   const box = new THREE.Box3().setFromObject(model);
@@ -123,10 +151,28 @@ loader.load(modelUrl, (gltf) => {
   document.getElementById("note").textContent = "ready";
   document.title = "ready";
   window.__debug = { scene, camera, model, size, center, distance, box };
-}, undefined, (err) => {
+}
+
+function onError(err) {
   document.getElementById("note").textContent = "ERROR: " + err.message;
   console.error(err);
-});
+}
+
+if (isSTL) {
+  new STLLoader().load(modelUrl, (geometry) => {
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial());
+    const group = new THREE.Group();
+    group.add(mesh);
+    // STL has no up-axis convention -- it's raw Z-up OpenSCAD coordinates.
+    // glTF is always Y-up, and build123d's export_gltf bakes in exactly this
+    // -90 deg X rotation to convert; apply the same one here so an STL and a
+    // glTF of the same model land in the same orientation in this viewer.
+    group.rotateX(-Math.PI / 2);
+    finish(group);
+  }, undefined, onError);
+} else {
+  new GLTFLoader().load(modelUrl, (gltf) => finish(gltf.scene), undefined, onError);
+}
 </script>
 </body>
 </html>

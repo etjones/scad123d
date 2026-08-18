@@ -39,8 +39,7 @@ mesh, e.g. for 3D printing.
 scad123d bridges the two: it hands your `.scad` file to the real OpenSCAD
 program (so every language feature, every library, works exactly as it
 always has), and rebuilds the result as native build123d geometry instead of
-a mesh. You don't rewrite anything — you get a better kernel underneath code
-you already have.
+a mesh. You get a better kernel underneath code you already have.
 
 ## What that buys you
 
@@ -49,6 +48,19 @@ you export [STEP](https://en.wikipedia.org/wiki/ISO_10303) directly from an
 OpenSCAD design — the standard interchange format nearly every CAD program
 reads as an actual solid body, with exact curves, not a pile of triangles
 pretending to be one.
+
+Here's the same model — a cylinder rising out of a cube — each way, with every
+real edge of the shape drawn on top so the difference is easy to spot.
+OpenSCAD's STL approximates the cylinder as 48 flat panels, and every one of
+those panel boundaries is a real edge in the mesh:
+
+<img src="docs/images/stl_vs_step_stl.png" width="450" alt="OpenSCAD's STL export of a cylinder on a cube, with every facet edge highlighted -- dozens of visible lines around the cylinder">
+
+scad123d's version has exactly the edges the shape actually has: the cube's
+12 edges, the cylinder's rim, and the circle where it meets the cube. The
+cylinder itself is one continuous curved face, not hundreds of triangles:
+
+<img src="docs/images/stl_vs_step_step.png" width="450" alt="scad123d's STEP-equivalent export of the same model, with only the true edges highlighted -- a clean circle at top and bottom, no facet lines">
 
 **Fillets that behave.** Round a corner on a mesh and you round the facets,
 not the surface — you get a many-sided lump, not a smooth radius. Because
@@ -63,7 +75,7 @@ part = fillet(part.edges().group_by(Axis.Z)[-1], radius=2)
 ```
 
 Here's a [BOSL2](https://github.com/BelfrySCAD/BOSL2) `tube()` imported and
-then filleted — a smooth, continuous rounded rim, not a faceted approximation
+then filleted — a smooth, continuous rounded rim, instead of a faceted approximation
 of one:
 
 <img src="docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim">
@@ -74,23 +86,26 @@ operations as you throw at them.
 
 **It mixes freely with regular build123d code.** The imported part is a plain
 `Shape` — select faces on it, boolean it against something you built natively
-in build123d, sweep along one of its edges. There's no special "imported
-OpenSCAD object" type to work around.
+in build123d, sweep along one of its edges. 
 
 ## Installing
 
-scad123d isn't on PyPI yet — install it directly from GitHub:
+```bash
+pip install scad123d
+```
+
+or
 
 ```bash
-pip install git+https://github.com/etjones/scad123d.git
+uv add scad123d
 ```
 
 You also need the [OpenSCAD](https://openscad.org/downloads.html) program
 itself installed — scad123d asks the real OpenSCAD to evaluate your file
 (so every language feature and every library works), then converts the
 result. It looks for OpenSCAD on your `$PATH` and in the usual install
-locations automatically; set `$SCAD123D_OPENSCAD` to point at it directly if
-it's somewhere unusual.
+locations automatically. If your OpenSCAD executable lives somewhere else, 
+set `$SCAD123D_OPENSCAD` to point at it directly.
 
 ## Using libraries: BOSL2 and MCAD
 
@@ -140,7 +155,7 @@ scad123d recognizes this specific, very common pattern and computes it
 directly as an exact geometric offset instead. The result isn't just cleaner —
 it's **more accurate than OpenSCAD's own answer**, and it stays a real curved
 surface you can select and fillet further, rather than an approximation
-that's baked in for good.
+that's baked in for good. It's often several times faster, too.
 
 Same `minkowski()` call, OpenSCAD's own result on the left, scad123d's on the
 right:
