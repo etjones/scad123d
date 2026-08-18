@@ -27,8 +27,8 @@ from .openscad import export_csg, find_openscad, openscad_version
 from .parser import parse_csg, parse_csg_file
 
 __all__ = [
-    "CsgNode",
     "DEFAULT_FACET_THRESHOLD",
+    "CsgNode",
     "OpenSCADNotFoundError",
     "OpenSCADRunError",
     "Scad123dError",
