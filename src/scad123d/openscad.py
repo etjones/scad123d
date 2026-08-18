@@ -33,14 +33,15 @@ _LINUX_CANDIDATES = (
     "/usr/bin/openscad",
 )
 
+# Deliberately not functools.lru_cache: that would cache a failed search
+# (None) for the rest of the process. In a long-lived session (a notebook, a
+# batch job) installing OpenSCAD after the first failed call should not
+# require restarting the interpreter -- only a *successful* lookup is worth
+# avoiding repeated filesystem/PATH probing for, so only that gets cached.
+_cached_binary: Path | None = None
 
-@lru_cache(maxsize=1)
-def find_openscad() -> Path | None:
-    """Locate the OpenSCAD binary, or return None.
 
-    Order: ``$SCAD123D_OPENSCAD``, then ``$PATH``, then platform-specific
-    install locations.
-    """
+def _search() -> Path | None:
     override = os.environ.get(_ENV_VAR)
     if override:
         path = Path(override).expanduser()
@@ -63,15 +64,37 @@ def find_openscad() -> Path | None:
     return None
 
 
+def find_openscad() -> Path | None:
+    """Locate the OpenSCAD binary, or return None.
+
+    Order: ``$SCAD123D_OPENSCAD``, then ``$PATH``, then platform-specific
+    install locations. A successful result is cached; a failed search is not,
+    so installing OpenSCAD after an earlier failed call is picked up on the
+    next call rather than requiring a fresh process.
+    """
+    global _cached_binary
+    if _cached_binary is not None:
+        return _cached_binary
+    _cached_binary = _search()
+    return _cached_binary
+
+
 def require_openscad() -> Path:
     binary = find_openscad()
-    if binary is None:
+    if binary is not None:
+        return binary
+
+    override = os.environ.get(_ENV_VAR)
+    if override:
         raise OpenSCADNotFoundError(
-            "The OpenSCAD binary is required but was not found. Install "
-            "OpenSCAD (https://openscad.org/downloads.html) or set "
-            f"${_ENV_VAR} to its full path."
+            f"${_ENV_VAR} is set to {override!r}, but no OpenSCAD binary "
+            "exists at that path."
         )
-    return binary
+    raise OpenSCADNotFoundError(
+        "The OpenSCAD binary is required but was not found. Install "
+        "OpenSCAD (https://openscad.org/downloads.html) or set "
+        f"${_ENV_VAR} to its full path."
+    )
 
 
 @lru_cache(maxsize=1)

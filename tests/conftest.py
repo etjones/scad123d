@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from scad123d.openscad import find_openscad
+from scad123d.openscad import find_openscad, openscad_version
 
 FIXTURES = Path(__file__).parent / "fixtures"
 METRICS_PATH = FIXTURES / "metrics.json"
@@ -32,6 +32,28 @@ def metrics() -> dict:
     if not METRICS_PATH.exists():
         pytest.skip("no reference metrics; run `just fixtures`")
     return json.loads(METRICS_PATH.read_text())
+
+
+def require_fixture_openscad_version(metrics: dict) -> None:
+    """Skip a test that assumes byte- or tessellation-exact agreement with
+    the OpenSCAD version the committed fixtures were generated with.
+
+    Different OpenSCAD versions can legitimately reformat .csg output or
+    tessellate curves slightly differently -- CI's own differential job
+    commonly runs an older apt-packaged OpenSCAD (2021.01 vs. the 2025.07.18
+    fixtures were generated with), where this is expected, not a regression.
+    Call this from any test whose assertion is that exact rather than the
+    usual convergence-based comparison.
+    """
+    recorded = metrics.get("_openscad_version")
+    current = openscad_version()
+    if recorded is not None and current != recorded:
+        pytest.skip(
+            f"fixtures were generated with {recorded!r}; this machine has "
+            f"{current!r}. Exact byte/tessellation agreement doesn't hold "
+            f"across OpenSCAD versions -- run `just fixtures` to regenerate "
+            f"and verify against this version instead."
+        )
 
 
 def shape_metrics(shape) -> dict:

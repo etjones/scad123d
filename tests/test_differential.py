@@ -18,7 +18,7 @@ import pytest
 import scad123d
 from scad123d.openscad import export_csg, export_mesh
 
-from .conftest import FIXTURES, stl_volume
+from .conftest import FIXTURES, require_fixture_openscad_version, stl_volume
 from .test_build import _CYLINDER_CENTERED, _SPHERE, _hull_of, _translated
 
 SCAD_DIR = FIXTURES / "scad"
@@ -32,8 +32,9 @@ def _normalise(text: str) -> str:
 
 
 @pytest.mark.parametrize("name", SCAD_NAMES)
-def test_csg_export_is_deterministic(name):
+def test_csg_export_is_deterministic(name, metrics):
     """Committed fixtures must still match what OpenSCAD produces today."""
+    require_fixture_openscad_version(metrics)
     committed = FIXTURES / f"{name}.csg"
     if not committed.exists():
         pytest.skip(f"{name}.csg not committed")
@@ -185,13 +186,16 @@ def test_faceted_sphere_takes_the_mesh_path():
     assert shape.volume < (4 / 3) * math.pi * 1000  # inscribed in the true sphere
 
 
-def test_facets_differ_from_openscad_by_exactly_the_circle_gap():
+def test_facets_differ_from_openscad_by_exactly_the_circle_gap(metrics):
     """facets.scad pins $fn at every call site, so the gap is deterministic.
 
     Everything below the threshold is faceted identically to OpenSCAD; the one
     shape at or above it (cylinder r=8 h=10 $fn=64) is an exact BRep cylinder
-    for us and a 64-gon prism for OpenSCAD. The whole difference is that gap.
+    for us and a 64-gon prism for OpenSCAD. The whole difference is that gap
+    -- assuming OpenSCAD's own circle tessellation matches the version the
+    exact formula below was checked against.
     """
+    require_fixture_openscad_version(metrics)
     scad = SCAD_DIR / "facets.scad"
     ours = scad123d.import_scad(scad).volume
     theirs = _openscad_volume(scad, 128)

@@ -24,11 +24,13 @@ jobs:
       - run: uv run pytest -q -m "not needs_openscad"
 
   # Tier 2: differential comparison against OpenSCAD itself. Ubuntu's packaged
-  # OpenSCAD is older than the version the fixtures were generated with, so the
-  # .csg determinism check may legitimately differ; it is informational only.
+  # OpenSCAD is typically older than the version the fixtures were generated
+  # with; the handful of tests that need byte/tessellation-exact agreement
+  # (not the usual convergence-based comparison) detect that mismatch via
+  # require_fixture_openscad_version() and skip themselves rather than fail,
+  # so this job's pass/fail is real signal -- no continue-on-error needed.
   differential:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
