@@ -19,6 +19,7 @@ import scad123d
 from scad123d.openscad import export_csg, export_mesh
 
 from .conftest import FIXTURES, stl_volume
+from .test_build import _CYLINDER_CENTERED, _SPHERE, _hull_of, _translated
 
 SCAD_DIR = FIXTURES / "scad"
 SCAD_NAMES = sorted(p.stem for p in SCAD_DIR.glob("*.scad"))
@@ -216,3 +217,60 @@ def test_minkowski_polyhedron_kernel_matches_steiner_formula():
     area = 2 * (a * b + b * c + c * a)
     exact = a * b * c + area * r + r * r / 2 * sum(l * t for l, t in edges) + (4 / 3) * math.pi * r**3
     assert ours == pytest.approx(exact, rel=1e-5)
+
+
+# The four cases below all exercise rung 2's "not analytic" path, which means
+# they exercise the mesh fallback -- which itself invokes OpenSCAD. That
+# makes them tier-2 tests by nature, not tier-1: a tier-1 test claims to need
+# no binary, but these can't complete without one either way.
+
+
+def test_unequal_radius_hull_falls_back_to_mesh():
+    source = _hull_of(
+        _SPHERE.format(r=3),
+        _translated(10, 0, 0, _SPHERE.format(r=5)),
+    )
+    with pytest.warns(UserWarning, match="no BRep equivalent"):
+        shape = scad123d.import_csg(source)
+    assert shape.is_valid
+    assert shape.volume > 0
+
+
+def test_mixed_sphere_and_cylinder_hull_falls_back_to_mesh():
+    source = _hull_of(
+        _SPHERE.format(r=3),
+        _translated(10, 0, 0, _CYLINDER_CENTERED.format(r=3)),
+    )
+    with pytest.warns(UserWarning, match="no BRep equivalent"):
+        shape = scad123d.import_csg(source)
+    assert shape.is_valid
+
+
+def test_coplanar_noncollinear_sphere_hull_falls_back_to_mesh():
+    """A real limitation, not a bug: qhull's 3D ConvexHull raises on
+    degenerate (flat) input, so a hull of spheres with coplanar centers takes
+    the mesh path rather than crashing. See ROADMAP.md.
+    """
+    centers = [(-10, -10, 0), (10, -10, 0), (10, 10, 0), (-10, 10, 0)]
+    source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers))
+    with pytest.warns(UserWarning, match="no BRep equivalent"):
+        shape = scad123d.import_csg(source)
+    assert shape.is_valid
+    assert shape.volume > 0
+
+
+def test_differing_cylinder_spans_fall_back_to_mesh():
+    """A real limitation: cylinders that don't share one axial span have no
+    simple extrude-shaped hull, so this takes the mesh path.
+    """
+    source = _hull_of(
+        _translated(-10, 0, 0, _CYLINDER_CENTERED.format(r=3)),
+        _translated(
+            10, 0, 0,
+            "multmatrix([[1,0,0,0],[0,1,0,0],[0,0,1,-5],[0,0,0,1]]) "
+            "{ cylinder($fn = 0, $fa = 12, $fs = 2, h = 10, r1 = 3, r2 = 3, center = false); }",
+        ),
+    )
+    with pytest.warns(UserWarning, match="no BRep equivalent"):
+        shape = scad123d.import_csg(source)
+    assert shape.is_valid

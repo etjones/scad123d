@@ -251,52 +251,11 @@ class TestHull:
         kinds = Counter(f.geom_type for f in shape.faces())
         assert kinds == {GeomType.PLANE: 6, GeomType.CYLINDER: 4}
 
-    def test_unequal_radii_fall_back_to_mesh(self):
-        source = _hull_of(
-            _SPHERE.format(r=3),
-            _translated(10, 0, 0, _SPHERE.format(r=5)),
-        )
-        with pytest.warns(UserWarning, match="no BRep equivalent"):
-            shape = scad123d.import_csg(source)
-        assert shape.is_valid
-        assert shape.volume > 0
-
-    def test_mixed_sphere_and_cylinder_fall_back_to_mesh(self):
-        source = _hull_of(
-            _SPHERE.format(r=3),
-            _translated(10, 0, 0, _CYLINDER_CENTERED.format(r=3)),
-        )
-        with pytest.warns(UserWarning, match="no BRep equivalent"):
-            shape = scad123d.import_csg(source)
-        assert shape.is_valid
-
-    def test_coplanar_noncollinear_spheres_fall_back_to_mesh(self):
-        """A real limitation, not a bug: qhull's 3D ConvexHull raises on
-        degenerate (flat) input, so a hull of spheres with coplanar centers
-        takes the mesh path rather than crashing. See ROADMAP.md.
-        """
-        centers = [(-10, -10, 0), (10, -10, 0), (10, 10, 0), (-10, 10, 0)]
-        source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers))
-        with pytest.warns(UserWarning, match="no BRep equivalent"):
-            shape = scad123d.import_csg(source)
-        assert shape.is_valid
-        assert shape.volume > 0
-
-    def test_differing_cylinder_spans_fall_back_to_mesh(self):
-        """A real limitation: cylinders that don't share one axial span have
-        no simple extrude-shaped hull, so this takes the mesh path.
-        """
-        source = _hull_of(
-            _translated(-10, 0, 0, _CYLINDER_CENTERED.format(r=3)),
-            _translated(
-                10, 0, 0,
-                "multmatrix([[1,0,0,0],[0,1,0,0],[0,0,1,-5],[0,0,0,1]]) "
-                "{ cylinder($fn = 0, $fa = 12, $fs = 2, h = 10, r1 = 3, r2 = 3, center = false); }",
-            ),
-        )
-        with pytest.warns(UserWarning, match="no BRep equivalent"):
-            shape = scad123d.import_csg(source)
-        assert shape.is_valid
+    # Cases that fall back to a mesh live in test_differential.py, not here:
+    # the fallback itself invokes OpenSCAD, so a tier-1 test (no binary
+    # required, this file) can't exercise it. That mistake shipped once
+    # already -- these tests passed locally (this machine has OpenSCAD) but
+    # failed in CI's no-binary tier, which is exactly what tier 1 is for.
 
     def test_single_child_hull_is_a_no_op(self):
         shape = scad123d.import_csg(_hull_of(_SPHERE.format(r=3)))
