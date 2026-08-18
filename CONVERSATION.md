@@ -389,3 +389,103 @@ walker (`build.py`) calls directly, so scad123d is unaffected either way.
 The solid123d fix only reaches solid123d's own (SolidPython-bridge) users once
 it's released as a new version to PyPI -- that's a separate decision for the
 user to make, not bundled into this session.
+
+---
+
+## 2026-08-18 (cont.) — Rung 2, and a real fix upstream instead
+
+### User
+
+> Yes, let's do rung 2.
+
+### Assistant
+
+Before writing code, verified rung 2's premise against the real BOSL2 calls it
+was supposed to fix.
+
+#### The premise was half wrong
+
+Traced `cuboid([20,15,10], rounding=3, edges="Z")`'s actual CSG output. The
+`hull()` node found during the original design exploration turns out to be
+inert: all 8 of its children resolve to *empty* geometry (two intersection
+operands with non-overlapping bounding boxes — `z in [-0.005,0.005]` vs
+`z in [-0.165,-0.055]`), apparently anchor/attachment bookkeeping. The real
+rounded profile is a many-vertex 2D polygon, pre-faceted by BOSL2 itself at
+`$fn` resolution, fed straight into `linear_extrude` — already handled
+natively by scad123d, no hull involved. Rung 2 as scoped would not have
+touched this call at all.
+
+`cuboid([20,15,10], rounding=3)` (every edge, not just `Z`) doesn't use
+`hull()` either — it's `minkowski(cube, polyhedron)`, where the polyhedron has
+258 vertices all at radius 3.000000 +/- 4e-6 from a shared centroid. A sphere,
+expressed as an explicit facet mesh rather than a `sphere()` node. Rung 1 only
+recognized a literal `sphere`/`circle`, so this took the mesh path too.
+
+Surfaced this to the user with three options (original rung 2 only /
+polyhedron-ball extension only / both) rather than silently redefining scope.
+User chose both.
+
+#### Built, in order
+
+**Rung 1.5 — Minkowski with a polyhedron/polygon ball.** Redesigned
+`minkowski.py`'s classification to operate on the *already-built* Shape for
+each operand rather than the raw CSG node -- mirrors the redesign that made
+rung 2 itself work on real code (see below), and was necessary here too: a
+raw-node classifier stalled on a 2-child `group()` partway down the real
+BOSL2 tree (one inert sibling, one real), which the existing walker's
+`_union()` already resolves correctly by filtering empties. Added detection
+of a polyhedron/polygon whose vertices are all equidistant from a centroid,
+gated at >=24 vertices (above all 5 Platonic solids' vertex counts -- a
+cube's 8 corners are *also* equidistant from centroid, so count is what
+distinguishes a genuine tessellation from a deliberate few-sided kernel).
+Verified against the real BOSL2 file: `cuboid(rounding=3)` now imports as 6
+planes + 12 cylinders + 8 spheres, Steiner formula to ~4e-7 (limited by
+BOSL2's own kernel precision).
+
+**Rung 2 — hull of equal-radius spheres and parallel cylinders.** Classifies
+each hull() child's *built* shape (single-face SPHERE, or 1-cylinder+2-plane
+solid) rather than the raw tree, for the same real-code-robustness reason.
+Sphere case: qhull `ConvexHull` of centers -> `offset(polyhedron, r, ARC)`,
+verified exact (~1e-9) against a box-of-8-corners and a tetrahedron,
+reproducing the original design-phase numbers (953.14152, 8285.4424) as
+regression fixtures. Cylinder case: project onto the plane perpendicular to
+the shared axis, 2D-hull, offset, extrude -- verified exact against a 4-post
+rounded-rectangle case and an arbitrarily-tilted 2-cylinder case. A fully
+collinear point set (2+ spheres on one line) builds an explicit capsule
+instead of a degenerate hull -- also just the common 2-post slot idiom.
+
+Two implementation bugs found and fixed along the way:
+- Passing qhull's raw triangulated simplices into `offset_3d` made OCCT raise
+  `Null TopoDS_Shape object` -- a box face comes back as 2 triangles sharing a
+  plane equation, and offset needs merged planar faces, not adjacent coplanar
+  triangles. Fixed by grouping simplices via `hull.equations` and re-deriving
+  each merged face as the 2D hull of its own projected vertices.
+- The first stadium (2D capsule) construction, built as a union of a
+  rectangle and two circles, left 12 lateral faces after extrusion instead of
+  4 -- OCCT's fuse doesn't merge the collinear segments the union introduces
+  at tangent points. Rebuilt as one closed wire (2 lines + 2 tangent arcs).
+
+Also fixed, orthogonally, discovered while tracing the real BOSL2 tree: an
+intersection producing empty geometry (legitimate -- non-overlapping
+operands) would later crash `apply_matrix`/`moved()` with "Cannot move an
+empty shape" instead of just vanishing from the tree the way OpenSCAD treats
+it. `_children()` now filters `shape._wrapped is None` the same as it already
+filtered `None` itself.
+
+**What rung 2 deliberately does not cover** (falls back to mesh, does not
+crash): coplanar-but-not-collinear sphere hulls (qhull raises on degenerate
+input); cylinders not sharing one axial span; mixed sphere+cylinder or
+unequal-radius hulls. Documented in ROADMAP.md as Rung 2.5 and folded into
+Rung 4/5's existing scope notes.
+
+76 tests before this session; 104 after (58 more in the local run counting
+fixture-parametrized cases), all passing across two clean full runs.
+
+#### Note on solid123d, unaffected either way
+
+scad123d's rung 1/1.5/2 are independent implementations the walker calls
+directly, not routed through solid123d, so none of this session's work
+touches or depends on it. For the record: solid123d's own `minkowski()`
+already got the plain-ball fix in the prior session (2026-08-18 earlier,
+`5ba9785`); its `hull()` still raises `NotImplementedError` unconditionally,
+and the polyhedron-ball extension built here has not been ported upstream.

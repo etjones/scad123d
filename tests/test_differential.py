@@ -67,9 +67,11 @@ def _openscad_volume(scad, fn):
 # Fixtures with no curved surfaces at all, where agreement must be exact.
 _POLYHEDRAL = {"polyhedron"}
 
-# Fixtures that set $fn at call sites, which -D cannot override, so the
-# convergence test has nothing to vary. Checked exactly below instead.
-_CALL_SITE_FN = {"facets"}
+# Fixtures whose geometry is fixed independent of $fn -- either set at call
+# sites (which -D cannot override) or baked into literal point data (a
+# polyhedron ball kernel, matching how BOSL2 emits one) -- so the convergence
+# test has nothing to vary. Checked exactly below instead.
+_CALL_SITE_FN = {"facets", "minkowski_polyhedron"}
 
 
 @pytest.mark.parametrize("name", SCAD_NAMES)
@@ -152,11 +154,19 @@ def test_hull_falls_back_to_a_mesh_rather_than_failing():
 
 
 def test_mesh_scope_hoist_meshes_everything():
+    """A hull() of unequal radii has no analytic path (rung 2 only covers
+    equal-radius spheres/cylinders), so this still genuinely needs the mesh
+    fallback -- unlike a single-child or equal-radius hull, which rung 2 now
+    handles without ever touching OpenSCAD.
+    """
     source = (
         "difference() {\n"
         "\tcube(size = [30, 30, 4], center = true);\n"
         "\thull() {\n"
         "\t\tcylinder($fn = 16, $fa = 12, $fs = 2, h = 20, r1 = 3, r2 = 3, center = true);\n"
+        "\t\tmultmatrix([[1,0,0,10],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
+        "\t\t\tcylinder($fn = 16, $fa = 12, $fs = 2, h = 20, r1 = 5, r2 = 5, center = true);\n"
+        "\t\t}\n"
         "\t}\n"
         "}"
     )
@@ -189,3 +199,20 @@ def test_facets_differ_from_openscad_by_exactly_the_circle_gap():
     exact_disc = math.pi * r**2
     ngon_disc = 0.5 * sides * r**2 * math.sin(2 * math.pi / sides)
     assert ours - theirs == pytest.approx((exact_disc - ngon_disc) * h, rel=1e-4)
+
+
+def test_minkowski_polyhedron_kernel_matches_steiner_formula():
+    """minkowski_polyhedron.scad bakes its ball as literal polyhedron point
+    data (a 128-vertex faceted sphere, radius 2, mirroring how BOSL2's own
+    cuboid(rounding=) emits its kernel -- see design notes), so there is no
+    $fn to vary against OpenSCAD. Checked against the closed-form Steiner
+    volume instead, which is the real ground truth here.
+    """
+    scad = SCAD_DIR / "minkowski_polyhedron.scad"
+    ours = scad123d.import_scad(scad).volume
+
+    a, b, c, r = 10.0, 8.0, 6.0, 2.0
+    edges = [(a, math.pi / 2)] * 4 + [(b, math.pi / 2)] * 4 + [(c, math.pi / 2)] * 4
+    area = 2 * (a * b + b * c + c * a)
+    exact = a * b * c + area * r + r * r / 2 * sum(l * t for l, t in edges) + (4 / 3) * math.pi * r**3
+    assert ours == pytest.approx(exact, rel=1e-5)

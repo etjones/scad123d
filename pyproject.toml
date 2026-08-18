@@ -19,6 +19,7 @@ dependencies = [
   "build123d>=0.11.1",
   "solid123d>=0.1.0",
   "lark>=1.1.9",
+  "scipy>=1.15.3",
 ]
 
 [project.urls]

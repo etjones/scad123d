@@ -161,6 +161,14 @@ def apply_matrix(shape: Shape, m: Sequence[Sequence[float]]) -> Shape:
       residual is enough to invalidate the shape, hence the re-orthonormalizing
       decomposition rather than using the matrix as given.
     """
+    if shape._wrapped is None:
+        # An intersection/difference upstream can legitimately produce nothing
+        # (e.g. a corner cylinder trimmed away entirely). OpenSCAD just drops
+        # such a node from the tree; build123d's moved()/transform_geometry()
+        # instead raise on an empty shape, so short-circuit here rather than
+        # letting that propagate as a crash.
+        return shape
+
     rows = [[float(v) for v in row] for row in m]
     while len(rows) < 4:
         rows.append([0.0, 0.0, 0.0, 1.0])

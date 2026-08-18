@@ -89,10 +89,15 @@ Neither is a primitive in OpenSCAD either — both are CGAL operations over
 tessellated Nef polyhedra. OpenSCAD has no analytic hull; it meshes its
 children first, then computes. OCCT has no convex hull operator at all.
 
-scad123d handles them in two tiers.
+scad123d recognizes several analytic special cases and falls back to a mesh
+for everything else. Classification runs on the already-built geometry for
+each operand, not on the raw OpenSCAD source — real code (BOSL2 especially)
+wraps a primitive in many layers of module-call and attachment bookkeeping,
+and the existing tree-walker has already resolved all of that by the time
+this runs, so these cases fire on real code, not just hand-written examples.
 
-**`minkowski()` with a sphere or circle is computed analytically and exactly.**
-A Minkowski sum with a ball *is* an offset, which OCCT does natively:
+**`minkowski()` with a ball is computed analytically and exactly.** A
+Minkowski sum with a ball *is* an offset, which OCCT does natively:
 
 ```openscad
 minkowski() { cube([20,15,10], center=true); sphere(r=3); }
@@ -104,21 +109,58 @@ alike, and it returns proper analytic topology — the box case yields 6 planes,
 12 cylinders and 8 spheres. This is **better than OpenSCAD's own result**,
 which is a faceted approximation, and dramatically faster.
 
+The "ball" need not be a literal `sphere()`/`circle()` — a `polyhedron()` (or
+`polygon()`) whose vertices are all equidistant from a common centroid, with
+enough of them to be a plausible curved-surface tessellation rather than a
+deliberate few-sided polytope, is recognized too. This isn't a hypothetical
+case: **BOSL2's own `cuboid(rounding=r)` builds its rounding kernel as an
+explicit ~258-vertex polyhedron** (radius exact to ~1e-6) rather than calling
+`sphere()`, and without this it would silently take the mesh path. With it,
+real BOSL2 `cuboid(rounding=3)` imports as 6 planes + 12 cylinders + 8
+spheres, matching the Steiner formula to ~4e-7 — the limit is BOSL2's own
+kernel precision, not scad123d.
+
 Since rounding is what the overwhelming majority of real `minkowski()` calls
 are for, this covers most usage in practice.
 
-**Everything else falls back to a mesh.** For `hull()`, non-spherical
-`minkowski()`, `projection()`, `surface()` and mesh `import()`, scad123d writes
-just that subtree back out as `.csg` (which is itself valid OpenSCAD input),
-asks OpenSCAD to render it, and splices the resulting mesh into the tree with a
-warning naming the node.
+**`hull()` of equal-radius spheres, or of equal-radius parallel cylinders
+sharing one axial span, is computed analytically and exactly.** A hull of
+equal spheres is exactly `offset(convex_hull_of_centers, r)` — the same
+operation as the minkowski case above, since a sphere hull and a
+box-minkowski-ball are the same underlying shape:
 
-The fallback is *exactly as accurate as OpenSCAD*, since it is OpenSCAD. What
-you lose is analytic surfaces in that region: no meaningful fillets there, and
-selectors return triangles.
+```openscad
+// the classic "8 corner posts" rounded-box idiom
+hull() {
+    translate([-10,-7.5,-5]) sphere(r=3);
+    translate([ 10,-7.5,-5]) sphere(r=3);
+    // ... 6 more corners
+}
+```
 
-This matters for BOSL2. `cuboid([20,15,10], rounding=3)` compiles down to
-`hull()` over eight thin cylinders, so rounded boxes take the mesh path.
+Verified exact (~1e-9 relative error) against a box of 8 corners and a
+tetrahedron. A hull of parallel, equal-radius, equal-height cylinders reduces
+the same way one dimension down: project each cylinder's axis onto the plane
+perpendicular to the shared direction, take the 2D convex hull, offset by the
+radius, and extrude along the shared direction — the "rounded box from corner
+posts" idiom seen in real, hand-written OpenSCAD. A fully collinear point set
+(any count, so long as they lie on one line — the common 2-post
+capsule/slot) is built directly as a capsule rather than through a
+degenerate hull.
+
+**Deliberately not handled**, and left to fall back to a mesh: a hull of
+equal-radius spheres whose centers are coplanar but not collinear (qhull's 3D
+convex hull raises on degenerate/flat input, so this is a hard fallback, not
+a silent wrong answer); cylinders that don't all share one axial span; hull
+of unequal radii; hull mixing spheres and cylinders; and everything else —
+general Minkowski sums, `projection()`, `surface()`, and mesh `import()`.
+
+**The fallback is *exactly as accurate as OpenSCAD*, since it is OpenSCAD.**
+For any node with no analytic path, scad123d writes just that subtree back out
+as `.csg` (which is itself valid OpenSCAD input), asks OpenSCAD to render it,
+and splices the resulting mesh into the tree with a warning naming the node.
+What you lose is analytic surfaces in that region: no meaningful fillets
+there, and selectors return triangles.
 
 **Scope control.** Meshing a subtree localizes the tessellation, but the mesh
 still propagates upward through any later booleans, and OCCT boolean-ing
@@ -132,9 +174,9 @@ scad123d.import_scad(p, mesh_scope="hoist")    # any unsupported node -> mesh wh
 `minimal` keeps the most analytic geometry; `hoist` is more robust because
 OpenSCAD performs every boolean and you import one clean mesh.
 
-A ladder of further analytic cases is feasible and planned — hull of N
-equal-radius spheres is exactly `offset(convex_hull_of_centers, r)`, and a
-two-child hull is a `loft` between silhouettes. See `ROADMAP.md`.
+A ladder of further analytic cases — a two-child hull as a `loft` between
+silhouettes, unequal-radius sphere hulls, coplanar sphere hulls — is feasible
+and planned. See `ROADMAP.md`.
 
 ### `$fn`, `$fa`, `$fs`
 

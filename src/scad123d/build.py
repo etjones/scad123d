@@ -14,6 +14,7 @@ import solid123d as s1
 from build123d import Shape
 
 from .facets import DEFAULT_FACET_THRESHOLD, faceted_circle, faceted_cylinder, should_facet
+from .hull import analytic_hull
 from .mesh import mesh_subtree, warn_meshed
 from .minkowski import analytic_minkowski
 from .nodes import CsgNode
@@ -55,7 +56,10 @@ def _children(node: CsgNode, options: BuildOptions) -> list[Shape]:
         if child.modifier == "%":  # background: drawn but not part of the model
             continue
         shape = _build(child, options)
-        if shape is not None:
+        # A boolean op can legitimately produce nothing (e.g. an intersection
+        # that doesn't overlap); OpenSCAD just drops it from the tree, so treat
+        # an empty-but-not-None shape the same as None everywhere downstream.
+        if shape is not None and shape._wrapped is not None:
             out.append(shape)
     # `!` (show only) discards every sibling of the marked child.
     marked = [
@@ -219,14 +223,20 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:  # noqa: C901
     # --- no BRep equivalent ---------------------------------------------
     if name == "minkowski":
         built = _children(node, options)
-        analytic = analytic_minkowski(node, built)
+        analytic = analytic_minkowski(built)
         if analytic is not None:
             return analytic
         return _fallback(node, options, "second operand is not a sphere/circle")
 
-    if name in ("hull", "projection", "surface", "import"):
+    if name == "hull":
+        built = _children(node, options)
+        analytic = analytic_hull(built)
+        if analytic is not None:
+            return analytic
+        return _fallback(node, options, "not all children are equal-radius spheres/cylinders")
+
+    if name in ("projection", "surface", "import"):
         reasons = {
-            "hull": "no OCCT convex hull operator",
             "projection": "not implemented",
             "surface": "not implemented",
             "import": "imports a mesh",

@@ -178,6 +178,131 @@ class TestPolyhedron:
         assert shape.volume > 0
 
 
+def _translated(x, y, z, leaf: str) -> str:
+    return f"multmatrix([[1,0,0,{x}],[0,1,0,{y}],[0,0,1,{z}],[0,0,0,1]]) {{ {leaf} }}"
+
+
+def _hull_of(*children: str) -> str:
+    return "hull() {\n" + "\n".join(children) + "\n}"
+
+
+_SPHERE = "sphere($fn = 0, $fa = 12, $fs = 2, r = {r});"
+_CYLINDER_CENTERED = "multmatrix([[1,0,0,0],[0,1,0,0],[0,0,1,-10],[0,0,0,1]]) {{ cylinder($fn = 0, $fa = 12, $fs = 2, h = 20, r1 = {r}, r2 = {r}, center = false); }}"
+
+
+class TestHull:
+    """Rung 2: hull() of equal-radius spheres, and of equal-radius parallel
+    cylinders sharing one axial span. Everything else falls back to a mesh.
+    """
+
+    def test_box_corner_spheres_matches_original_verification(self):
+        """The exact box-of-8-corners case verified during design, reproduced
+        here as a regression fixture: matches the Steiner formula to ~1e-9,
+        with the true rounded-box topology (6 planes, 12 cylinders, 8 spheres).
+        """
+        centers = [
+            (-10, -7.5, -5), (10, -7.5, -5), (-10, 7.5, -5), (10, 7.5, -5),
+            (-10, -7.5, 5), (10, -7.5, 5), (-10, 7.5, 5), (10, 7.5, 5),
+        ]
+        source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=3)) for x, y, z in centers))
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(8285.4424, rel=1e-6)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.PLANE: 6, GeomType.CYLINDER: 12, GeomType.SPHERE: 8}
+
+    def test_tetrahedron_of_spheres(self):
+        centers = [(0, 0, 0), (10, 0, 0), (0, 10, 0), (0, 0, 10)]
+        source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers))
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(953.14152, rel=1e-6)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.PLANE: 4, GeomType.CYLINDER: 6, GeomType.SPHERE: 4}
+
+    def test_two_spheres_build_an_exact_capsule(self):
+        source = _hull_of(
+            _translated(-7, 0, 0, _SPHERE.format(r=3)),
+            _translated(7, 0, 0, _SPHERE.format(r=3)),
+        )
+        shape = scad123d.import_csg(source)
+        expected = math.pi * 9 * 14 + (4 / 3) * math.pi * 27
+        assert shape.volume == pytest.approx(expected, rel=1e-9)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.CYLINDER: 1, GeomType.SPHERE: 2}
+
+    def test_collinear_spheres_of_any_count_build_a_capsule(self):
+        """An interior point on the same line changes nothing -- only the two
+        extremes matter, matching what a real convex hull would give anyway.
+        """
+        source = _hull_of(
+            _translated(-7, 0, 0, _SPHERE.format(r=3)),
+            _translated(0, 0, 0, _SPHERE.format(r=3)),
+            _translated(7, 0, 0, _SPHERE.format(r=3)),
+        )
+        shape = scad123d.import_csg(source)
+        expected = math.pi * 9 * 14 + (4 / 3) * math.pi * 27
+        assert shape.volume == pytest.approx(expected, rel=1e-9)
+
+    def test_parallel_cylinders_matches_2d_offset_extruded(self):
+        centers = [(-10, -7.5), (10, -7.5), (-10, 7.5), (10, 7.5)]
+        source = _hull_of(*(_translated(x, y, 0, _CYLINDER_CENTERED.format(r=3)) for x, y in centers))
+        shape = scad123d.import_csg(source)
+        area = 20 * 15 + 2 * (20 + 15) * 3 + math.pi * 9
+        assert shape.volume == pytest.approx(area * 20, rel=1e-6)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.PLANE: 6, GeomType.CYLINDER: 4}
+
+    def test_unequal_radii_fall_back_to_mesh(self):
+        source = _hull_of(
+            _SPHERE.format(r=3),
+            _translated(10, 0, 0, _SPHERE.format(r=5)),
+        )
+        with pytest.warns(UserWarning, match="no BRep equivalent"):
+            shape = scad123d.import_csg(source)
+        assert shape.is_valid
+        assert shape.volume > 0
+
+    def test_mixed_sphere_and_cylinder_fall_back_to_mesh(self):
+        source = _hull_of(
+            _SPHERE.format(r=3),
+            _translated(10, 0, 0, _CYLINDER_CENTERED.format(r=3)),
+        )
+        with pytest.warns(UserWarning, match="no BRep equivalent"):
+            shape = scad123d.import_csg(source)
+        assert shape.is_valid
+
+    def test_coplanar_noncollinear_spheres_fall_back_to_mesh(self):
+        """A real limitation, not a bug: qhull's 3D ConvexHull raises on
+        degenerate (flat) input, so a hull of spheres with coplanar centers
+        takes the mesh path rather than crashing. See ROADMAP.md.
+        """
+        centers = [(-10, -10, 0), (10, -10, 0), (10, 10, 0), (-10, 10, 0)]
+        source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers))
+        with pytest.warns(UserWarning, match="no BRep equivalent"):
+            shape = scad123d.import_csg(source)
+        assert shape.is_valid
+        assert shape.volume > 0
+
+    def test_differing_cylinder_spans_fall_back_to_mesh(self):
+        """A real limitation: cylinders that don't share one axial span have
+        no simple extrude-shaped hull, so this takes the mesh path.
+        """
+        source = _hull_of(
+            _translated(-10, 0, 0, _CYLINDER_CENTERED.format(r=3)),
+            _translated(
+                10, 0, 0,
+                "multmatrix([[1,0,0,0],[0,1,0,0],[0,0,1,-5],[0,0,0,1]]) "
+                "{ cylinder($fn = 0, $fa = 12, $fs = 2, h = 10, r1 = 3, r2 = 3, center = false); }",
+            ),
+        )
+        with pytest.warns(UserWarning, match="no BRep equivalent"):
+            shape = scad123d.import_csg(source)
+        assert shape.is_valid
+
+    def test_single_child_hull_is_a_no_op(self):
+        shape = scad123d.import_csg(_hull_of(_SPHERE.format(r=3)))
+        assert shape.volume == pytest.approx((4 / 3) * math.pi * 27, rel=1e-9)
+
+
 class TestStructure:
     def test_empty_group_produces_nothing(self):
         with pytest.raises(scad123d.UnsupportedNodeError):
