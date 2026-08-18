@@ -21,6 +21,7 @@ from .errors import (
     UnsupportedNodeError,
 )
 from .facets import DEFAULT_FACET_THRESHOLD
+from .module_import import import_module
 from .nodes import CsgNode
 from .openscad import export_csg, find_openscad, openscad_version
 from .parser import parse_csg, parse_csg_file
@@ -34,6 +35,7 @@ __all__ = [
     "UnsupportedNodeError",
     "find_openscad",
     "import_csg",
+    "import_module",
     "import_scad",
     "openscad_version",
     "parse_csg",

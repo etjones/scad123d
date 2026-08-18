@@ -144,6 +144,27 @@ same way OpenSCAD's `-D` flag does:
 part = scad123d.import_scad("bracket.scad", width=40, holes=6)
 ```
 
+## Calling a single module like a Python function
+
+`import_scad()` imports a whole file's top-level geometry. Often what you
+actually want is one parameterized module from a library — a specific gear,
+a bracket shape — called with different arguments each time. `import_module()`
+gives you back a callable that works like a Python function, using the
+module directly, wherever it lives:
+
+```python
+cuboid = scad123d.import_module("BOSL2/std.scad", "cuboid")
+
+box = cuboid(size=[20, 15, 10], rounding=3)
+small_box = cuboid(size=[10, 10, 10], rounding=1)  # same callable, called again
+```
+
+This works for a module in your own project file the same way — pass its
+path instead of a library name. See
+[docs/REFERENCE.md](docs/REFERENCE.md#calling-a-single-module) for how
+library resolution and argument passing work, and what happens if you get a
+module or argument name wrong.
+
 ## Where this shines: rounding with `minkowski()`
 
 Rounding a shape with `minkowski()` (summing it with a small sphere) is
