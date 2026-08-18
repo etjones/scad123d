@@ -32,13 +32,21 @@ const zoom = parseFloat(params.get("zoom") || "1.0");
 const bg = params.get("bg") || "#ffffff";
 const color = params.get("color") || "#c9862f"; // a warm bronze-ish default, override per shot
 
-// Edge highlighting: draws a line wherever two adjacent triangles meet at more
-// than edge_angle degrees. A finely tessellated curved BREP face (scad123d's
-// glTF export) has near-zero dihedral angle between neighboring facets, so
-// only its true edges cross the threshold. A coarse OpenSCAD STL facets a
-// curve as flat panels meeting at real, larger angles, so *every* facet
-// boundary crosses the same threshold -- the same detector reveals two very
-// different stories depending only on how fine the input mesh is.
+// Edge highlighting works two different ways depending on what's available:
+//
+// - glTF (a scad123d/build123d export): drawn from the model's *real* BRep
+//   edges, loaded from a "<model>.edges.json" sidecar (see
+//   generate_images.py's export_gltf_with_edges) if one exists. A mesh-based
+//   dihedral-angle heuristic was tried first and abandoned: a tangent
+//   (G1-continuous) fillet meets its neighboring face at a real but
+//   near-zero angle that varies facet to facet from tessellation noise, so
+//   no threshold both catches the fillet's true boundary and ignores that
+//   noise scattered across the curved surface.
+// - STL (raw OpenSCAD mesh, no edge topology at all): the only option is the
+//   dihedral-angle heuristic, drawing a line wherever two adjacent triangles
+//   meet at more than edge_angle degrees. This works there specifically
+//   because a coarse OpenSCAD facet mesh has no tangent surfaces to produce
+//   false positives -- every facet boundary is a real, large angle.
 const showEdges = params.get("edges") === "1";
 const edgeAngleDeg = parseFloat(params.get("edge_angle") || "5");
 const edgeColor = params.get("edge_color") || "#111111";
@@ -90,6 +98,31 @@ function addEdgesTo(mesh) {
   mesh.add(lines);
 }
 
+function buildEdgeLinesFromPolylines(polylines) {
+  const positions = [];
+  for (const line of polylines) {
+    for (let i = 0; i < line.length - 1; i++) {
+      positions.push(line[i][0], line[i][1], line[i][2]);
+      positions.push(line[i + 1][0], line[i + 1][1], line[i + 1][2]);
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(edgeColor) });
+  return new THREE.LineSegments(geom, mat);
+}
+
+async function loadRealEdgesSidecar(modelUrl) {
+  const edgesUrl = modelUrl.replace(/\.(glb|gltf)$/i, ".edges.json");
+  try {
+    const resp = await fetch(edgesUrl);
+    if (!resp.ok) return null;
+    return buildEdgeLinesFromPolylines(await resp.json());
+  } catch {
+    return null; // no sidecar for this model -- fine, just nothing to draw
+  }
+}
+
 function finish(model) {
   model.traverse((child) => {
     if (!child.isMesh) return;
@@ -115,7 +148,9 @@ function finish(model) {
       child.material.metalness = 0.15;
       child.material.roughness = 0.5;
     }
-    if (showEdges) addEdgesTo(child);
+    // Real edges (glTF) are added directly to `model` by the caller, from
+    // the .edges.json sidecar, not derived per-mesh here.
+    if (showEdges && isSTL) addEdgesTo(child);
   });
 
   const box = new THREE.Box3().setFromObject(model);
@@ -171,7 +206,14 @@ if (isSTL) {
     finish(group);
   }, undefined, onError);
 } else {
-  new GLTFLoader().load(modelUrl, (gltf) => finish(gltf.scene), undefined, onError);
+  new GLTFLoader().load(modelUrl, async (gltf) => {
+    const model = gltf.scene;
+    if (showEdges) {
+      const edgeLines = await loadRealEdgesSidecar(modelUrl);
+      if (edgeLines) model.add(edgeLines);
+    }
+    finish(model);
+  }, undefined, onError);
 }
 </script>
 </body>
