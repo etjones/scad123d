@@ -1,7 +1,7 @@
 # scad123d
 
 Import OpenSCAD files as native [build123d](https://build123d.readthedocs.io/)
-BRep geometry.
+BRep geometry. Export as STEP, STL, or other build123d-supported formats.
 
 ```python
 import scad123d

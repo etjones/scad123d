@@ -5,7 +5,6 @@ the Windows/Linux candidate paths this machine can never actually reach)
 without needing to run on those OSes.
 """
 
-import re
 from pathlib import Path
 
 import pytest
@@ -46,11 +45,13 @@ def test_require_openscad_reports_the_bad_override_path(monkeypatch, tmp_path):
     monkeypatch.setattr(osc.platform, "system", lambda: "Linux")
     monkeypatch.setattr(Path, "exists", lambda self: False)
 
-    # match= is a regex, and bad_path is a real filesystem path -- on Windows
-    # that means backslashes, which are regex escapes; re.escape() it rather
-    # than pass the raw path through.
-    with pytest.raises(osc.OpenSCADNotFoundError, match=re.escape(bad_path)):
+    # Plain substring containment, not pytest.raises(match=...): that's a
+    # regex match, and a real filesystem path contains characters (Windows
+    # backslashes especially) that are regex metacharacters/escapes, so a
+    # path-shaped string is exactly the wrong thing to hand it.
+    with pytest.raises(osc.OpenSCADNotFoundError) as exc_info:
         osc.require_openscad()
+    assert bad_path in str(exc_info.value)
 
 
 def test_require_openscad_generic_message_with_no_override(monkeypatch):
