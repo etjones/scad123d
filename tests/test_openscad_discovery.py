@@ -5,6 +5,7 @@ the Windows/Linux candidate paths this machine can never actually reach)
 without needing to run on those OSes.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,10 @@ def test_require_openscad_reports_the_bad_override_path(monkeypatch, tmp_path):
     monkeypatch.setattr(osc.platform, "system", lambda: "Linux")
     monkeypatch.setattr(Path, "exists", lambda self: False)
 
-    with pytest.raises(osc.OpenSCADNotFoundError, match=bad_path):
+    # match= is a regex, and bad_path is a real filesystem path -- on Windows
+    # that means backslashes, which are regex escapes; re.escape() it rather
+    # than pass the raw path through.
+    with pytest.raises(osc.OpenSCADNotFoundError, match=re.escape(bad_path)):
         osc.require_openscad()
 
 
@@ -80,14 +84,20 @@ def test_path_is_searched_before_platform_candidates(monkeypatch, tmp_path):
 def test_platform_candidates_are_tried_in_order(monkeypatch, system, candidates):
     """Only the last candidate 'exists'; confirms the earlier ones were
     actually checked and rejected, not skipped.
+
+    Compares Path objects, not strings: the candidate lists are POSIX-style
+    even for _WINDOWS_CANDIDATES's raw strings, but str(Path(...)) renders
+    backslashes on a real Windows runner, so a naive string comparison
+    against the original candidate text never matches there regardless of
+    which platform.system() is being pretended.
     """
     monkeypatch.delenv(osc._ENV_VAR, raising=False)
     monkeypatch.setattr(osc.shutil, "which", lambda name: None)
     monkeypatch.setattr(osc.platform, "system", lambda: system)
-    winner = candidates[-1]
-    monkeypatch.setattr(Path, "exists", lambda self: str(self) == winner)
+    winner = Path(candidates[-1])
+    monkeypatch.setattr(Path, "exists", lambda self: self == winner)
 
-    assert str(osc.find_openscad()) == winner
+    assert osc.find_openscad() == winner
 
 
 def test_unrecognised_platform_falls_back_to_linux_candidates(monkeypatch):
@@ -98,10 +108,10 @@ def test_unrecognised_platform_falls_back_to_linux_candidates(monkeypatch):
     monkeypatch.delenv(osc._ENV_VAR, raising=False)
     monkeypatch.setattr(osc.shutil, "which", lambda name: None)
     monkeypatch.setattr(osc.platform, "system", lambda: "FreeBSD")
-    winner = osc._LINUX_CANDIDATES[-1]
-    monkeypatch.setattr(Path, "exists", lambda self: str(self) == winner)
+    winner = Path(osc._LINUX_CANDIDATES[-1])
+    monkeypatch.setattr(Path, "exists", lambda self: self == winner)
 
-    assert str(osc.find_openscad()) == winner
+    assert osc.find_openscad() == winner
 
 
 def test_nothing_found_returns_none(monkeypatch):
