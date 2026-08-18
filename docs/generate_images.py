@@ -10,12 +10,20 @@ viewer.html?model=models/<name>.glb&recolor=1&color=<hex>&az=<degrees>&el=<
 degrees>, and save the canvas (`canvas.toDataURL('image/png')`) once the page
 title reads "ready". The README images were produced this way via Claude's
 browser tooling; there's no one-shot CLI for the screenshot half.
+
+Add &edges=1 to highlight edges. For a glTF exported via
+export_gltf_with_edges(), the viewer draws the model's real BRep edges from a
+JSON sidecar (see that function's docstring for why a mesh-based dihedral-
+angle heuristic doesn't work once a fillet is involved). For an STL, which
+has no edge topology, the viewer falls back to the angle heuristic, since
+that's the only thing available.
 """
 
+import json
 import shutil
 from pathlib import Path
 
-from build123d import Axis, Mesher, export_gltf, fillet
+from build123d import Axis, Mesher, Shape, export_gltf, fillet
 
 import scad123d
 from scad123d.openscad import export_csg, export_mesh
@@ -34,6 +42,35 @@ def write(name: str, source: str) -> Path:
     return path
 
 
+def export_gltf_with_edges(shape: Shape, glb_path: str, samples_per_edge: int = 24) -> None:
+    """Export a shape to glTF, plus a JSON sidecar of its real BRep edges.
+
+    viewer.html's edges=1 draws these instead of guessing edges from mesh
+    dihedral angles -- necessary for anything with a tangent (G1-continuous)
+    fillet, where adjacent facets meet at a real but nearly-zero angle. That
+    residual angle is mesh tessellation noise, not signal: it varies facet to
+    facet, so an angle threshold either misses the fillet's true boundary
+    entirely or, at a low enough threshold to catch it, also lights up
+    spurious noise scattered across the curved surface. There is no dihedral
+    angle that separates the two cases, because for a truly tangent fillet
+    there isn't one -- the only reliable source for "where are the separate
+    faces" is the BRep topology itself, which is exactly what this exports.
+
+    Coordinates are converted to match export_gltf's own conventions (mm to
+    m, and the Z-up -> Y-up rotation build123d bakes into every glTF export)
+    so the edges line up with the mesh without the viewer needing to know
+    which convention which file uses.
+    """
+    export_gltf(shape, glb_path)
+    t_values = [i / samples_per_edge for i in range(samples_per_edge + 1)]
+    polylines = []
+    for edge in shape.edges():
+        polylines.append(
+            [[p.X / 1000, p.Z / 1000, -p.Y / 1000] for p in edge.positions(t_values)]
+        )
+    Path(glb_path).with_suffix(".edges.json").write_text(json.dumps(polylines))
+
+
 def bosl2_tube_filleted() -> None:
     """Import a BOSL2 tube, then fillet its rims -- real BRep edges, not
     triangles, survive the import.
@@ -45,7 +82,7 @@ def bosl2_tube_filleted() -> None:
     tube = scad123d.import_scad(scad)
     edges = tube.edges().group_by(Axis.Z)
     filleted = fillet(edges[0] + edges[-1], radius=1.5)
-    export_gltf(filleted, str(MODELS / "bosl2_tube.glb"))
+    export_gltf_with_edges(filleted, str(MODELS / "bosl2_tube.glb"))
 
 
 def minkowski_before_and_after() -> None:
@@ -88,11 +125,13 @@ def hull_analytic() -> None:
 def boss_stl_vs_step() -> None:
     """A cylinder emerging from a cube: OpenSCAD's own STL export (a coarse
     $fn=48 facet approximation) next to scad123d's STEP-equivalent geometry
-    (an exact cylindrical face). Screenshot both with viewer.html's
-    edges=1 -- it draws a line at every dihedral angle over ~5 degrees, which
-    reveals every one of the STL's ~48 facet boundaries but only the real
-    edges (cube edges, the two circular rims) on the analytic version, since
-    build123d's fine tessellation keeps neighboring facets nearly coplanar.
+    (an exact cylindrical face). Screenshot both with viewer.html's edges=1.
+    The STL has no real edge topology -- it's just triangles -- so the
+    viewer's dihedral-angle heuristic is the only option there, and reveals
+    every one of the ~48 facet boundaries. The STEP-equivalent side uses its
+    real BRep edges instead (see export_gltf_with_edges), showing only the
+    edges the shape actually has: the cube's 12 edges and the two circular
+    rims.
     """
     source = (
         "union() {\n"
@@ -109,7 +148,7 @@ def boss_stl_vs_step() -> None:
         shutil.rmtree(stl_path.parent, ignore_errors=True)
 
     part = scad123d.import_scad(scad)
-    export_gltf(part, str(MODELS / "boss_step.glb"))
+    export_gltf_with_edges(part, str(MODELS / "boss_step.glb"))
 
 
 def mcad_gear() -> None:

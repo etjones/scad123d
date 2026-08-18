@@ -63,6 +63,65 @@ of OpenSCAD; it delegates to it. Discovery order:
 
 CSG export needs no OpenGL, so no `xvfb` wrapper is required on headless Linux.
 
+## Calling a single module
+
+There is no OpenSCAD-level operation for "just run this one module" — a
+`.scad` file's CSG export is always the result of its top-level statements.
+`import_module(path, name)` works around this by generating a small
+temporary wrapper file per call:
+
+```
+{include|use} <reference>
+name(args);
+```
+
+and running it through the same CSG pipeline as `import_scad()`. Every call
+to the returned callable re-invokes OpenSCAD; there is no cheaper path,
+since OpenSCAD itself has no "call one module" mode.
+
+**Path resolution.** `path` is resolved two ways:
+
+- If it names a real local file, it's resolved to an absolute path before
+  being written into the wrapper. This matters because the wrapper lives in
+  a fresh temporary directory on every call, so a relative `include` would
+  resolve against the wrong directory (OpenSCAD resolves a relative
+  `include <>`/`use <>` against the directory of the file *containing* the
+  statement) if left relative.
+- Otherwise (`"BOSL2/std.scad"`, `"MCAD/involute_gears.scad"`), it's passed
+  through untouched, exactly as if you'd written that `include <>`/`use <>`
+  by hand — resolved via `$OPENSCADPATH` and the default library folders.
+
+**`include` vs `use`.** `import_module` defaults to `include`, which brings
+in a library's module/function definitions *and* its variables and any
+top-level code it runs. `use` brings in only definitions. This matters
+because it's not just a style choice: some libraries' modules rely on
+variables defined at the library's top level (BOSL2 is documented and
+commonly used via `include`), and `use` would silently leave those
+undefined. Other libraries are conventionally brought in with `use` (MCAD's
+own examples do this) specifically to avoid re-running any demo geometry a
+library file might render at its own top level. Pass
+`import_style="use"` when you know a library expects it.
+
+**Arguments.** The returned callable accepts positional and keyword
+arguments the same way the OpenSCAD module does; both are rendered to
+OpenSCAD literal syntax and spliced into the generated call. `None` becomes
+`undef`; lists, strings, bools, and numbers all follow OpenSCAD's own
+literal syntax.
+
+**A wrong module or argument name is not a Python-level error where you
+might expect it.** OpenSCAD treats an unknown module name, or an argument
+name a module doesn't recognize, as a *warning*, not a failure — it exits
+successfully and just renders less than you asked for (an unrecognized
+argument silently falls back to that parameter's default; an unknown module
+call renders nothing at all). `import_module` cannot detect this at the
+point you call `import_module()` itself, since nothing runs until you
+actually call the returned function. When a call produces no geometry at
+all, the raised `UnsupportedNodeError` includes OpenSCAD's own warning text,
+which is usually enough to spot a typo'd name immediately. A typo'd
+*argument* name that still produces geometry (because the module fell back
+to a default) will not raise anything — check the result if you're not sure
+your arguments were actually recognized.
+
 ## `hull()` and `minkowski()`
 
 Neither is a primitive in OpenSCAD either — both are CGAL operations over

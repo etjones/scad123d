@@ -121,14 +121,19 @@ def _run(args: list[str], timeout: float) -> str:
     return result.stderr
 
 
-def export_csg(
+def export_csg_with_warnings(
     scad_path: str | Path,
     overrides: dict[str, object] | None = None,
     timeout: float = 600,
-) -> str:
-    """Run OpenSCAD's CSG export and return the flattened tree as text.
+) -> tuple[str, str]:
+    """Like ``export_csg``, but also returns OpenSCAD's stderr.
 
-    ``overrides`` sets top-level variables, the same as OpenSCAD's ``-D``.
+    OpenSCAD treats a bad reference (an unknown module, an unrecognized
+    argument name) as a warning, not an error: it exits 0 and just renders
+    less than you expected -- so ``export_csg``'s discarded stderr is often
+    the only place the actual cause shows up. Most callers don't need it
+    (``export_csg`` below is the plain version); this exists for callers that
+    want to surface it, e.g. on an empty result.
     """
     binary = require_openscad()
     scad_path = Path(scad_path).resolve()
@@ -139,12 +144,24 @@ def export_csg(
         out = Path(tmp) / "out.csg"
         args = [str(binary), "-o", str(out)]
         for key, value in (overrides or {}).items():
-            args += ["-D", f"{key}={_scad_literal(value)}"]
+            args += ["-D", f"{key}={scad_literal(value)}"]
         args.append(str(scad_path))
-        _run(args, timeout)
+        stderr = _run(args, timeout)
         if not out.exists():
             raise OpenSCADRunError(f"OpenSCAD produced no CSG output for {scad_path}")
-        return out.read_text()
+        return out.read_text(), stderr
+
+
+def export_csg(
+    scad_path: str | Path,
+    overrides: dict[str, object] | None = None,
+    timeout: float = 600,
+) -> str:
+    """Run OpenSCAD's CSG export and return the flattened tree as text.
+
+    ``overrides`` sets top-level variables, the same as OpenSCAD's ``-D``.
+    """
+    return export_csg_with_warnings(scad_path, overrides, timeout)[0]
 
 
 def export_mesh(
@@ -168,11 +185,18 @@ def export_mesh(
     return out
 
 
-def _scad_literal(value: object) -> str:
+def scad_literal(value: object) -> str:
+    """Render a Python value as an OpenSCAD literal.
+
+    Shared with module_import.py, which needs the exact same syntax for
+    module-call arguments as this needs for ``-D`` values.
+    """
+    if value is None:
+        return "undef"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
         return f'"{value}"'
     if isinstance(value, (list, tuple)):
-        return "[" + ",".join(_scad_literal(v) for v in value) + "]"
+        return "[" + ",".join(scad_literal(v) for v in value) + "]"
     return repr(value)

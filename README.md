@@ -11,11 +11,17 @@ in a solid-modeling kernel instead of a mesh renderer.
 ```python
 import scad123d
 
+# Call one module from a library directly, like a Python function --
+# usually what you actually want:
+cuboid = scad123d.import_module("BOSL2/std.scad", "cuboid")
+box = cuboid(size=[20, 15, 10], rounding=3)
+
+# Or bring in a whole file's geometry at once:
 part = scad123d.import_scad("bracket.scad")
 ```
 
-That's the whole API for the common case. `part` is a normal build123d
-object, so from here you're just doing build123d.
+Both return a normal build123d object, so from here you're just doing
+build123d.
 
 ## Why this exists
 
@@ -41,7 +47,7 @@ program (so every language feature, every library, works exactly as it
 always has), and rebuilds the result as native build123d geometry instead of
 a mesh. You get a better kernel underneath code you already have.
 
-## What that buys you
+## STEP vs STL Exports
 
 **Real STEP export.** OpenSCAD can only export a mesh (STL). scad123d lets
 you export [STEP](https://en.wikipedia.org/wiki/ISO_10303) directly from an
@@ -49,16 +55,15 @@ OpenSCAD design — the standard interchange format nearly every CAD program
 reads as an actual solid body, with exact curves, not a pile of triangles
 pretending to be one.
 
-Here's the same model — a cylinder rising out of a cube — each way, with every
-real edge of the shape drawn on top so the difference is easy to spot.
-OpenSCAD's STL approximates the cylinder as 48 flat panels, and every one of
-those panel boundaries is a real edge in the mesh:
+Here's the same model — a cylinder rising out of a cube — each way, with edges 
+highlighted. OpenSCAD's STL approximates the cylinder as 48 flat panels, and 
+each panel boundary is an edge in the mesh:
 
 <img src="docs/images/stl_vs_step_stl.png" width="450" alt="OpenSCAD's STL export of a cylinder on a cube, with every facet edge highlighted -- dozens of visible lines around the cylinder">
 
 scad123d's version has exactly the edges the shape actually has: the cube's
 12 edges, the cylinder's rim, and the circle where it meets the cube. The
-cylinder itself is one continuous curved face, not hundreds of triangles:
+cylinder itself is a single continuous curved face:
 
 <img src="docs/images/stl_vs_step_step.png" width="450" alt="scad123d's STEP-equivalent export of the same model, with only the true edges highlighted -- a clean circle at top and bottom, no facet lines">
 
@@ -75,10 +80,12 @@ part = fillet(part.edges().group_by(Axis.Z)[-1], radius=2)
 ```
 
 Here's a [BOSL2](https://github.com/BelfrySCAD/BOSL2) `tube()` imported and
-then filleted — a smooth, continuous rounded rim, instead of a faceted approximation
-of one:
+then filleted — a smooth, continuous rounded rim, instead of a faceted
+approximation of one. The thin lines are the shape's actual edges (the rim of
+the fillet, and a seam where the cylindrical face closes on itself) — not
+mesh facets, since there aren't any:
 
-<img src="docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim">
+<img src="docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim and its real edges highlighted">
 
 **No lost precision.** Nothing gets tessellated until you ask for a mesh
 (e.g. exporting an STL for printing). Curves stay curves through as many
@@ -113,32 +120,51 @@ Because scad123d hands your file to the real OpenSCAD, `include`/`use`
 statements work exactly as they do when you run OpenSCAD directly — install a
 library the normal OpenSCAD way (in your
 [OpenSCAD library folder](https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Libraries),
-or alongside your project) and `include`/`use` it like always.
+or alongside your project) and reference it like always.
 
-A gear from [MCAD](https://github.com/openscad/MCAD):
+Most of the time you want one specific, parameterized module from a
+library — a particular gear, a particular bracket — not a whole file.
+`import_module(path, module_name)` calls it directly. There's no wrapper
+`.scad` file to write yourself, and you get back a callable you can use
+again with different arguments:
+
+An [MCAD](https://github.com/openscad/MCAD) gear:
 
 ```python
-# gear.scad:
-#   use <MCAD/involute_gears.scad>
-#   gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5);
-
-gear = scad123d.import_scad("gear.scad")
+gear = scad123d.import_module("MCAD/involute_gears.scad", "gear", import_style="use")
+part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 ```
 
 <img src="docs/images/mcad_gear.png" width="450" alt="An MCAD involute gear imported via scad123d">
 
-A rounded box from BOSL2:
+A rounded box from [BOSL2](https://github.com/BelfrySCAD/BOSL2), called twice
+with different arguments:
 
 ```python
-# box.scad:
-#   include <BOSL2/std.scad>
-#   cuboid([20, 15, 10], rounding=3);
-
-box = scad123d.import_scad("box.scad")
+cuboid = scad123d.import_module("BOSL2/std.scad", "cuboid")
+box = cuboid(size=[20, 15, 10], rounding=3)
+small_box = cuboid(size=[10, 10, 10], rounding=1)
 ```
 
-You can also pass values into top-level variables in the `.scad` file, the
-same way OpenSCAD's `-D` flag does:
+`import_style` controls how the library file is brought in: `"include"`
+(the default) also brings in its variables, which some libraries' modules
+depend on — BOSL2 above is normally used this way. `"use"` brings in only
+module and function definitions, which is how some libraries (MCAD above)
+are conventionally used instead. See
+[docs/REFERENCE.md](docs/REFERENCE.md#calling-a-single-module) for exactly
+how that resolution works, and what happens if you get a module or argument
+name wrong.
+
+If you already have a complete `.scad` file — your own design, or someone
+else's — and just want the geometry it produces, `import_scad()` brings in
+the whole file's top-level result instead:
+
+```python
+part = scad123d.import_scad("bracket.scad")
+```
+
+You can also pass values into top-level variables in the file, the same way
+OpenSCAD's `-D` flag does:
 
 ```python
 part = scad123d.import_scad("bracket.scad", width=40, holes=6)
