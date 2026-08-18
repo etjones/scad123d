@@ -1,0 +1,132 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #ffffff; }
+  #note { position: fixed; top: 8px; left: 8px; font: 12px monospace; color: #888; }
+</style>
+</head>
+<body>
+<div id="note">loading…</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const params = new URLSearchParams(window.location.search);
+const modelUrl = params.get("model") || "model.glb";
+const W = parseInt(params.get("w") || "900", 10);
+const H = parseInt(params.get("h") || "700", 10);
+const azimuth = parseFloat(params.get("az") || "35");   // degrees around Y
+const elevation = parseFloat(params.get("el") || "28");  // degrees above horizon
+const zoom = parseFloat(params.get("zoom") || "1.0");
+const bg = params.get("bg") || "#ffffff";
+const color = params.get("color") || "#c9862f"; // a warm bronze-ish default, override per shot
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(bg);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(W, H);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+// near/far are set once the model's real scale is known -- build123d's
+// export_gltf follows glTF's meter convention, so a 20mm CAD part becomes
+// 0.02 scene units; a fixed near=0.1 clips it entirely.
+const camera = new THREE.PerspectiveCamera(28, W / H, 0.001, 10000);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0xcccccc, 0.7);
+scene.add(hemi);
+const key = new THREE.DirectionalLight(0xffffff, 2.4);
+key.position.set(5, 8, 6);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -50; key.shadow.camera.right = 50;
+key.shadow.camera.top = 50; key.shadow.camera.bottom = -50;
+key.shadow.camera.near = 0.1; key.shadow.camera.far = 200;
+key.shadow.bias = -0.0005;
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+fill.position.set(-6, 3, -4);
+scene.add(fill);
+
+const groundGeo = new THREE.PlaneGeometry(2000, 2000);
+const groundMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const loader = new GLTFLoader();
+loader.load(modelUrl, (gltf) => {
+  const model = gltf.scene;
+
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+      if (params.get("recolor") === "1") {
+        child.material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(color),
+          metalness: 0.15,
+          roughness: 0.45,
+        });
+      } else {
+        child.material.metalness = 0.15;
+        child.material.roughness = 0.5;
+      }
+    }
+  });
+
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  model.position.sub(center);
+  ground.position.y = -size.y / 2;
+
+  scene.add(model);
+
+  const radius = Math.max(size.x, size.y, size.z) * 0.75;
+  const distance = (radius / Math.tan((camera.fov * Math.PI) / 360)) / zoom;
+  camera.near = Math.max(distance / 1000, 1e-6);
+  camera.far = distance * 1000;
+  camera.updateProjectionMatrix();
+  key.shadow.camera.left = -radius * 3; key.shadow.camera.right = radius * 3;
+  key.shadow.camera.top = radius * 3; key.shadow.camera.bottom = -radius * 3;
+  key.shadow.camera.near = camera.near; key.shadow.camera.far = distance * 10;
+  key.position.set(radius * 1.2, radius * 2, radius * 1.5);
+  fill.position.set(-radius * 1.5, radius * 0.7, -radius);
+  const azRad = (azimuth * Math.PI) / 180;
+  const elRad = (elevation * Math.PI) / 180;
+  camera.position.set(
+    distance * Math.cos(elRad) * Math.sin(azRad),
+    distance * Math.sin(elRad),
+    distance * Math.cos(elRad) * Math.cos(azRad)
+  );
+  camera.lookAt(0, 0, 0);
+
+  renderer.render(scene, camera);
+  document.getElementById("note").textContent = "ready";
+  document.title = "ready";
+  window.__debug = { scene, camera, model, size, center, distance, box };
+}, undefined, (err) => {
+  document.getElementById("note").textContent = "ERROR: " + err.message;
+  console.error(err);
+});
+</script>
+</body>
+</html>

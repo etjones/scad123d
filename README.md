@@ -2,18 +2,58 @@
 
 [![CI](https://github.com/etjones/scad123d/actions/workflows/ci.yml/badge.svg)](https://github.com/etjones/scad123d/actions/workflows/ci.yml)
 
-Import OpenSCAD files as native [build123d](https://build123d.readthedocs.io/)
-BRep geometry. Export as STEP, STL, or other build123d-supported formats.
+Import an OpenSCAD design — including third-party libraries like BOSL2 and
+MCAD — as real, solid geometry in [build123d](https://build123d.readthedocs.io/),
+Python's native CAD kernel. Keep your existing OpenSCAD models and libraries;
+get fillets, exact STEP export, and everything else that comes from working
+in a solid-modeling kernel instead of a mesh renderer.
 
 ```python
 import scad123d
 
-part = scad123d.import_scad("bracket.scad")          # -> build123d Shape
-part = scad123d.import_scad("bracket.scad", width=40)  # override top-level vars
+part = scad123d.import_scad("bracket.scad")
 ```
 
-The result is a plain build123d `Shape`, so it mixes freely with native
-build123d — fillet it, select faces, sweep along it, export a real STEP:
+That's the whole API for the common case. `part` is a normal build123d
+object, so from here you're just doing build123d.
+
+## Why this exists
+
+OpenSCAD is a great way to describe parts in code, and there's a huge amount
+of OpenSCAD out there — your own old projects, and libraries like
+[BOSL2](https://github.com/BelfrySCAD/BOSL2) and
+[MCAD](https://github.com/openscad/MCAD) that save you from redrawing gears,
+bearings, and hardware from scratch. But OpenSCAD's own geometry engine works
+by turning everything into a mesh of flat triangles — even a sphere is
+secretly hundreds of tiny polygons. That's fine for previewing a design, but
+it means every curve is an approximation, filleting a rounded corner just
+rounds a pile of facets instead of the actual surface, and the only thing you
+can export is that same triangle mesh (as an STL).
+
+[build123d](https://github.com/gumyr/build123d) is built on OpenCASCADE, the
+same kind of solid-modeling kernel used by mainstream CAD software (Fusion
+360, SolidWorks, FreeCAD). Circles stay circles. A cylinder is a cylinder, not
+64 flat rectangles pretending to be one — right up until you actually need a
+mesh, e.g. for 3D printing.
+
+scad123d bridges the two: it hands your `.scad` file to the real OpenSCAD
+program (so every language feature, every library, works exactly as it
+always has), and rebuilds the result as native build123d geometry instead of
+a mesh. You don't rewrite anything — you get a better kernel underneath code
+you already have.
+
+## What that buys you
+
+**Real STEP export.** OpenSCAD can only export a mesh (STL). scad123d lets
+you export [STEP](https://en.wikipedia.org/wiki/ISO_10303) directly from an
+OpenSCAD design — the standard interchange format nearly every CAD program
+reads as an actual solid body, with exact curves, not a pile of triangles
+pretending to be one.
+
+**Fillets that behave.** Round a corner on a mesh and you round the facets,
+not the surface — you get a many-sided lump, not a smooth radius. Because
+scad123d keeps the real geometry, you can fillet and chamfer edges normally
+after importing:
 
 ```python
 from build123d import fillet, Axis
@@ -22,219 +62,151 @@ part = scad123d.import_scad("bracket.scad")
 part = fillet(part.edges().group_by(Axis.Z)[-1], radius=2)
 ```
 
-BOSL2 and MCAD work out of the box, because scad123d does not reimplement the
-OpenSCAD language.
+Here's a [BOSL2](https://github.com/BelfrySCAD/BOSL2) `tube()` imported and
+then filleted — a smooth, continuous rounded rim, not a faceted approximation
+of one:
 
-## How it works
+<img src="docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim">
 
-scad123d shells out to the OpenSCAD binary for **`--export-format csg`**, which
-runs the entire OpenSCAD language and emits a flattened tree:
+**No lost precision.** Nothing gets tessellated until you ask for a mesh
+(e.g. exporting an STL for printing). Curves stay curves through as many
+operations as you throw at them.
 
+**It mixes freely with regular build123d code.** The imported part is a plain
+`Shape` — select faces on it, boolean it against something you built natively
+in build123d, sweep along one of its edges. There's no special "imported
+OpenSCAD object" type to work around.
+
+## Installing
+
+scad123d isn't on PyPI yet — install it directly from GitHub:
+
+```bash
+pip install git+https://github.com/etjones/scad123d.git
 ```
-$ openscad -o out.csg in.scad
-multmatrix([[1, 0, 0, 20], [0, 1, 0, 5], [0, 0, 1, 0], [0, 0, 0, 1]]) {
-    cylinder($fn = 48, $fa = 12, $fs = 2, h = 8, r1 = 3, r2 = 1.5, center = false);
-}
+
+You also need the [OpenSCAD](https://openscad.org/downloads.html) program
+itself installed — scad123d asks the real OpenSCAD to evaluate your file
+(so every language feature and every library works), then converts the
+result. It looks for OpenSCAD on your `$PATH` and in the usual install
+locations automatically; set `$SCAD123D_OPENSCAD` to point at it directly if
+it's somewhere unusual.
+
+## Using libraries: BOSL2 and MCAD
+
+Because scad123d hands your file to the real OpenSCAD, `include`/`use`
+statements work exactly as they do when you run OpenSCAD directly — install a
+library the normal OpenSCAD way (in your
+[OpenSCAD library folder](https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Libraries),
+or alongside your project) and `include`/`use` it like always.
+
+A gear from [MCAD](https://github.com/openscad/MCAD):
+
+```python
+# gear.scad:
+#   use <MCAD/involute_gears.scad>
+#   gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5);
+
+gear = scad123d.import_scad("gear.scad")
 ```
 
-OpenSCAD has already resolved everything that makes the language hard: modules
-inlined with defaults applied, `if` decided per instance, `for` unrolled, list
-comprehensions evaluated, `children()` spliced, `include`/`use` and
-`OPENSCADPATH` resolved, transforms collapsed into 4×4 matrices, and the `*`
-disable-modifier stripped.
+<img src="docs/images/mcad_gear.png" width="450" alt="An MCAD involute gear imported via scad123d">
 
-Crucially, **the primitives stay analytic**. That is a real `cylinder`, not a
-triangle mesh, so the BRep survives into build123d with genuine faces and
-edges. scad123d only has to parse ~24 node types with no expressions, no
-variables and no scoping, and map them onto
-[solid123d](https://github.com/etjones/solid123d), which already renders
-OpenSCAD primitives as build123d shapes.
+A rounded box from BOSL2:
 
-### Why not import an STL?
+```python
+# box.scad:
+#   include <BOSL2/std.scad>
+#   cuboid([20, 15, 10], rounding=3);
 
-Rendering to STL and importing the mesh is a smaller project, and it does give
-perfect semantic fidelity. But you get a mesh, and the consequences run deeper
-than losing per-face awareness:
+box = scad123d.import_scad("box.scad")
+```
 
-- `fillet()` and `chamfer()` stop being useful. Filleting the rim of a
-  128-facet cylinder produces 128 tiny facet-edge fillets, not a rounded rim.
-- Selectors return triangles. `part.faces().sort_by(Axis.Z)[-1]` is *one
-  triangle*, not the top face. No `Plane(face)` workplane placement.
-- OCCT booleans against triangle soup are far slower and much more likely to
-  fail than booleans against analytic solids.
-- STEP export becomes mesh-as-STEP: large files that downstream CAD imports as
-  a mesh body rather than a solid.
-- Faceting is baked in at import time; changing `$fn` means re-rendering.
+You can also pass values into top-level variables in the `.scad` file, the
+same way OpenSCAD's `-D` flag does:
 
-The CSG route gives everything the STL route gives *except* evaluated
-`hull()`/`minkowski()`, plus analytic geometry — and both need the same
-OpenSCAD binary, so the STL route buys nothing on dependencies.
+```python
+part = scad123d.import_scad("bracket.scad", width=40, holes=6)
+```
 
-## Requirements
+## Where this shines: rounding with `minkowski()`
 
-**The OpenSCAD binary must be installed.** scad123d is not a reimplementation
-of OpenSCAD; it delegates to it. Discovery order:
+Rounding a shape with `minkowski()` (summing it with a small sphere) is
+one of the most common things people do in OpenSCAD. OpenSCAD computes it by
+meshing everything and finding the sum numerically — the rounded corners come
+out as a cluster of small flat facets, not a true curve.
 
-1. `$SCAD123D_OPENSCAD` (explicit override)
-2. `openscad` / `openscad-nightly` on `$PATH`
-3. macOS: `/Applications/OpenSCAD{,-nightly}.app/Contents/MacOS/OpenSCAD`
-4. Windows: `C:\Program Files\OpenSCAD{, (Nightly)}\openscad.exe`
-5. Linux: flatpak (`org.openscad.OpenSCAD`) and snap paths
+scad123d recognizes this specific, very common pattern and computes it
+directly as an exact geometric offset instead. The result isn't just cleaner —
+it's **more accurate than OpenSCAD's own answer**, and it stays a real curved
+surface you can select and fillet further, rather than an approximation
+that's baked in for good.
 
-CSG export needs no OpenGL, so no `xvfb` wrapper is required on headless Linux.
+Same `minkowski()` call, OpenSCAD's own result on the left, scad123d's on the
+right:
 
-## Tradeoffs and behavior
+<p>
+<img src="docs/images/minkowski_before.png" width="400" alt="OpenSCAD's own minkowski() result: visibly faceted corners">
+<img src="docs/images/minkowski_after.png" width="400" alt="scad123d's minkowski() result: smooth, exact rounded corners">
+</p>
 
-### `hull()` and `minkowski()`
+This covers the overwhelming majority of real-world `minkowski()` calls,
+since rounding a shape is what most people use it for.
 
-Neither is a primitive in OpenSCAD either — both are CGAL operations over
-tessellated Nef polyhedra. OpenSCAD has no analytic hull; it meshes its
-children first, then computes. OCCT has no convex hull operator at all.
+## Where this breaks down: `hull()`
 
-scad123d recognizes several analytic special cases and falls back to a mesh
-for everything else. Classification runs on the already-built geometry for
-each operand, not on the raw OpenSCAD source — real code (BOSL2 especially)
-wraps a primitive in many layers of module-call and attachment bookkeeping,
-and the existing tree-walker has already resolved all of that by the time
-this runs, so these cases fire on real code, not just hand-written examples.
-
-**`minkowski()` with a ball is computed analytically and exactly.** A
-Minkowski sum with a ball *is* an offset, which OCCT does natively:
+`hull()` doesn't have as clean an answer. scad123d computes a few common,
+recognizable patterns exactly — most usefully, the classic "rounded box built
+from spheres at each corner" idiom:
 
 ```openscad
-minkowski() { cube([20,15,10], center=true); sphere(r=3); }
-```
-
-becomes `offset(Box(20,15,10), 3, kind=Kind.ARC)`. Verified exact against the
-Steiner formula to ~1e-10 relative error, on convex and non-convex inputs
-alike, and it returns proper analytic topology — the box case yields 6 planes,
-12 cylinders and 8 spheres. This is **better than OpenSCAD's own result**,
-which is a faceted approximation, and dramatically faster.
-
-The "ball" need not be a literal `sphere()`/`circle()` — a `polyhedron()` (or
-`polygon()`) whose vertices are all equidistant from a common centroid, with
-enough of them to be a plausible curved-surface tessellation rather than a
-deliberate few-sided polytope, is recognized too. This isn't a hypothetical
-case: **BOSL2's own `cuboid(rounding=r)` builds its rounding kernel as an
-explicit ~258-vertex polyhedron** (radius exact to ~1e-6) rather than calling
-`sphere()`, and without this it would silently take the mesh path. With it,
-real BOSL2 `cuboid(rounding=3)` imports as 6 planes + 12 cylinders + 8
-spheres, matching the Steiner formula to ~4e-7 — the limit is BOSL2's own
-kernel precision, not scad123d.
-
-Since rounding is what the overwhelming majority of real `minkowski()` calls
-are for, this covers most usage in practice.
-
-**`hull()` of equal-radius spheres, or of equal-radius parallel cylinders
-sharing one axial span, is computed analytically and exactly.** A hull of
-equal spheres is exactly `offset(convex_hull_of_centers, r)` — the same
-operation as the minkowski case above, since a sphere hull and a
-box-minkowski-ball are the same underlying shape:
-
-```openscad
-// the classic "8 corner posts" rounded-box idiom
 hull() {
     translate([-10,-7.5,-5]) sphere(r=3);
     translate([ 10,-7.5,-5]) sphere(r=3);
-    // ... 6 more corners
+    // ...6 more corners
 }
 ```
 
-Verified exact (~1e-9 relative error) against a box of 8 corners and a
-tetrahedron. A hull of parallel, equal-radius, equal-height cylinders reduces
-the same way one dimension down: project each cylinder's axis onto the plane
-perpendicular to the shared direction, take the 2D convex hull, offset by the
-radius, and extrude along the shared direction — the "rounded box from corner
-posts" idiom seen in real, hand-written OpenSCAD. A fully collinear point set
-(any count, so long as they lie on one line — the common 2-post
-capsule/slot) is built directly as a capsule rather than through a
-degenerate hull.
+<img src="docs/images/hull_analytic.png" width="450" alt="hull() of 8 equal-radius corner spheres, computed exactly by scad123d">
 
-**Deliberately not handled**, and left to fall back to a mesh: a hull of
-equal-radius spheres whose centers are coplanar but not collinear (qhull's 3D
-convex hull raises on degenerate/flat input, so this is a hard fallback, not
-a silent wrong answer); cylinders that don't all share one axial span; hull
-of unequal radii; hull mixing spheres and cylinders; and everything else —
-general Minkowski sums, `projection()`, `surface()`, and mesh `import()`.
-
-**The fallback is *exactly as accurate as OpenSCAD*, since it is OpenSCAD.**
-For any node with no analytic path, scad123d writes just that subtree back out
-as `.csg` (which is itself valid OpenSCAD input), asks OpenSCAD to render it,
-and splices the resulting mesh into the tree with a warning naming the node.
-What you lose is analytic surfaces in that region: no meaningful fillets
-there, and selectors return triangles.
-
-**Scope control.** Meshing a subtree localizes the tessellation, but the mesh
-still propagates upward through any later booleans, and OCCT boolean-ing
-triangle soup is slow and occasionally fails. Two policies:
-
-```python
-scad123d.import_scad(p, mesh_scope="minimal")  # default: mesh only the subtree
-scad123d.import_scad(p, mesh_scope="hoist")    # any unsupported node -> mesh whole model
-```
-
-`minimal` keeps the most analytic geometry; `hoist` is more robust because
-OpenSCAD performs every boolean and you import one clean mesh.
-
-A ladder of further analytic cases — a two-child hull as a `loft` between
-silhouettes, unequal-radius sphere hulls, coplanar sphere hulls — is feasible
-and planned. See `ROADMAP.md`.
-
-### `$fn`, `$fa`, `$fs`
-
-`$fn` is genuinely ambiguous. Set globally it is usually a complexity switch
-(`$fn=48` while developing, `$fn=128` for export) and you want exact BRep
-curves. Set at a call site it is usually intentional geometry —
-`circle(r=10, $fn=6)` *is a hexagon* in OpenSCAD, not an approximation.
-
-**The CSG output cannot distinguish the two.** It records only the effective
-value at each node, so an inherited `$fn=48` and a call-site `$fn=48` look
-identical. scad123d therefore discriminates on magnitude:
-
-| effective `$fn` | behavior |
-|---|---|
-| `0` (unset; `$fa`/`$fs` driving) | exact BRep curves |
-| `1..facet_threshold-1` | faceted — a real N-gon |
-| `>= facet_threshold` (default 20) | exact BRep curves |
-
-```python
-scad123d.import_scad(p, facet_threshold=20)   # default
-scad123d.import_scad(p, facet_threshold=0)    # always exact curves
-scad123d.import_scad(p, facet_threshold=1e9)  # always honor $fn
-```
-
-**Workaround when the heuristic is wrong.** If you genuinely need a 24-sided
-polygon as geometry, either raise `facet_threshold` above it, or make the
-intent explicit in the `.scad` by building the polygon directly:
+But `hull()` in general — arbitrary shapes, spheres of different sizes,
+whatever else OpenSCAD lets you throw into it — has no equivalent operation
+in build123d's kernel at all. When scad123d can't compute an exact answer, it
+doesn't fail: it asks the real OpenSCAD program to render just that piece as
+a mesh and stitches the result in. Your model still imports and still comes
+out correct — you just lose the "real curved surface" benefits (fillets,
+exact export) for that specific piece:
 
 ```openscad
-// instead of circle(r=10, $fn=24), which scad123d reads as "a circle"
-polygon([for (i=[0:23]) [10*cos(i*15), 10*sin(i*15)]]);
+hull() {
+    translate([-8, 0, 0]) sphere(r=5);
+    translate([ 8, 0, 0]) sphere(r=9);   // different radius -- no exact answer
+}
 ```
 
-Faceted `sphere()` at low `$fn` takes the mesh path — OpenSCAD's sphere
-tessellation is a ring construction that is not worth reproducing for a case
-this rare. `circle()` and `cylinder()` facet analytically.
+<img src="docs/images/hull_fallback.png" width="450" alt="hull() of unequal-radius spheres: no exact answer, falls back to a mesh, visibly faceted">
 
-### Not yet implemented
+**scad123d never refuses to import something** — it just tells you, with a
+warning naming the exact operation, whenever a piece of your model had to
+fall back to a mesh instead of staying exact. See
+[docs/REFERENCE.md](docs/REFERENCE.md) for the full, precise list of what's
+covered and what isn't, if you want to know exactly where a particular model
+will land.
 
-- `surface()` and `projection()` — mesh fallback only
-- `import()` of STL/OFF/AMF/3MF — mesh fallback; DXF/SVG unsupported
-- `linear_extrude(twist=...)` — mesh fallback
-- `#` and `%` modifiers are parsed; `%` (background) children are dropped, `#`
-  (highlight) is treated as a no-op. `!` (show-only) is honored. `*` never
-  reaches us — OpenSCAD strips it.
+## A few other things to know
 
-## Security
-
-**scad123d executes the OpenSCAD binary on the file you pass it, and OpenSCAD
-executes the `.scad` language.** A `.scad` file can `include <>` and `use <>`
-arbitrary paths, and `import()`/`surface()` read arbitrary files. Anything
-reachable from an `include` path runs.
-
-Do not call `import_scad()` on untrusted input. There is no sandbox. If you
-must process untrusted `.scad`, run it in a container with no network and a
-read-only filesystem.
+- **Cylinders and circles you deliberately made low-poly** (a hexagon nut, a
+  6-sided bolt head) are preserved as the actual polygon you asked for — not
+  smoothed out into a circle. This is a heuristic based on how many sides you
+  asked for, and it's [configurable](docs/REFERENCE.md#fn-fa-fs) if it ever
+  guesses wrong.
+- A few less-common OpenSCAD features — `projection()`, `surface()`,
+  importing a mesh file with `import()`, `linear_extrude(twist=...)` — always
+  take the mesh-fallback path for now. Everything else works normally.
+- **Only import files you trust.** scad123d runs the real OpenSCAD interpreter
+  on your file, and OpenSCAD can `include` other files or read arbitrary paths
+  from disk — the same way running any script you didn't write is a risk.
+  Don't point this at a `.scad` file from someone you don't trust.
 
 ## Development
 
@@ -244,14 +216,9 @@ just test-ci   # only tiers that need no OpenSCAD binary
 just fixtures  # regenerate committed .csg fixtures + reference metrics
 ```
 
-Tests come in two tiers. Tier 1 parses committed `.csg` fixtures and asserts
-against committed reference metrics (volume, bounding box, centroid) — no
-binary needed, runs anywhere. Tier 2 is marked `needs_openscad` and
-auto-skips when no binary is found; it regenerates `.csg` from `.scad`,
-checks it against the fixture, and runs the STL differential comparison.
-
-CSG export is deterministic and `.csg` → `.csg` is idempotent, which is what
-makes the committed fixtures stable.
+See [docs/REFERENCE.md](docs/REFERENCE.md) for exactly how the import works
+and the precise behavior of every option, and [ROADMAP.md](ROADMAP.md) for
+what's planned next.
 
 ## License
 
