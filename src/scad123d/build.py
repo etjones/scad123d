@@ -13,7 +13,12 @@ from operator import add, and_, sub
 import solid123d as s1
 from build123d import Shape
 
-from .facets import DEFAULT_FACET_THRESHOLD, faceted_circle, faceted_cylinder, should_facet
+from .facets import (
+    DEFAULT_FACET_THRESHOLD,
+    faceted_circle,
+    faceted_cylinder,
+    should_facet,
+)
 from .hull import analytic_hull
 from .mesh import mesh_subtree, warn_meshed
 from .minkowski import analytic_minkowski
@@ -98,7 +103,7 @@ def _fallback(node: CsgNode, options: BuildOptions, reason: str) -> Shape | None
     return mesh_subtree(node, options.timeout)
 
 
-def _build(node: CsgNode, options: BuildOptions) -> Shape | None:  # noqa: C901
+def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
     name = node.name
     a = node.args
 
@@ -174,7 +179,9 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:  # noqa: C901
         shape = _union(_children(node, options))
         rgba = a.get("_0") or a.get("c")
         if shape is not None and rgba:
-            shape = s1.color(list(rgba)[:3], alpha=float(list(rgba)[3]) if len(rgba) > 3 else 1.0)(shape)
+            shape = s1.color(
+                list(rgba)[:3], alpha=float(list(rgba)[3]) if len(rgba) > 3 else 1.0
+            )(shape)
         return shape
 
     if name == "resize":
@@ -233,7 +240,9 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:  # noqa: C901
         analytic = analytic_hull(built)
         if analytic is not None:
             return analytic
-        return _fallback(node, options, "not all children are equal-radius spheres/cylinders")
+        return _fallback(
+            node, options, "not all children are equal-radius spheres/cylinders"
+        )
 
     if name in ("projection", "surface", "import"):
         reasons = {
