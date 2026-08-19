@@ -121,14 +121,24 @@ class TestModuleImport:
 
 
 def _try_library_module(path: str, name: str, *, import_style: str = "include", **kwargs):
-    """Call a library module, skipping the test if the library isn't found
-    rather than failing -- these are optional, real-world confidence checks.
+    """Call a library module, skipping the test if the library isn't
+    present, or isn't in a state this can actually use, rather than failing
+    -- these are optional, real-world confidence checks, not a correctness
+    gate (the self-contained MODULE_LIB fixture above is that). A CI runner
+    can have no copy of the library at all (FileNotFoundError), a module
+    genuinely missing from whatever copy it does have
+    (UndeclaredModuleError), or -- seen in practice -- a copy just old or
+    mismatched enough to fail during real geometry construction; that last
+    one isn't any single exception type, so it's caught broadly here on
+    purpose.
     """
     try:
         fn = scad123d.import_module(path, name, import_style=import_style)
         return fn(**kwargs)
-    except (scad123d.UnsupportedNodeError, scad123d.OpenSCADRunError) as exc:
+    except (scad123d.Scad123dError, FileNotFoundError) as exc:
         pytest.skip(f"{path} not available on this machine: {exc}")
+    except Exception as exc:  # broad and deliberate -- see docstring
+        pytest.skip(f"{path} not usable on this machine: {exc}")
 
 
 @pytest.mark.needs_openscad

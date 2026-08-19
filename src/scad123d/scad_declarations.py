@@ -31,7 +31,12 @@ _TOKEN_RE = re.compile(
     | (?P<string>"(?:\\.|[^"\\])*")
     | (?P<number>\d+\.\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?|\d+(?:[eE][+-]?\d+)?)
     | (?P<ident>\$?[A-Za-z_][A-Za-z_0-9]*)
-    | (?P<punct>[(){}\[\];,=?:+\-*/%<>!&|.#])
+    # "\" isn't meaningful OpenSCAD syntax outside strings (already atomic
+    # above), but it must still tokenize to *something* rather than being
+    # silently dropped -- a use<>/include<> target gets reconstructed by
+    # concatenating tokens between "<" and ">", and a Windows absolute path
+    # is full of backslashes.
+    | (?P<punct>[(){}\[\];,=?:+\-*/%<>!&|.#\\])
     """,
     re.VERBOSE | re.DOTALL,
 )
