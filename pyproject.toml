@@ -27,6 +27,9 @@ Homepage = "https://github.com/etjones/scad123d"
 Repository = "https://github.com/etjones/scad123d"
 Issues = "https://github.com/etjones/scad123d/issues"
 
+[project.scripts]
+scad2step = "scad123d.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

@@ -10,6 +10,7 @@ in a solid-modeling kernel instead of a mesh renderer.
 
 ```python
 import scad123d
+from build123d import export_step, export_stl
 
 # Call one module from a library directly, like a Python function --
 # usually what you actually want:
@@ -24,8 +25,8 @@ part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_d
 part = scad123d.import_scad("bracket.scad")
 
 # Export to STEP or STL:
-part.export_step("part.step")
-part.export_stl("part.stl")
+export_step(part, "part.step")
+export_stl(part, "part.stl")
 ```
 
 Calling an OpenSCAD module returns a normal build123d object, so from there 
@@ -86,14 +87,15 @@ pretending to be one.
 
 ```python
 import scad123d
+from build123d import export_step, export_stl
 # cube_cyl.scad:
 # union() {
 #   cube([10, 10, 5]);
 #   cylinder(h=10, r=3, center=true);
 # }
 part = scad123d.import_scad("cube_cyl.scad")
-part.export_step("cube_cyl.step")
-part.export_stl("cube_cyl.stl")
+export_step(part, "cube_cyl.step")
+export_stl(part, "cube_cyl.stl")
 ```
 
 Here's one model — a cylinder rising out of a cube — each way, with edges 
@@ -113,11 +115,11 @@ instead of the surface. Because scad123d keeps the real geometry, you can
 fillet and chamfer edges normally after importing:
 
 ```python
-from build123d import fillet, Axis
+from build123d import fillet, Axis, export_step
 
 part = scad123d.import_scad("bracket.scad")
 part = fillet(part.edges().group_by(Axis.Z)[-1], radius=2)
-part.export_step("bracket_fillet.step")
+export_step(part, "bracket_fillet.step")
 ```
 
 Here's a [BOSL2](https://github.com/BelfrySCAD/BOSL2) `tube()` imported and
@@ -271,6 +273,9 @@ know exactly where a particular model will land.
   on your file, and OpenSCAD can `include` other files or read arbitrary paths
   from disk — the same way running any script you didn't write is a risk.
   Don't point this at a `.scad` file from someone you don't trust.
+- **Just want a STEP file, no Python?** `uvx scad2step yourfile.scad -o
+  out.step` does exactly that from the command line — see
+  [scad2step](https://github.com/etjones/scad2step).
 
 ## Development
 
