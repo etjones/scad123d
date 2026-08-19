@@ -16,12 +16,17 @@ import scad123d
 gear = scad123d.import_module("MCAD/involute_gears.scad", "gear", import_style="use")
 part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 
+# Or import a whole library file's modules at once, as a namespace:
+gears = scad123d.import_module("MCAD/involute_gears.scad", import_style="use")
+part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
+
 # Or bring in a whole file's geometry at once:
 part = scad123d.import_scad("bracket.scad")
 ```
 
-Both return a normal build123d object, so from here you're just doing
-build123d.
+Calling a module -- through either form of `import_module` -- returns a
+normal build123d object, and so does `import_scad`, so from there you're
+just doing build123d.
 
 ## Why this exists
 

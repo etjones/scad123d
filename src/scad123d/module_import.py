@@ -27,7 +27,7 @@ import keyword
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, overload
 
 from build123d import Shape
 
@@ -226,6 +226,30 @@ class ScadLibrary:
         return (
             f"<ScadLibrary {str(self.__path)!r}: {', '.join(sorted(self.__mapping))}>"
         )
+
+
+@overload
+def import_module(
+    path: str | Path,
+    module_name: str,
+    *,
+    import_style: str = "include",
+    facet_threshold: int = DEFAULT_FACET_THRESHOLD,
+    mesh_scope: str = "minimal",
+    timeout: float = 600,
+) -> Callable[..., Shape]: ...
+
+
+@overload
+def import_module(
+    path: str | Path,
+    module_name: None = None,
+    *,
+    import_style: str = "include",
+    facet_threshold: int = DEFAULT_FACET_THRESHOLD,
+    mesh_scope: str = "minimal",
+    timeout: float = 600,
+) -> ScadLibrary: ...
 
 
 def import_module(
