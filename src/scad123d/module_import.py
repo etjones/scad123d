@@ -11,9 +11,16 @@ builds a small temporary wrapper file per call --
     include <the library>
     the_module(args);
 
--- and runs it through the same CSG pipeline as ``import_scad()``.
+-- and runs it through the same CSG pipeline as ``import_scad()``. Unlike a
+plain ``*args, **kwargs`` wrapper, the returned callable's signature is built
+from the module's actual declared parameters (see ``scad_declarations``):
+calling it with a bad argument name is a ``TypeError`` from Python itself,
+a missing required argument is caught before OpenSCAD ever runs, and a
+missing file or module is an error at ``import_module()`` time rather than
+a confusing empty result at call time.
 """
 
+import keyword
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -22,29 +29,63 @@ from typing import Any
 from build123d import Shape
 
 from .build import BuildOptions, build
-from .errors import UnsupportedNodeError
+from .errors import MissingArgumentError, UndeclaredModuleError, UnsupportedNodeError
 from .facets import DEFAULT_FACET_THRESHOLD
 from .openscad import export_csg_with_warnings, scad_literal
 from .parser import parse_csg
+from .scad_declarations import find_module, resolve_scad_path
 
 _IMPORT_STYLES = ("include", "use")
 
+_UNSET = object()
 
-def _reference(path: str | Path) -> str:
-    """The text to put inside ``include <...>`` / ``use <...>``.
 
-    A path that exists locally is resolved to an absolute path: the
-    generated wrapper file lives in a fresh temp directory on every call, so
-    a relative include would resolve against the wrong directory otherwise.
-    A path that doesn't exist locally (``"BOSL2/std.scad"``) is passed
-    through untouched, for OpenSCAD's own library-path search
-    (``$OPENSCADPATH`` and the default library folders) to resolve exactly
-    the way it would in a `.scad` file you wrote by hand.
+def _python_identifier(name: str, used: set[str]) -> str:
+    """A valid, non-colliding Python identifier for an OpenSCAD parameter name.
+
+    ``$fn`` -> ``fn``; a Python keyword gets a trailing underscore; a name
+    that would still collide with an earlier parameter (rare, but nothing in
+    OpenSCAD's grammar forbids e.g. ``$x`` and ``x`` in the same parameter
+    list) gets a numeric suffix.
     """
-    candidate = Path(path)
-    if candidate.exists():
-        return str(candidate.resolve())
-    return str(path)
+    ident = name.lstrip("$")
+    if not ident or not (ident[0].isalpha() or ident[0] == "_"):
+        ident = "_" + ident
+    if keyword.iskeyword(ident):
+        ident += "_"
+    base, n = ident, 2
+    while ident in used:
+        ident = f"{base}_{n}"
+        n += 1
+    used.add(ident)
+    return ident
+
+
+def _build_callable(
+    module_name: str, params: tuple, dispatch: Callable[[dict[str, Any]], Shape]
+) -> Callable[..., Shape]:
+    """A real Python function with one parameter per declared OpenSCAD
+    parameter, in the same order -- so positional calls, keyword calls, and
+    ``help()``/autocomplete all reflect the module's actual signature.
+
+    Every parameter defaults to a private "not supplied" sentinel rather
+    than e.g. ``None``, and only parameters the caller actually set are
+    forwarded to ``dispatch`` -- ``None`` is a real OpenSCAD value
+    (``undef``), distinct from "let the module's own default apply".
+    """
+    used: set[str] = set()
+    py_names = [_python_identifier(p.name, used) for p in params]
+    params_src = ", ".join(f"{py} = _UNSET" for py in py_names)
+    pairs_src = ", ".join(f"{p.name!r}: {py}" for p, py in zip(params, py_names))
+    func_name = _python_identifier(module_name, set())
+    source = f"def {func_name}({params_src}):\n    return _dispatch({{{pairs_src}}})\n"
+
+    namespace: dict[str, Any] = {}
+    exec(source, {"_UNSET": _UNSET, "_dispatch": dispatch}, namespace)
+    func = namespace[func_name]
+    func.__name__ = module_name
+    func.__qualname__ = module_name
+    return func
 
 
 def import_module(
@@ -61,7 +102,27 @@ def import_module(
     ``path`` is either a real local ``.scad`` file, or a library-style
     reference such as ``"BOSL2/std.scad"``, resolved the same way OpenSCAD
     resolves an ``include <BOSL2/std.scad>`` written by hand: via
-    ``$OPENSCADPATH`` and the default library folders.
+    ``$OPENSCADPATH`` and the default library folders. Unlike OpenSCAD's own
+    resolution, a file that can't be found raises immediately, here, rather
+    than surfacing later as an empty result.
+
+    ``path`` is parsed for its top-level ``module`` declarations (not
+    evaluated) -- and, if ``module_name`` isn't declared there directly, so
+    is everything ``path`` itself ``use``s/``include``s, breadth-first,
+    however deep that goes. This matters because plenty of real libraries'
+    entry points have no declarations of their own and just gather them from
+    other files (BOSL2's ``std.scad`` is exactly this). A typo or genuinely
+    missing module raises immediately, listing every module name seen along
+    the way.
+
+    A parameter with no ``= default`` in the declaration is required; the
+    returned callable enforces that itself, before OpenSCAD ever runs, with
+    a message naming the missing parameter. Note this is the *declaration's*
+    defaults, not necessarily a module's effective behavior -- some libraries
+    (BOSL2 included) declare a parameter bare and assign its real default
+    inside the body (``size = size == undef ? [1,1,1] : size;``), which this
+    has no way to see; such a parameter will be required here even though
+    calling it from the module's own file could omit it.
 
     ``import_style`` controls how the module's file is brought into the
     generated wrapper:
@@ -84,20 +145,34 @@ def import_module(
 
     Every call re-invokes OpenSCAD -- there is no OpenSCAD-level operation
     for "just run this module", so this generates and runs a small temporary
-    wrapper file each time. That also means a bad module or argument name is
-    not a Python-level error at ``import_module()`` time; OpenSCAD treats
-    both as warnings, not failures, so it is only caught when the resulting
-    call produces no geometry (see the raised error for what to check).
+    wrapper file each time.
     """
     if import_style not in _IMPORT_STYLES:
         raise ValueError(f"import_style must be 'include' or 'use', got {import_style!r}")
-    reference = _reference(path)
 
-    def call(*args: Any, **kwargs: Any) -> Shape:
-        parts = [scad_literal(a) for a in args]
-        parts += [f"{name} = {scad_literal(value)}" for name, value in kwargs.items()]
+    try:
+        decl, _declaring_file = find_module(path, module_name)
+    except LookupError as exc:
+        raise UndeclaredModuleError(str(exc)) from exc
+    # The wrapper includes/uses the file the caller asked for, not
+    # necessarily the one that turned out to declare the module -- a
+    # library's entry point (e.g. BOSL2's std.scad) reaching the real
+    # definition transitively is the normal case, not an edge case, and
+    # `path` is what the caller actually wrote and expects to see honored.
+    resolved = resolve_scad_path(path)
+    required = {p.name for p in decl.parameters if p.required}
+
+    def dispatch(kwargs: dict[str, Any]) -> Shape:
+        supplied = {name: value for name, value in kwargs.items() if value is not _UNSET}
+        missing = required - supplied.keys()
+        if missing:
+            name = sorted(missing)[0]
+            raise MissingArgumentError(
+                f"argument {name!r} is required in call to {module_name!r}"
+            )
+        parts = [f"{name} = {scad_literal(value)}" for name, value in supplied.items()]
         call_text = f"{module_name}({', '.join(parts)})"
-        source = f"{import_style} <{reference}>\n{call_text};\n"
+        source = f"{import_style} <{resolved}>\n{call_text};\n"
 
         with tempfile.TemporaryDirectory() as tmp:
             wrapper = Path(tmp) / "wrapper.scad"
@@ -110,13 +185,10 @@ def import_module(
 
         if shape is None:
             hint = f"\nOpenSCAD reported:\n{warnings.strip()}" if warnings.strip() else ""
-            raise UnsupportedNodeError(
-                f"{call_text} produced no geometry -- check the module name "
-                f"and argument names against {path}.{hint}"
-            )
+            raise UnsupportedNodeError(f"{call_text} produced no geometry.{hint}")
         return shape
 
-    call.__name__ = module_name
-    call.__qualname__ = module_name
-    call.__doc__ = f"Calls the OpenSCAD module {module_name!r} from {path!r}."
-    return call
+    func = _build_callable(module_name, decl.parameters, dispatch)
+    param_list = ", ".join(p.name if p.required else f"{p.name}=..." for p in decl.parameters)
+    func.__doc__ = f"Calls the OpenSCAD module {module_name}({param_list}) from {path!r}."
+    return func

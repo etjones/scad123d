@@ -79,17 +79,43 @@ and running it through the same CSG pipeline as `import_scad()`. Every call
 to the returned callable re-invokes OpenSCAD; there is no cheaper path,
 since OpenSCAD itself has no "call one module" mode.
 
-**Path resolution.** `path` is resolved two ways:
+**`import_module()` reads and parses `path` before anything runs.** It
+tokenizes the file's `module`/`function` declarations — names and parameter
+lists, not evaluated — and builds a real Python function with a matching
+signature: same parameter names, same positional/keyword order, and a
+required parameter (no `= default` in the declaration) enforced before
+OpenSCAD ever runs, with a message naming it (`argument 'rad' is required
+in call to 'some_func'`). This means several things that used to only fail
+at call time now fail immediately, at `import_module()` time:
 
-- If it names a real local file, it's resolved to an absolute path before
-  being written into the wrapper. This matters because the wrapper lives in
-  a fresh temporary directory on every call, so a relative `include` would
-  resolve against the wrong directory (OpenSCAD resolves a relative
-  `include <>`/`use <>` against the directory of the file *containing* the
-  statement) if left relative.
-- Otherwise (`"BOSL2/std.scad"`, `"MCAD/involute_gears.scad"`), it's passed
-  through untouched, exactly as if you'd written that `include <>`/`use <>`
-  by hand — resolved via `$OPENSCADPATH` and the default library folders.
+- A `path` that can't be found (`FileNotFoundError`).
+- A `module_name` not declared in `path` — or in anything `path` itself
+  `use`s/`include`s, transitively, however deep that goes, since a
+  library's entry point commonly has no declarations of its own and just
+  gathers them from other files (`UndeclaredModuleError`, listing every
+  module name actually found along the way).
+
+And a couple of things now fail as ordinary Python errors on the returned
+callable, before OpenSCAD ever runs:
+
+- A typo'd keyword argument the module doesn't have (`TypeError`, from
+  Python's own call-signature checking).
+- A required argument omitted (`MissingArgumentError`, naming it).
+
+**The declaration is the source of truth, which has one real caveat.** Some
+libraries — BOSL2 among them — declare a parameter bare (no `= default`)
+and assign its actual default *inside the body* instead
+(`chamfer = chamfer == undef ? 0 : chamfer;`). `import_module` has no way to
+see that; such a parameter counts as required here even though the module's
+own callers can omit it. Pass `None` explicitly for these — it becomes
+`undef`, exactly what an omitted argument would have been.
+
+**Path resolution.** `path` is resolved the same way OpenSCAD resolves an
+`include <>`/`use <>` written by hand: as given (absolute, or relative to
+the current directory), or via `$OPENSCADPATH` and the default library
+folders. A file transitively reached through another file's own
+`use`/`include` is resolved relative to *that file's* directory, matching
+OpenSCAD's own behavior for library-internal references.
 
 **`include` vs `use`.** `import_module` defaults to `include`, which brings
 in a library's module/function definitions *and* its variables and any
@@ -106,21 +132,16 @@ library file might render at its own top level. Pass
 arguments the same way the OpenSCAD module does; both are rendered to
 OpenSCAD literal syntax and spliced into the generated call. `None` becomes
 `undef`; lists, strings, bools, and numbers all follow OpenSCAD's own
-literal syntax.
+literal syntax. Only arguments you actually pass are forwarded to
+OpenSCAD — an omitted optional argument lets the module's own `= default`
+apply, rather than being overridden with an explicit `undef`.
 
-**A wrong module or argument name is not a Python-level error where you
-might expect it.** OpenSCAD treats an unknown module name, or an argument
-name a module doesn't recognize, as a *warning*, not a failure — it exits
-successfully and just renders less than you asked for (an unrecognized
-argument silently falls back to that parameter's default; an unknown module
-call renders nothing at all). `import_module` cannot detect this at the
-point you call `import_module()` itself, since nothing runs until you
-actually call the returned function. When a call produces no geometry at
-all, the raised `UnsupportedNodeError` includes OpenSCAD's own warning text,
-which is usually enough to spot a typo'd name immediately. A typo'd
-*argument* name that still produces geometry (because the module fell back
-to a default) will not raise anything — check the result if you're not sure
-your arguments were actually recognized.
+**A module name OpenSCAD itself doesn't recognize at runtime is still only
+caught when the call produces no geometry.** Declaration parsing catches a
+module name that plainly isn't declared anywhere reachable from `path`, but
+can't catch every way a call can still go wrong inside OpenSCAD itself. When
+that happens, the raised `UnsupportedNodeError` includes OpenSCAD's own
+warning text.
 
 ## `hull()` and `minkowski()`
 

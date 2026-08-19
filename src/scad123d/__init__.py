@@ -15,9 +15,11 @@ from build123d import Shape
 
 from .build import BuildOptions, build
 from .errors import (
+    MissingArgumentError,
     OpenSCADNotFoundError,
     OpenSCADRunError,
     Scad123dError,
+    UndeclaredModuleError,
     UnsupportedNodeError,
 )
 from .facets import DEFAULT_FACET_THRESHOLD
@@ -29,9 +31,11 @@ from .parser import parse_csg, parse_csg_file
 __all__ = [
     "DEFAULT_FACET_THRESHOLD",
     "CsgNode",
+    "MissingArgumentError",
     "OpenSCADNotFoundError",
     "OpenSCADRunError",
     "Scad123dError",
+    "UndeclaredModuleError",
     "UnsupportedNodeError",
     "find_openscad",
     "import_csg",

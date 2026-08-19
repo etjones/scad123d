@@ -13,8 +13,8 @@ import scad123d
 
 # Call one module from a library directly, like a Python function --
 # usually what you actually want:
-cuboid = scad123d.import_module("BOSL2/std.scad", "cuboid")
-box = cuboid(size=[20, 15, 10], rounding=3)
+gear = scad123d.import_module("MCAD/involute_gears.scad", "gear", import_style="use")
+part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 
 # Or bring in a whole file's geometry at once:
 part = scad123d.import_scad("bracket.scad")
@@ -142,8 +142,14 @@ with different arguments:
 
 ```python
 cuboid = scad123d.import_module("BOSL2/std.scad", "cuboid")
-box = cuboid(size=[20, 15, 10], rounding=3)
-small_box = cuboid(size=[10, 10, 10], rounding=1)
+# BOSL2's cuboid() declares p1/p2/chamfer/except_edges/clip_angle with no
+# default in the declaration itself (it fills them in inside the body
+# instead), so import_module()'s signature checking treats them as
+# required. None -> undef, same as not passing them at all. See
+# docs/REFERENCE.md for why.
+extra = dict(p1=None, p2=None, chamfer=None, except_edges=None, clip_angle=None)
+box = cuboid(size=[20, 15, 10], rounding=3, **extra)
+small_box = cuboid(size=[10, 10, 10], rounding=1, **extra)
 ```
 
 `import_style` controls how the library file is brought in: `"include"`
