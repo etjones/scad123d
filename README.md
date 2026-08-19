@@ -102,8 +102,8 @@ each panel boundary is an edge in the mesh. The scad123d version maintains
 the true edges of the shape and has just one face for the cylinder.
 
 <p>
-<img src="docs/images/stl_vs_step_stl.png" width="400" alt="OpenSCAD's STL export of a cylinder on a cube, with every facet edge highlighted -- dozens of visible lines around the cylinder">
-<img src="docs/images/stl_vs_step_step.png" width="400" alt="scad123d's STEP-equivalent export of the same model, with only the true edges highlighted -- a clean circle at top and bottom, no facet lines">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/stl_vs_step_stl.png" width="400" alt="OpenSCAD's STL export of a cylinder on a cube, with every facet edge highlighted -- dozens of visible lines around the cylinder">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/stl_vs_step_step.png" width="400" alt="scad123d's STEP-equivalent export of the same model, with only the true edges highlighted -- a clean circle at top and bottom, no facet lines">
 </p>
 
 
@@ -124,7 +124,7 @@ Here's a [BOSL2](https://github.com/BelfrySCAD/BOSL2) `tube()` imported and
 then filleted — a smooth, continuous rounded rim, instead of a faceted
 approximation of one. 
 
-<img src="docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim and its real edges highlighted">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim and its real edges highlighted">
 
 **No lost precision.** Nothing gets tessellated until you ask for a mesh
 (e.g. exporting an STL for printing). Curves stay curves through as many
@@ -156,7 +156,7 @@ gear = scad123d.import_module("MCAD/involute_gears.scad", "gear")
 part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 ```
 
-<img src="docs/images/mcad_gear.png" width="450" alt="An MCAD involute gear imported via scad123d">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/mcad_gear.png" width="450" alt="An MCAD involute gear imported via scad123d">
 
 ### Importing all modules from a file
 
@@ -203,8 +203,8 @@ Same `minkowski()` call, OpenSCAD's own result on the left, scad123d's on the
 right:
 
 <p>
-<img src="docs/images/minkowski_before.png" width="400" alt="OpenSCAD's own minkowski() result: visibly faceted corners">
-<img src="docs/images/minkowski_after.png" width="400" alt="scad123d's minkowski() result: smooth, exact rounded corners">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/minkowski_before.png" width="400" alt="OpenSCAD's own minkowski() result: visibly faceted corners">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/minkowski_after.png" width="400" alt="scad123d's minkowski() result: smooth, exact rounded corners">
 </p>
 
 This covers the overwhelming majority of real-world `minkowski()` calls,
@@ -224,7 +224,7 @@ hull() {
 }
 ```
 
-<img src="docs/images/hull_analytic.png" width="450" alt="hull() of 8 equal-radius corner spheres, computed exactly by scad123d">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_analytic.png" width="450" alt="hull() of 8 equal-radius corner spheres, computed exactly by scad123d">
 
 But `hull()` in general — arbitrary shapes, spheres of different sizes,
 whatever else OpenSCAD lets you throw into it — has no equivalent operation
@@ -241,22 +241,22 @@ hull() {
 }
 ```
 
-<img src="docs/images/hull_fallback.png" width="450" alt="hull() of unequal-radius spheres: no exact answer, falls back to a mesh, visibly faceted">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_fallback.png" width="450" alt="hull() of unequal-radius spheres: no exact answer, falls back to a mesh, visibly faceted">
 
 **scad123d never refuses to import something** — it just tells you, with a
 warning naming the exact operation, whenever a piece of your model had to
 fall back to a mesh instead of staying exact. See
-[docs/REFERENCE.md](docs/REFERENCE.md) for the full, precise list of what's
-covered and what isn't, if you want to know exactly where a particular model
-will land.
+[docs/REFERENCE.md](https://github.com/etjones/scad123d/blob/main/docs/REFERENCE.md)
+for the full, precise list of what's covered and what isn't, if you want to
+know exactly where a particular model will land.
 
 ## A few other things to know
 
 - **Cylinders and circles you deliberately made low-poly** (a hexagon nut, a
   6-sided bolt head) are preserved as the actual polygon you asked for — not
   smoothed out into a circle. This is a heuristic based on how many sides you
-  asked for, and it's [configurable](docs/REFERENCE.md#fn-fa-fs) if it ever
-  guesses wrong.
+  asked for, and it's [configurable](https://github.com/etjones/scad123d/blob/main/docs/REFERENCE.md#fn-fa-fs)
+  if it ever guesses wrong.
 - A few less-common OpenSCAD features — `projection()`, `surface()`,
   importing a mesh file with `import()`, `linear_extrude(twist=...)` — always
   take the mesh-fallback path for now. Everything else works normally.
@@ -265,7 +265,7 @@ will land.
   BOSL2 and MCAD — you shouldn't need to think about it. If a call fails
   complaining about a missing variable, or comes back with extra geometry
   you didn't ask for, pass `import_style="include"`/`"use"` explicitly; see
-  [docs/REFERENCE.md](docs/REFERENCE.md#calling-a-module-or-a-whole-files-worth-of-them)
+  [docs/REFERENCE.md](https://github.com/etjones/scad123d/blob/main/docs/REFERENCE.md#calling-a-module-or-a-whole-files-worth-of-them)
   for how the guess works and when to override it.  
 - **Only import files you trust.** scad123d runs the real OpenSCAD interpreter
   on your file, and OpenSCAD can `include` other files or read arbitrary paths
@@ -280,9 +280,10 @@ just test-ci   # only tiers that need no OpenSCAD binary
 just fixtures  # regenerate committed .csg fixtures + reference metrics
 ```
 
-See [docs/REFERENCE.md](docs/REFERENCE.md) for exactly how the import works
-and the precise behavior of every option, and [ROADMAP.md](ROADMAP.md) for
-what's planned next.
+See [docs/REFERENCE.md](https://github.com/etjones/scad123d/blob/main/docs/REFERENCE.md)
+for exactly how the import works and the precise behavior of every option,
+and [ROADMAP.md](https://github.com/etjones/scad123d/blob/main/ROADMAP.md)
+for what's planned next.
 
 ## License
 
