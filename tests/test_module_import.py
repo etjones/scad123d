@@ -34,7 +34,9 @@ def test_missing_file_raises_immediately(tmp_path):
 
 
 def test_unknown_module_raises_immediately_with_a_helpful_message():
-    with pytest.raises(scad123d.UndeclaredModuleError, match="this_module_does_not_exist"):
+    with pytest.raises(
+        scad123d.UndeclaredModuleError, match="this_module_does_not_exist"
+    ):
         scad123d.import_module(MODULE_LIB, "this_module_does_not_exist")
 
 
@@ -74,9 +76,9 @@ def test_module_found_transitively_through_use_and_include(tmp_path):
     leaf = tmp_path / "leaf.scad"
     leaf.write_text("module leaf_box(size) { cube(size); }")
     middle = tmp_path / "middle.scad"
-    middle.write_text(f'include <{leaf}>\n')
+    middle.write_text(f"include <{leaf}>\n")
     root = tmp_path / "root.scad"
-    root.write_text(f'include <{middle}>\n')
+    root.write_text(f"include <{middle}>\n")
 
     leaf_box = scad123d.import_module(root, "leaf_box")
     assert list(inspect.signature(leaf_box).parameters) == ["size"]
@@ -107,7 +109,7 @@ class TestScadLibrary:
     def test_unknown_attribute_raises_attribute_error(self):
         lib = scad123d.import_module(MODULE_LIB)
         with pytest.raises(AttributeError, match="this_module_does_not_exist"):
-            lib.this_module_does_not_exist
+            _ = lib.this_module_does_not_exist
 
     def test_hasattr_works_normally(self):
         lib = scad123d.import_module(MODULE_LIB)
@@ -122,7 +124,7 @@ class TestScadLibrary:
         lib = scad123d.import_module(lib_file)
         assert dir(lib) == ["a_module"]
         with pytest.raises(AttributeError):
-            lib.a_function
+            _ = lib.a_function
 
     def test_repr_lists_modules(self):
         lib = scad123d.import_module(MODULE_LIB)
@@ -146,7 +148,9 @@ def test_repeated_import_module_calls_do_not_require_a_fresh_file_read(tmp_path)
 
     a1 = scad123d.import_module(lib, "a")
     a2 = scad123d.import_module(lib, "a")
-    assert list(inspect.signature(a1).parameters) == list(inspect.signature(a2).parameters)
+    assert list(inspect.signature(a1).parameters) == list(
+        inspect.signature(a2).parameters
+    )
 
     library = scad123d.import_module(lib)
     assert dir(library) == ["a", "b"]
@@ -179,7 +183,12 @@ class TestModuleImport:
         a, b, c, r = 20.0, 15.0, 10.0, 1.0
         edges = [(a, math.pi / 2)] * 4 + [(b, math.pi / 2)] * 4 + [(c, math.pi / 2)] * 4
         area = 2 * (a * b + b * c + c * a)
-        exact = a * b * c + area * r + r * r / 2 * sum(l * t for l, t in edges) + (4 / 3) * math.pi * r**3
+        exact = (
+            a * b * c
+            + area * r
+            + r * r / 2 * sum(l * t for l, t in edges)
+            + (4 / 3) * math.pi * r**3
+        )
         assert box.volume == pytest.approx(exact, rel=1e-6)
 
     def test_same_callable_reused_with_different_arguments(self):
@@ -190,7 +199,9 @@ class TestModuleImport:
         assert large.volume == pytest.approx(8000, rel=1e-9)
 
 
-def _try_library_module(path: str, name: str, *, import_style: str = "include", **kwargs):
+def _try_library_module(
+    path: str, name: str, *, import_style: str = "include", **kwargs
+):
     """Call a library module, skipping the test if the library isn't
     present, or isn't in a state this can actually use, rather than failing
     -- these are optional, real-world confidence checks, not a correctness
@@ -207,7 +218,7 @@ def _try_library_module(path: str, name: str, *, import_style: str = "include", 
         return fn(**kwargs)
     except (scad123d.Scad123dError, FileNotFoundError) as exc:
         pytest.skip(f"{path} not available on this machine: {exc}")
-    except Exception as exc:  # broad and deliberate -- see docstring
+    except Exception as exc:  # broad and deliberate -- see docstring # noqa: BLE001
         pytest.skip(f"{path} not usable on this machine: {exc}")
 
 

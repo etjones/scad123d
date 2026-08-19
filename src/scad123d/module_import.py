@@ -36,7 +36,12 @@ from .errors import MissingArgumentError, UndeclaredModuleError, UnsupportedNode
 from .facets import DEFAULT_FACET_THRESHOLD
 from .openscad import export_csg_with_warnings, scad_literal
 from .parser import parse_csg
-from .scad_declarations import ScadDeclaration, find_module, module_map, resolve_scad_path
+from .scad_declarations import (
+    ScadDeclaration,
+    find_module,
+    module_map,
+    resolve_scad_path,
+)
 
 _IMPORT_STYLES = ("include", "use")
 
@@ -108,11 +113,15 @@ def _build_module_callable(
     required = {p.name for p in decl.parameters if p.required}
 
     def dispatch(kwargs: dict[str, Any]) -> Shape:
-        supplied = {name: value for name, value in kwargs.items() if value is not _UNSET}
+        supplied = {
+            name: value for name, value in kwargs.items() if value is not _UNSET
+        }
         missing = required - supplied.keys()
         if missing:
-            name = sorted(missing)[0]
-            raise MissingArgumentError(f"argument {name!r} is required in call to {module_name!r}")
+            name = min(missing)
+            raise MissingArgumentError(
+                f"argument {name!r} is required in call to {module_name!r}"
+            )
         parts = [f"{name} = {scad_literal(value)}" for name, value in supplied.items()]
         call_text = f"{module_name}({', '.join(parts)})"
         source = f"{import_style} <{resolved}>\n{call_text};\n"
@@ -123,16 +132,22 @@ def _build_module_callable(
             csg_text, warnings = export_csg_with_warnings(wrapper, timeout=timeout)
 
         tree = parse_csg(csg_text)
-        options = BuildOptions(facet_threshold=facet_threshold, mesh_scope=mesh_scope, timeout=timeout)
+        options = BuildOptions(
+            facet_threshold=facet_threshold, mesh_scope=mesh_scope, timeout=timeout
+        )
         shape = build(tree, options)
 
         if shape is None:
-            hint = f"\nOpenSCAD reported:\n{warnings.strip()}" if warnings.strip() else ""
+            hint = (
+                f"\nOpenSCAD reported:\n{warnings.strip()}" if warnings.strip() else ""
+            )
             raise UnsupportedNodeError(f"{call_text} produced no geometry.{hint}")
         return shape
 
     func = _build_callable(module_name, decl.parameters, dispatch)
-    param_list = ", ".join(p.name if p.required else f"{p.name}=..." for p in decl.parameters)
+    param_list = ", ".join(
+        p.name if p.required else f"{p.name}=..." for p in decl.parameters
+    )
     func.__doc__ = f"Calls the OpenSCAD module {module_name}({param_list})."
     return func
 
@@ -171,10 +186,17 @@ class ScadLibrary:
         self.__timeout = timeout
 
     def __getattr__(self, name: str) -> Callable[..., Shape]:
+        # this method enables lazy loading of OpenSCAD modules;
+        # the first time a module is accessed, it is built and cached,
+        # subsequent accesses return the cached function
         entry = self.__mapping.get(name)
         if entry is None:
             available = ", ".join(sorted(self.__mapping))
-            hint = f" Modules declared: {available}." if available else " No modules were declared anywhere reachable from this file."
+            hint = (
+                f" Modules declared: {available}."
+                if available
+                else " No modules were declared anywhere reachable from this file."
+            )
             raise AttributeError(f"no module {name!r} in {self.__path!r}.{hint}")
         decl, _declaring_file = entry
         func = _build_module_callable(
@@ -201,7 +223,9 @@ class ScadLibrary:
         return sorted(self.__mapping)
 
     def __repr__(self) -> str:
-        return f"<ScadLibrary {str(self.__path)!r}: {', '.join(sorted(self.__mapping))}>"
+        return (
+            f"<ScadLibrary {str(self.__path)!r}: {', '.join(sorted(self.__mapping))}>"
+        )
 
 
 def import_module(
@@ -279,7 +303,9 @@ def import_module(
     wrapper file each time.
     """
     if import_style not in _IMPORT_STYLES:
-        raise ValueError(f"import_style must be 'include' or 'use', got {import_style!r}")
+        raise ValueError(
+            f"import_style must be 'include' or 'use', got {import_style!r}"
+        )
 
     resolved = resolve_scad_path(path)
 
