@@ -30,6 +30,7 @@ Issues = "https://github.com/etjones/scad123d/issues"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.16.3",
     "watchfiles>=0.21",
 ]
 

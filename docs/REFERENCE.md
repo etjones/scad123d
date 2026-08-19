@@ -63,7 +63,7 @@ of OpenSCAD; it delegates to it. Discovery order:
 
 CSG export needs no OpenGL, so no `xvfb` wrapper is required on headless Linux.
 
-## Calling a single module
+## Calling a module, or a whole file's worth of them
 
 There is no OpenSCAD-level operation for "just run this one module" — a
 `.scad` file's CSG export is always the result of its top-level statements.
@@ -79,48 +79,136 @@ and running it through the same CSG pipeline as `import_scad()`. Every call
 to the returned callable re-invokes OpenSCAD; there is no cheaper path,
 since OpenSCAD itself has no "call one module" mode.
 
-**Path resolution.** `path` is resolved two ways:
+**`import_module()` reads and parses `path` before anything runs.** It
+tokenizes the file's `module`/`function` declarations — names and parameter
+lists, not evaluated — and builds a real Python function with a matching
+signature: same parameter names, same positional/keyword order, and a
+required parameter (no `= default` in the declaration) enforced before
+OpenSCAD ever runs, with a message naming it (`argument 'rad' is required
+in call to 'some_func'`). This means several things that used to only fail
+at call time now fail immediately, at `import_module()` time:
 
-- If it names a real local file, it's resolved to an absolute path before
-  being written into the wrapper. This matters because the wrapper lives in
-  a fresh temporary directory on every call, so a relative `include` would
-  resolve against the wrong directory (OpenSCAD resolves a relative
-  `include <>`/`use <>` against the directory of the file *containing* the
-  statement) if left relative.
-- Otherwise (`"BOSL2/std.scad"`, `"MCAD/involute_gears.scad"`), it's passed
-  through untouched, exactly as if you'd written that `include <>`/`use <>`
-  by hand — resolved via `$OPENSCADPATH` and the default library folders.
+- A `path` that can't be found (`FileNotFoundError`).
+- A `module_name` not declared in `path` — or in anything `path` itself
+  `use`s/`include`s, transitively, however deep that goes, since a
+  library's entry point commonly has no declarations of its own and just
+  gathers them from other files (`UndeclaredModuleError`, listing every
+  module name actually found along the way).
 
-**`include` vs `use`.** `import_module` defaults to `include`, which brings
-in a library's module/function definitions *and* its variables and any
-top-level code it runs. `use` brings in only definitions. This matters
-because it's not just a style choice: some libraries' modules rely on
-variables defined at the library's top level (BOSL2 is documented and
-commonly used via `include`), and `use` would silently leave those
-undefined. Other libraries are conventionally brought in with `use` (MCAD's
-own examples do this) specifically to avoid re-running any demo geometry a
-library file might render at its own top level. Pass
-`import_style="use"` when you know a library expects it.
+And a couple of things now fail as ordinary Python errors on the returned
+callable, before OpenSCAD ever runs:
+
+- A typo'd keyword argument the module doesn't have (`TypeError`, from
+  Python's own call-signature checking).
+- A required argument omitted (`MissingArgumentError`, naming it).
+
+**The declaration is the source of truth, which has one real caveat.** Some
+libraries — BOSL2 among them — declare a parameter bare (no `= default`)
+and assign its actual default *inside the body* instead
+(`chamfer = chamfer == undef ? 0 : chamfer;`). `import_module` has no way to
+see that; such a parameter counts as required here even though the module's
+own callers can omit it. Pass `None` explicitly for these — it becomes
+`undef`, exactly what an omitted argument would have been.
+
+**Path resolution.** `path` is resolved the same way OpenSCAD resolves an
+`include <>`/`use <>` written by hand: as given (absolute, or relative to
+the current directory), or via `$OPENSCADPATH` and the default library
+folders. A file transitively reached through another file's own
+`use`/`include` is resolved relative to *that file's* directory, matching
+OpenSCAD's own behavior for library-internal references.
+
+**`include` vs `use` is guessed, not something you should normally need to
+set.** `include <path>` brings in a library's module/function definitions
+*and* its variables and any top-level code it runs. `use <path>` brings in
+only definitions. This isn't just a style choice: some libraries' modules
+rely on variables defined at the library's top level (BOSL2's modules read
+its own `$anchor_override`-style config variables, for instance), and `use`
+would silently leave those undefined — while `include` risks the opposite
+problem, silently re-running and unioning in any geometry `path` itself
+renders at its own top level (a demo call left at the bottom of a file
+you're actively developing, say).
+
+`import_module` picks between them by inspecting `path` itself
+(`scad_declarations.suggest_import_style`): `"include"` unless `path` has a
+top-level statement that isn't a declaration, a `use`/`include` directive,
+or a plain variable assignment — anything that looks like it could render
+geometry on its own tips the guess to `"use"` instead. This is deliberately
+conservative in the "assume geometry" direction, since getting it wrong that
+way just means a loud, fixable failure (a module errors on a missing global
+variable, easy to diagnose and override) rather than a silent, wrong-answer
+one (unwanted geometry quietly unioned into your result with no error at
+all). It only looks at `path`'s own top-level content, not anything it
+transitively `use`s/`include`s — that's the file whose content literally
+gets spliced into the wrapper, so it's the only thing the choice actually
+controls.
+
+Confirmed against real libraries: BOSL2's `std.scad` and MCAD's
+`involute_gears.scad` are both pure declarations and directives (MCAD's own
+demo/test code all lives inside `test_*` modules, never called at the top
+level) — both correctly guess `"include"`, and BOSL2's `cuboid()` genuinely
+fails under `"use"` (missing config variables), confirming the guess matters
+in practice, not just in theory.
+
+Pass `import_style="include"` or `import_style="use"` explicitly to
+override the guess — needed if a file both has top-level geometry *and*
+some module in it needs file-level variables the guess would then withhold,
+a real conflict the guess can't resolve on its own since it's not doing
+full semantic analysis of what a module body actually references.
 
 **Arguments.** The returned callable accepts positional and keyword
 arguments the same way the OpenSCAD module does; both are rendered to
 OpenSCAD literal syntax and spliced into the generated call. `None` becomes
 `undef`; lists, strings, bools, and numbers all follow OpenSCAD's own
-literal syntax.
+literal syntax. Only arguments you actually pass are forwarded to
+OpenSCAD — an omitted optional argument lets the module's own `= default`
+apply, rather than being overridden with an explicit `undef`.
 
-**A wrong module or argument name is not a Python-level error where you
-might expect it.** OpenSCAD treats an unknown module name, or an argument
-name a module doesn't recognize, as a *warning*, not a failure — it exits
-successfully and just renders less than you asked for (an unrecognized
-argument silently falls back to that parameter's default; an unknown module
-call renders nothing at all). `import_module` cannot detect this at the
-point you call `import_module()` itself, since nothing runs until you
-actually call the returned function. When a call produces no geometry at
-all, the raised `UnsupportedNodeError` includes OpenSCAD's own warning text,
-which is usually enough to spot a typo'd name immediately. A typo'd
-*argument* name that still produces geometry (because the module fell back
-to a default) will not raise anything — check the result if you're not sure
-your arguments were actually recognized.
+**A module name OpenSCAD itself doesn't recognize at runtime is still only
+caught when the call produces no geometry.** Declaration parsing catches a
+module name that plainly isn't declared anywhere reachable from `path`, but
+can't catch every way a call can still go wrong inside OpenSCAD itself. When
+that happens, the raised `UnsupportedNodeError` includes OpenSCAD's own
+warning text.
+
+**Importing a whole file's modules as a namespace.** Leave out `name` and
+`import_module(path)` returns a `ScadLibrary` — one attribute per `module`
+declared in (or reachable from) `path`:
+
+```python
+gears = scad123d.import_module("MCAD/involute_gears.scad")
+part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
+```
+
+Each attribute is built the first time you access it, not up front — so
+importing a file with dozens of declarations only ever builds the ones you
+actually call. `dir(gears)` and `hasattr()` work normally; an attribute
+that isn't a declared module raises `AttributeError`, same as any other
+object. Only `module` declarations are exposed. OpenSCAD `function`s return
+plain values (numbers, lists, strings), and there's no mechanism in this
+CSG-based pipeline to extract one — functions are parsed (so a name
+collision with a module is still detected) but never surfaced as an
+attribute.
+
+If two files reachable from `path` both declare a module with the same
+name, the one that wins is whichever `find_module`/the namespace resolves
+to via a depth-first walk that records a file's own declarations *after*
+recursing into what it references — approximating OpenSCAD's actual
+"textual substitution, last definition wins" behavior for the common case
+(a file's own `use`/`include` directives gathered at the top, its
+declarations after). A file that interleaves declarations *between*
+includes isn't modeled exactly right; this is rare enough in practice
+(most libraries treat their own name collisions as a bug) that it wasn't
+worth a fully textual-order scan.
+
+**Caching.** The declaration scan (tokenizing `path` and walking its
+`use`/`include` graph) is cached on `path`'s resolved location and
+modification time, so repeated `import_module()` calls for the same file
+don't re-parse it — whether or not you ask for the same module each time.
+Only `path` itself is watched for changes; a file it reaches transitively
+being edited won't invalidate the cache. That covers third-party libraries
+(static) and the common case of iterating on your own single file directly.
+If you're editing something reached only transitively, call
+`scad123d.scad_declarations.clear_cache()` to force a rescan.
 
 ## `hull()` and `minkowski()`
 
