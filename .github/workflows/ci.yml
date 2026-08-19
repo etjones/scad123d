@@ -52,6 +52,13 @@ jobs:
         # newest, at the cost of a floating (not reproducible) version.
         run: |
           set -euo pipefail
+          # The AppImage's own bundled binary is dynamically linked against
+          # libEGL even for headless CSG export -- it fails to even start
+          # without it. This is one small package, not OpenSCAD's whole
+          # dependency chain (Qt/CGAL/Boost/the app itself all still come
+          # bundled inside the AppImage, unaffected).
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl1
           SNAPSHOT="OpenSCAD-2026.08.13-x86_64.AppImage"
           URL="https://files.openscad.org/snapshots/$SNAPSHOT"
           if ! curl -fsSL -o openscad.AppImage "$URL"; then
