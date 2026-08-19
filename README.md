@@ -22,13 +22,37 @@ part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_d
 
 # Or bring in a whole file's geometry at once:
 part = scad123d.import_scad("bracket.scad")
+
+# Export to STEP or STL:
+part.export_step("part.step")
+part.export_stl("part.stl")
 ```
 
-Calling a module -- through either form of `import_module` -- returns a
-normal build123d object, and so does `import_scad`, so from there you're
-just doing build123d.
+Calling an OpenSCAD module returns a normal build123d object, so from there 
+you're just doing build123d.
 
-## Why this exists
+## Installing
+
+scad123d requires Python 3.10 or later and the [OpenSCAD](https://openscad.org/downloads.html) program. It's tested on macOS, Windows, and Linux.
+
+```bash
+pip install scad123d
+```
+
+or
+
+```bash
+uv add scad123d
+```
+
+You also need the [OpenSCAD](https://openscad.org/downloads.html) program
+itself installed — scad123d asks the real OpenSCAD to evaluate your file
+(so every language feature and every library works), then converts the
+result. It looks for OpenSCAD on your `$PATH` and in the usual install
+locations automatically. If your OpenSCAD executable lives somewhere else, 
+set `$SCAD123D_OPENSCAD` to point at it directly.
+
+## Original OpenSCAD code, now with real solid geometry & easy fillets
 
 OpenSCAD is a great way to describe parts in code, and there's a huge amount
 of OpenSCAD out there — your own old projects, and libraries like
@@ -52,7 +76,7 @@ program (so every language feature, every library, works exactly as it
 always has), and rebuilds the result as native build123d geometry instead of
 a mesh. You get a better kernel underneath code you already have.
 
-## STEP vs STL Exports
+## STEP & STL Exports
 
 **Real STEP export.** OpenSCAD can only export a mesh (STL). scad123d lets
 you export [STEP](https://en.wikipedia.org/wiki/ISO_10303) directly from an
@@ -60,35 +84,45 @@ OpenSCAD design — the standard interchange format nearly every CAD program
 reads as an actual solid body, with exact curves, not a pile of triangles
 pretending to be one.
 
-Here's the same model — a cylinder rising out of a cube — each way, with edges 
+```python
+import scad123d
+# cube_cyl.scad:
+# union() {
+#   cube([10, 10, 5]);
+#   cylinder(h=10, r=3, center=true);
+# }
+part = scad123d.import_scad("cube_cyl.scad")
+part.export_step("cube_cyl.step")
+part.export_stl("cube_cyl.stl")
+```
+
+Here's one model — a cylinder rising out of a cube — each way, with edges 
 highlighted. OpenSCAD's STL approximates the cylinder as 48 flat panels, and 
-each panel boundary is an edge in the mesh:
+each panel boundary is an edge in the mesh. The scad123d version maintains
+the true edges of the shape and has just one face for the cylinder.
 
-<img src="docs/images/stl_vs_step_stl.png" width="450" alt="OpenSCAD's STL export of a cylinder on a cube, with every facet edge highlighted -- dozens of visible lines around the cylinder">
+<p>
+<img src="docs/images/stl_vs_step_stl.png" width="400" alt="OpenSCAD's STL export of a cylinder on a cube, with every facet edge highlighted -- dozens of visible lines around the cylinder">
+<img src="docs/images/stl_vs_step_step.png" width="400" alt="scad123d's STEP-equivalent export of the same model, with only the true edges highlighted -- a clean circle at top and bottom, no facet lines">
+</p>
 
-scad123d's version has exactly the edges the shape actually has: the cube's
-12 edges, the cylinder's rim, and the circle where it meets the cube. The
-cylinder itself is a single continuous curved face:
 
-<img src="docs/images/stl_vs_step_step.png" width="450" alt="scad123d's STEP-equivalent export of the same model, with only the true edges highlighted -- a clean circle at top and bottom, no facet lines">
 
 **Fillets that behave.** Round a corner on a mesh and you round the facets,
-not the surface — you get a many-sided lump, not a smooth radius. Because
-scad123d keeps the real geometry, you can fillet and chamfer edges normally
-after importing:
+instead of the surface. Because scad123d keeps the real geometry, you can 
+fillet and chamfer edges normally after importing:
 
 ```python
 from build123d import fillet, Axis
 
 part = scad123d.import_scad("bracket.scad")
 part = fillet(part.edges().group_by(Axis.Z)[-1], radius=2)
+part.export_step("bracket_fillet.step")
 ```
 
 Here's a [BOSL2](https://github.com/BelfrySCAD/BOSL2) `tube()` imported and
 then filleted — a smooth, continuous rounded rim, instead of a faceted
-approximation of one. The thin lines are the shape's actual edges (the rim of
-the fillet, and a seam where the cylindrical face closes on itself) — not
-mesh facets, since there aren't any:
+approximation of one. 
 
 <img src="docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim and its real edges highlighted">
 
@@ -100,24 +134,7 @@ operations as you throw at them.
 `Shape` — select faces on it, boolean it against something you built natively
 in build123d, sweep along one of its edges. 
 
-## Installing
 
-```bash
-pip install scad123d
-```
-
-or
-
-```bash
-uv add scad123d
-```
-
-You also need the [OpenSCAD](https://openscad.org/downloads.html) program
-itself installed — scad123d asks the real OpenSCAD to evaluate your file
-(so every language feature and every library works), then converts the
-result. It looks for OpenSCAD on your `$PATH` and in the usual install
-locations automatically. If your OpenSCAD executable lives somewhere else, 
-set `$SCAD123D_OPENSCAD` to point at it directly.
 
 ## Using libraries: BOSL2 and MCAD
 
@@ -127,12 +144,11 @@ library the normal OpenSCAD way (in your
 [OpenSCAD library folder](https://en.wikibooks.org/wiki/OpenSCAD_User_Manual/Libraries),
 or alongside your project) and reference it like always.
 
+### Importing a specific module from a file
+
 Most of the time you want one specific, parameterized module from a
 library — a particular gear, a particular bracket — not a whole file.
-`import_module(path, module_name)` calls it directly. There's no wrapper
-`.scad` file to write yourself, and you get back a callable you can use
-again with different arguments:
-
+`import_module(path, module_name)` calls it directly. 
 An [MCAD](https://github.com/openscad/MCAD) gear:
 
 ```python
@@ -142,40 +158,22 @@ part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diamete
 
 <img src="docs/images/mcad_gear.png" width="450" alt="An MCAD involute gear imported via scad123d">
 
-A rounded box from [BOSL2](https://github.com/BelfrySCAD/BOSL2), called twice
-with different arguments:
+### Importing all modules from a file
 
-```python
-cuboid = scad123d.import_module("BOSL2/std.scad", "cuboid")
-# BOSL2's cuboid() declares p1/p2/chamfer/except_edges/clip_angle with no
-# default in the declaration itself (it fills them in inside the body
-# instead), so import_module()'s signature checking treats them as
-# required. None -> undef, same as not passing them at all. See
-# docs/REFERENCE.md for why.
-extra = dict(p1=None, p2=None, chamfer=None, except_edges=None, clip_angle=None)
-box = cuboid(size=[20, 15, 10], rounding=3, **extra)
-small_box = cuboid(size=[10, 10, 10], rounding=1, **extra)
-```
-
-Notice neither example says anything about `include` vs `use` — the OpenSCAD
-statements that bring a library file's modules in. `import_module` guesses
-the right one from the file itself and gets it right for real libraries like
-these two, so you shouldn't normally need to think about it. If you ever do
-(a corner case involving a file with its own top-level demo geometry), see
-[docs/REFERENCE.md](docs/REFERENCE.md#calling-a-module-or-a-whole-files-worth-of-them)
-for how the guess works and how to override it with `import_style`.
-
-Leave out the module name and you get every module in the file as a
-namespace instead, built lazily as you use it:
+Sometimes an OpenSCAD library contains a number of modules you want to use. 
+Importing the file without specifying a module name returns every module in the 
+file as a namespace instead.
 
 ```python
 gears = scad123d.import_module("MCAD/involute_gears.scad")
 part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 ```
 
-If you already have a complete `.scad` file — your own design, or someone
-else's — and just want the geometry it produces, `import_scad()` brings in
-the whole file's top-level result instead:
+### Importing a complete `.scad` file with `import_scad()`
+
+If you already have a complete `.scad` file that just creates geometry, 
+`import_scad()` brings in the whole file's top-level result as a build123d 
+Shape object:
 
 ```python
 part = scad123d.import_scad("bracket.scad")
@@ -212,7 +210,7 @@ right:
 This covers the overwhelming majority of real-world `minkowski()` calls,
 since rounding a shape is what most people use it for.
 
-## Where this breaks down: `hull()`
+## Incomplete support: `hull()`
 
 `hull()` doesn't have as clean an answer. scad123d computes a few common,
 recognizable patterns exactly — most usefully, the classic "rounded box built
@@ -262,6 +260,13 @@ will land.
 - A few less-common OpenSCAD features — `projection()`, `surface()`,
   importing a mesh file with `import()`, `linear_extrude(twist=...)` — always
   take the mesh-fallback path for now. Everything else works normally.
+- **`import_module()` guesses whether to bring a file in via `include` or
+  `use`**, based on its content, and gets it right for real libraries like
+  BOSL2 and MCAD — you shouldn't need to think about it. If a call fails
+  complaining about a missing variable, or comes back with extra geometry
+  you didn't ask for, pass `import_style="include"`/`"use"` explicitly; see
+  [docs/REFERENCE.md](docs/REFERENCE.md#calling-a-module-or-a-whole-files-worth-of-them)
+  for how the guess works and when to override it.  
 - **Only import files you trust.** scad123d runs the real OpenSCAD interpreter
   on your file, and OpenSCAD can `include` other files or read arbitrary paths
   from disk — the same way running any script you didn't write is a risk.
