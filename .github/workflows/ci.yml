@@ -71,7 +71,14 @@ jobs:
           # an AppImage needs FUSE, which GitHub-hosted runners don't
           # reliably have. Extraction needs no FUSE, and leaves a plain
           # directory scad123d's own subprocess calls can invoke normally.
-          ./openscad.AppImage --appimage-extract
+          ./openscad.AppImage --appimage-extract || true
+          echo "--- missing shared libraries (diagnostic) ---"
+          if [ -f squashfs-root/usr/bin/openscad ]; then
+            ldd squashfs-root/usr/bin/openscad | grep "not found" || echo "(none missing)"
+          else
+            echo "extraction did not produce squashfs-root/usr/bin/openscad"
+            find squashfs-root -maxdepth 3 || true
+          fi
           sudo mv squashfs-root /opt/openscad
           sudo ln -s /opt/openscad/AppRun /usr/local/bin/openscad
           openscad --version
