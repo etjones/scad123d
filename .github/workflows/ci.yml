@@ -36,10 +36,37 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.13"
-      - name: Install OpenSCAD
+      - name: Install OpenSCAD (AppImage)
+        # apt-get install openscad pulls OpenSCAD's whole dependency chain
+        # (Qt, X11/GL, CGAL, Boost -- dozens of packages) from Ubuntu's
+        # external mirrors on every single run; that's what a previous run of
+        # this job once hung on for 15+ minutes. The AppImage is a single,
+        # self-contained file with no dependency resolution.
+        #
+        # It's pinned to a specific snapshot for reproducibility, but
+        # files.openscad.org/snapshots/ only retains a rolling window of
+        # recent builds, so this pin WILL eventually 404 as it rotates out.
+        # If so: pick a current filename from
+        # https://files.openscad.org/snapshots/ and update SNAPSHOT below.
+        # The fallback keeps CI working meanwhile by grabbing whatever's
+        # newest, at the cost of a floating (not reproducible) version.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y openscad
+          set -euo pipefail
+          SNAPSHOT="OpenSCAD-2026.08.13-x86_64.AppImage"
+          URL="https://files.openscad.org/snapshots/$SNAPSHOT"
+          if ! curl -fsSL -o openscad.AppImage "$URL"; then
+            echo "::warning::$SNAPSHOT is gone from files.openscad.org/snapshots/ (rotated out) -- falling back to the latest available snapshot. Update SNAPSHOT in this workflow step."
+            LATEST=$(curl -fsSL https://files.openscad.org/snapshots/ | grep -oE 'href="[^"]*x86_64\.AppImage"' | sed 's/href="//;s/"//' | sort | tail -1)
+            curl -fsSL -o openscad.AppImage "https://files.openscad.org/snapshots/$LATEST"
+          fi
+          chmod +x openscad.AppImage
+          # Extract once here rather than run the AppImage directly: mounting
+          # an AppImage needs FUSE, which GitHub-hosted runners don't
+          # reliably have. Extraction needs no FUSE, and leaves a plain
+          # directory scad123d's own subprocess calls can invoke normally.
+          ./openscad.AppImage --appimage-extract
+          sudo mv squashfs-root /opt/openscad
+          sudo ln -s /opt/openscad/AppRun /usr/local/bin/openscad
           openscad --version
       - run: uv sync --all-extras --dev
       - run: uv run pytest -q
