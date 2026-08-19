@@ -13,11 +13,11 @@ import scad123d
 
 # Call one module from a library directly, like a Python function --
 # usually what you actually want:
-gear = scad123d.import_module("MCAD/involute_gears.scad", "gear", import_style="use")
+gear = scad123d.import_module("MCAD/involute_gears.scad", "gear")
 part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 
 # Or import a whole library file's modules at once, as a namespace:
-gears = scad123d.import_module("MCAD/involute_gears.scad", import_style="use")
+gears = scad123d.import_module("MCAD/involute_gears.scad")
 part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 
 # Or bring in a whole file's geometry at once:
@@ -136,7 +136,7 @@ again with different arguments:
 An [MCAD](https://github.com/openscad/MCAD) gear:
 
 ```python
-gear = scad123d.import_module("MCAD/involute_gears.scad", "gear", import_style="use")
+gear = scad123d.import_module("MCAD/involute_gears.scad", "gear")
 part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 ```
 
@@ -157,20 +157,19 @@ box = cuboid(size=[20, 15, 10], rounding=3, **extra)
 small_box = cuboid(size=[10, 10, 10], rounding=1, **extra)
 ```
 
-`import_style` controls how the library file is brought in: `"include"`
-(the default) also brings in its variables, which some libraries' modules
-depend on — BOSL2 above is normally used this way. `"use"` brings in only
-module and function definitions, which is how some libraries (MCAD above)
-are conventionally used instead. See
+Notice neither example says anything about `include` vs `use` — the OpenSCAD
+statements that bring a library file's modules in. `import_module` guesses
+the right one from the file itself and gets it right for real libraries like
+these two, so you shouldn't normally need to think about it. If you ever do
+(a corner case involving a file with its own top-level demo geometry), see
 [docs/REFERENCE.md](docs/REFERENCE.md#calling-a-module-or-a-whole-files-worth-of-them)
-for exactly how that resolution works, and what happens if you get a module
-or argument name wrong.
+for how the guess works and how to override it with `import_style`.
 
 Leave out the module name and you get every module in the file as a
 namespace instead, built lazily as you use it:
 
 ```python
-gears = scad123d.import_module("MCAD/involute_gears.scad", import_style="use")
+gears = scad123d.import_module("MCAD/involute_gears.scad")
 part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 ```
 

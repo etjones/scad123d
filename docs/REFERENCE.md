@@ -117,16 +117,43 @@ folders. A file transitively reached through another file's own
 `use`/`include` is resolved relative to *that file's* directory, matching
 OpenSCAD's own behavior for library-internal references.
 
-**`include` vs `use`.** `import_module` defaults to `include`, which brings
-in a library's module/function definitions *and* its variables and any
-top-level code it runs. `use` brings in only definitions. This matters
-because it's not just a style choice: some libraries' modules rely on
-variables defined at the library's top level (BOSL2 is documented and
-commonly used via `include`), and `use` would silently leave those
-undefined. Other libraries are conventionally brought in with `use` (MCAD's
-own examples do this) specifically to avoid re-running any demo geometry a
-library file might render at its own top level. Pass
-`import_style="use"` when you know a library expects it.
+**`include` vs `use` is guessed, not something you should normally need to
+set.** `include <path>` brings in a library's module/function definitions
+*and* its variables and any top-level code it runs. `use <path>` brings in
+only definitions. This isn't just a style choice: some libraries' modules
+rely on variables defined at the library's top level (BOSL2's modules read
+its own `$anchor_override`-style config variables, for instance), and `use`
+would silently leave those undefined — while `include` risks the opposite
+problem, silently re-running and unioning in any geometry `path` itself
+renders at its own top level (a demo call left at the bottom of a file
+you're actively developing, say).
+
+`import_module` picks between them by inspecting `path` itself
+(`scad_declarations.suggest_import_style`): `"include"` unless `path` has a
+top-level statement that isn't a declaration, a `use`/`include` directive,
+or a plain variable assignment — anything that looks like it could render
+geometry on its own tips the guess to `"use"` instead. This is deliberately
+conservative in the "assume geometry" direction, since getting it wrong that
+way just means a loud, fixable failure (a module errors on a missing global
+variable, easy to diagnose and override) rather than a silent, wrong-answer
+one (unwanted geometry quietly unioned into your result with no error at
+all). It only looks at `path`'s own top-level content, not anything it
+transitively `use`s/`include`s — that's the file whose content literally
+gets spliced into the wrapper, so it's the only thing the choice actually
+controls.
+
+Confirmed against real libraries: BOSL2's `std.scad` and MCAD's
+`involute_gears.scad` are both pure declarations and directives (MCAD's own
+demo/test code all lives inside `test_*` modules, never called at the top
+level) — both correctly guess `"include"`, and BOSL2's `cuboid()` genuinely
+fails under `"use"` (missing config variables), confirming the guess matters
+in practice, not just in theory.
+
+Pass `import_style="include"` or `import_style="use"` explicitly to
+override the guess — needed if a file both has top-level geometry *and*
+some module in it needs file-level variables the guess would then withhold,
+a real conflict the guess can't resolve on its own since it's not doing
+full semantic analysis of what a module body actually references.
 
 **Arguments.** The returned callable accepts positional and keyword
 arguments the same way the OpenSCAD module does; both are rendered to
@@ -148,7 +175,7 @@ warning text.
 declared in (or reachable from) `path`:
 
 ```python
-gears = scad123d.import_module("MCAD/involute_gears.scad", import_style="use")
+gears = scad123d.import_module("MCAD/involute_gears.scad")
 part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
 ```
 

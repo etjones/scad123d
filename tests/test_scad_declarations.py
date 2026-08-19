@@ -11,6 +11,7 @@ from scad123d.scad_declarations import (
     module_map,
     parse_declarations,
     resolve_scad_path,
+    suggest_import_style,
 )
 
 from .conftest import FIXTURES
@@ -58,6 +59,52 @@ def test_trailing_comma_in_parameter_list():
     # `function _substr_match_recurse(str,sindex,pattern,plen,pindex=0,)`.
     decls = parse_declarations("module foo(a, b=1,) { cube(a); }")
     assert [(p.name, p.required) for p in decls[0].parameters] == [("a", True), ("b", False)]
+
+
+class TestSuggestImportStyle:
+    def test_declarations_and_assignments_only_suggests_include(self, tmp_path):
+        f = tmp_path / "lib.scad"
+        f.write_text("x = 5;\n$fn = 10;\nmodule foo(a) cube(a);\n")
+        assert suggest_import_style(f) == "include"
+
+    def test_bare_top_level_call_suggests_use(self, tmp_path):
+        f = tmp_path / "lib.scad"
+        f.write_text("module foo(a) cube(a);\nfoo(10);\n")
+        assert suggest_import_style(f) == "use"
+
+    def test_top_level_echo_and_assert_do_not_trigger_use(self, tmp_path):
+        f = tmp_path / "lib.scad"
+        f.write_text('module foo(a) cube(a);\necho("loaded");\nassert(true);\n')
+        assert suggest_import_style(f) == "include"
+
+    def test_top_level_if_suggests_use(self, tmp_path):
+        f = tmp_path / "lib.scad"
+        f.write_text("module foo(a) cube(a);\nif (true) foo(1);\n")
+        assert suggest_import_style(f) == "use"
+
+    def test_top_level_for_suggests_use(self, tmp_path):
+        f = tmp_path / "lib.scad"
+        f.write_text("module foo(a) cube(a);\nfor (i=[0:2]) foo(i);\n")
+        assert suggest_import_style(f) == "use"
+
+    def test_use_and_include_directives_do_not_trigger_use(self, tmp_path):
+        f = tmp_path / "lib.scad"
+        f.write_text('include <BOSL2/std.scad>\nmodule foo(a) cube(a);\n')
+        assert suggest_import_style(f) == "include"
+
+    def test_real_bosl2_std_suggests_include(self):
+        try:
+            std = resolve_scad_path("BOSL2/std.scad")
+        except FileNotFoundError:
+            pytest.skip("BOSL2 not installed on this machine")
+        assert suggest_import_style(std) == "include"
+
+    def test_real_mcad_involute_gears_suggests_include(self):
+        try:
+            gears = resolve_scad_path("MCAD/involute_gears.scad")
+        except FileNotFoundError:
+            pytest.skip("MCAD not installed on this machine")
+        assert suggest_import_style(gears) == "include"
 
 
 def test_use_and_include_directives_are_skipped_not_misparsed():

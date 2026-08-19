@@ -28,6 +28,42 @@ def test_bad_import_style_rejected_before_any_openscad_call():
         scad123d.import_module("whatever.scad", "whatever", import_style="bogus")
 
 
+@pytest.mark.needs_openscad
+class TestImportStyleAutoDetection:
+    def test_auto_detected_use_avoids_polluting_the_result(self, tmp_path):
+        # The scenario this exists for: a file with a demo call left at its
+        # own top level (extremely common in a file you're actively
+        # developing). Defaulting to "include" would silently union that
+        # demo geometry into the result of the module you actually asked
+        # for -- wrong volume, no error. Auto-detection should pick "use"
+        # here and avoid that.
+        lib = tmp_path / "lib.scad"
+        lib.write_text("module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n")
+
+        a_box = scad123d.import_module(lib, "a_box")
+        box = a_box(size=5)
+        assert box.volume == pytest.approx(125, rel=1e-9)  # not the size=100 demo call
+
+    def test_explicit_include_overrides_the_auto_detected_use(self, tmp_path):
+        # Proving the override actually reaches OpenSCAD: forcing "include"
+        # on the same file now *does* pull in the demo call, polluting the
+        # result -- the opposite of the test above.
+        lib = tmp_path / "lib.scad"
+        lib.write_text("module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n")
+
+        a_box = scad123d.import_module(lib, "a_box", import_style="include")
+        box = a_box(size=5)
+        assert box.volume == pytest.approx(125 + 100**3, rel=1e-9)
+
+    def test_scad_library_uses_the_same_auto_detected_style(self, tmp_path):
+        lib = tmp_path / "lib.scad"
+        lib.write_text("module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n")
+
+        library = scad123d.import_module(lib)
+        box = library.a_box(size=5)
+        assert box.volume == pytest.approx(125, rel=1e-9)
+
+
 def test_missing_file_raises_immediately(tmp_path):
     with pytest.raises(FileNotFoundError):
         scad123d.import_module(tmp_path / "does_not_exist.scad", "whatever")
@@ -200,7 +236,7 @@ class TestModuleImport:
 
 
 def _try_library_module(
-    path: str, name: str, *, import_style: str = "include", **kwargs
+    path: str, name: str, *, import_style: str | None = None, **kwargs
 ):
     """Call a library module, skipping the test if the library isn't
     present, or isn't in a state this can actually use, rather than failing
@@ -223,8 +259,13 @@ def _try_library_module(
 
 
 @pytest.mark.needs_openscad
-def test_bosl2_cuboid_via_include():
-    # BOSL2's cuboid() declares several parameters (p1, p2, chamfer,
+def test_bosl2_cuboid_with_auto_detected_import_style():
+    # No import_style passed -- BOSL2/std.scad is pure declarations and
+    # include<> directives (no top-level geometry), so this should
+    # auto-detect "include", which cuboid() genuinely needs (its modules
+    # read BOSL2's own file-level config variables).
+    #
+    # cuboid() also declares several parameters (p1, p2, chamfer,
     # except_edges, clip_angle) bare, with no "= default" in the
     # declaration -- it assigns their real defaults inside the body instead
     # (e.g. `chamfer = chamfer == undef ? ... `). import_module() has no way
@@ -251,11 +292,14 @@ def test_bosl2_cuboid_via_include():
 
 
 @pytest.mark.needs_openscad
-def test_mcad_gear_via_use():
+def test_mcad_gear_with_auto_detected_import_style():
+    # No import_style passed here either -- MCAD's involute_gears.scad has
+    # no top-level geometry (its demo/test code all lives inside test_*
+    # modules, never called at the top level), so "include" vs "use" makes
+    # no difference to the result; auto-detection picks "include".
     part = _try_library_module(
         "MCAD/involute_gears.scad",
         "gear",
-        import_style="use",
         number_of_teeth=12,
         circular_pitch=8,
         gear_thickness=6,

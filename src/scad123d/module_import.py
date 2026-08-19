@@ -41,6 +41,7 @@ from .scad_declarations import (
     find_module,
     module_map,
     resolve_scad_path,
+    suggest_import_style,
 )
 
 _IMPORT_STYLES = ("include", "use")
@@ -233,7 +234,7 @@ def import_module(
     path: str | Path,
     module_name: str,
     *,
-    import_style: str = "include",
+    import_style: str | None = None,
     facet_threshold: int = DEFAULT_FACET_THRESHOLD,
     mesh_scope: str = "minimal",
     timeout: float = 600,
@@ -245,7 +246,7 @@ def import_module(
     path: str | Path,
     module_name: None = None,
     *,
-    import_style: str = "include",
+    import_style: str | None = None,
     facet_threshold: int = DEFAULT_FACET_THRESHOLD,
     mesh_scope: str = "minimal",
     timeout: float = 600,
@@ -256,7 +257,7 @@ def import_module(
     path: str | Path,
     module_name: str | None = None,
     *,
-    import_style: str = "include",
+    import_style: str | None = None,
     facet_threshold: int = DEFAULT_FACET_THRESHOLD,
     mesh_scope: str = "minimal",
     timeout: float = 600,
@@ -300,18 +301,29 @@ def import_module(
     has no way to see; such a parameter will be required here even though
     calling it from the module's own file could omit it.
 
-    ``import_style`` controls how the module's file is brought into the
-    generated wrapper:
+    ``import_style`` controls how ``path`` is brought into the generated
+    wrapper, and you shouldn't normally need to think about it -- leave it
+    unset and it's guessed from ``path``'s own content:
 
-    - ``"include"`` (default) brings in everything -- module and function
+    - ``"include"`` brings in everything -- module and function
       definitions, variables, and any of the file's own top-level code. This
-      is the right choice for libraries whose modules depend on file-level
-      constants, which is common enough (BOSL2 is documented and used this
-      way) that it is the safer default.
+      is what a module's body needs whenever it depends on file-level
+      constants (BOSL2's modules on its own config variables, for instance),
+      and it's the overwhelmingly common shape for real library files (BOSL2,
+      MCAD): pure declarations, nothing that renders on its own.
     - ``"use"`` brings in only module and function *definitions* -- no
-      variables, no top-level code. This is how some libraries (MCAD) are
-      conventionally brought in, and avoids accidentally re-running any
-      demo/test geometry a library's file might render at its own top level.
+      variables, no top-level code -- which matters when ``path`` has a
+      top-level statement that would itself render something (a demo call
+      left at the bottom of a file you're actively developing, say);
+      ``include`` would silently union that into whatever module you
+      actually asked for.
+
+    The guess (``scad_declarations.suggest_import_style``) is: ``"use"`` if
+    ``path`` has any top-level statement that isn't a declaration, a
+    ``use``/``include`` directive, or a plain variable assignment --
+    ``"include"`` otherwise. Pass ``import_style`` explicitly to override it;
+    see docs/REFERENCE.md for the corner cases where the guess can be wrong
+    in either direction.
 
     Each returned callable accepts the same positional and keyword arguments
     as the OpenSCAD module itself, and returns a build123d ``Shape``::
@@ -319,26 +331,27 @@ def import_module(
         cuboid = scad123d.import_module("BOSL2/std.scad", "cuboid")
         box = cuboid(size=[20, 15, 10], rounding=3)
 
-        gears = scad123d.import_module("MCAD/involute_gears.scad", import_style="use")
+        gears = scad123d.import_module("MCAD/involute_gears.scad")
         part = gears.gear(number_of_teeth=12, circular_pitch=8)
 
     Every call re-invokes OpenSCAD -- there is no OpenSCAD-level operation
     for "just run this module", so this generates and runs a small temporary
     wrapper file each time.
     """
-    if import_style not in _IMPORT_STYLES:
+    if import_style is not None and import_style not in _IMPORT_STYLES:
         raise ValueError(
             f"import_style must be 'include' or 'use', got {import_style!r}"
         )
 
     resolved = resolve_scad_path(path)
+    style = import_style if import_style is not None else suggest_import_style(resolved)
 
     if module_name is None:
         return ScadLibrary(
             path,
             module_map(path),
             resolved,
-            import_style=import_style,
+            import_style=style,
             facet_threshold=facet_threshold,
             mesh_scope=mesh_scope,
             timeout=timeout,
@@ -352,7 +365,7 @@ def import_module(
         module_name,
         decl,
         resolved,
-        import_style=import_style,
+        import_style=style,
         facet_threshold=facet_threshold,
         mesh_scope=mesh_scope,
         timeout=timeout,

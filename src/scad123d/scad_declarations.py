@@ -144,10 +144,46 @@ def _parse_parameters(tokens: list[str], i: int) -> tuple[tuple[ScadParameter, .
     return tuple(params), i
 
 
-def _scan(tokens: list[str]) -> tuple[list[ScadDeclaration], list[str]]:
+_SAFE_TOP_LEVEL_CALLS = {"echo", "assert"}
+
+
+def _looks_like_geometry_statement(tokens: list[str], i: int) -> bool:
+    """Does the statement starting at ``tokens[i]`` look like it could
+    produce geometry, as opposed to a plain variable assignment or a known
+    side-effect-free call (``echo``/``assert``)?
+
+    Used to decide whether bringing a file in via ``include`` risks
+    re-rendering something the caller didn't ask for -- see
+    ``suggest_import_style``. Deliberately conservative: an ``if``/``for``/
+    ``intersection_for``/``let`` at top level counts as geometry even though
+    it might not be (properly telling would mean recursing into its body),
+    and anything unrecognized counts as geometry too. Getting this wrong in
+    the "counts as geometry" direction just means defaulting to ``use``
+    instead of ``include``, a loud, fixable-by-override failure (missing
+    global constants) rather than the silent, wrong-answer failure the other
+    direction risks (unwanted geometry silently unioned into the result).
+    """
+    n = len(tokens)
+    j = i
+    while j < n and tokens[j] in _MODIFIER_CHARS:
+        j += 1
+    if j >= n:
+        return False
+    tok = tokens[j]
+    if tok in ("if", "for", "intersection_for", "let"):
+        return True
+    if j + 1 < n and tokens[j + 1] == "=":
+        return False  # "ident = expr ;" -- a plain assignment
+    if j + 1 < n and tokens[j + 1] == "(":
+        return tok not in _SAFE_TOP_LEVEL_CALLS
+    return True
+
+
+def _scan(tokens: list[str]) -> tuple[list[ScadDeclaration], list[str], bool]:
     n = len(tokens)
     declarations: list[ScadDeclaration] = []
     references: list[str] = []
+    has_top_level_geometry = False
     i = 0
     while i < n:
         tok = tokens[i]
@@ -181,13 +217,15 @@ def _scan(tokens: list[str]) -> tuple[list[ScadDeclaration], list[str]]:
                 j += 1
             i = j
             continue
+        if _looks_like_geometry_statement(tokens, i):
+            has_top_level_geometry = True
         i = _skip_statement(tokens, i)
-    return declarations, references
+    return declarations, references, has_top_level_geometry
 
 
 def parse_declarations(source: str) -> list[ScadDeclaration]:
     """Top-level ``module``/``function`` declarations in ``source``."""
-    declarations, _ = _scan(tokenize(source))
+    declarations, _, _ = _scan(tokenize(source))
     return declarations
 
 
@@ -200,12 +238,42 @@ class ParsedScadFile:
     path: Path
     declarations: tuple[ScadDeclaration, ...]
     references: tuple[str, ...]  # raw use<>/include<> targets, in file order
+    has_top_level_geometry: bool
 
 
 def parse_file(path: str | Path) -> ParsedScadFile:
     resolved = resolve_scad_path(path)
-    declarations, references = _scan(tokenize(resolved.read_text()))
-    return ParsedScadFile(path=resolved, declarations=tuple(declarations), references=tuple(references))
+    declarations, references, has_top_level_geometry = _scan(tokenize(resolved.read_text()))
+    return ParsedScadFile(
+        path=resolved,
+        declarations=tuple(declarations),
+        references=tuple(references),
+        has_top_level_geometry=has_top_level_geometry,
+    )
+
+
+def suggest_import_style(path: str | Path) -> str:
+    """Guess whether ``path`` should be brought into a wrapper via
+    ``"include"`` or ``"use"``, so ``import_module()`` doesn't need to be
+    told explicitly.
+
+    ``"use"`` if ``path`` itself has any top-level statement that isn't a
+    declaration, a ``use``/``include`` directive, or a plain variable
+    assignment -- i.e. something that looks like it could render geometry on
+    its own, which ``include`` would silently union into whatever module the
+    caller actually asked for. ``"include"`` otherwise, since that's needed
+    whenever a module's body depends on the file's own top-level variables
+    (BOSL2's modules on its `$anchor_override`-style config variables, for
+    instance) and, empirically, that's the overwhelmingly common shape for
+    real library files (BOSL2, MCAD) -- pure declarations and directives, no
+    stray top-level geometry.
+
+    Only ``path``'s own top-level content is examined, not anything it
+    transitively ``use``s/``include``s -- that's the file whose content
+    literally get spliced into the wrapper, so it's the only thing whose
+    top-level statements this choice actually controls.
+    """
+    return "use" if parse_file(path).has_top_level_geometry else "include"
 
 
 _graph_cache: dict[Path, tuple[float, dict[str, tuple[ScadDeclaration, Path]]]] = {}
