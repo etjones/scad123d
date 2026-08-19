@@ -6,7 +6,9 @@ never evaluates the language, just tokenizes and skips over it.
 import pytest
 
 from scad123d.scad_declarations import (
+    clear_cache,
     find_module,
+    module_map,
     parse_declarations,
     resolve_scad_path,
 )
@@ -49,6 +51,13 @@ def test_function_declaration():
 def test_default_value_with_nested_brackets_and_commas():
     decls = parse_declarations("module foo(c=[1,2,min(3,4)]) { cube(c); }")
     assert decls[0].parameters[0].required is False
+
+
+def test_trailing_comma_in_parameter_list():
+    # Real, live example: BOSL2's own strings.scad declares
+    # `function _substr_match_recurse(str,sindex,pattern,plen,pindex=0,)`.
+    decls = parse_declarations("module foo(a, b=1,) { cube(a); }")
+    assert [(p.name, p.required) for p in decls[0].parameters] == [("a", True), ("b", False)]
 
 
 def test_use_and_include_directives_are_skipped_not_misparsed():
@@ -121,3 +130,51 @@ def test_find_module_does_not_loop_forever_on_a_cycle(tmp_path):
     decl, path = find_module(a, "from_b")
     assert decl.name == "from_b"
     assert path == b.resolve()
+
+
+def test_a_files_own_declaration_overrides_one_pulled_in_transitively(tmp_path):
+    leaf = tmp_path / "leaf.scad"
+    leaf.write_text("module shared(from_leaf) cube(from_leaf);")
+    root = tmp_path / "root.scad"
+    root.write_text(f"include <{leaf}>\nmodule shared(from_root) cube(from_root);\n")
+
+    mapping = module_map(root)
+    decl, declaring_path = mapping["shared"]
+    assert declaring_path == root.resolve()
+    assert [p.name for p in decl.parameters] == ["from_root"]
+
+
+def test_a_file_this_scanner_cannot_parse_is_skipped_not_fatal(tmp_path):
+    # A trailing comma is handled (see above); this uses a genuinely
+    # unbalanced construct to stand in for "some construct this simplified
+    # grammar doesn't handle" without relying on that staying broken.
+    broken = tmp_path / "broken.scad"
+    broken.write_text("module broken(a")  # truncated -- no closing ")" at all
+    root = tmp_path / "root.scad"
+    root.write_text(f"include <{broken}>\nmodule fine() cube(1);\n")
+
+    mapping = module_map(root)
+    assert set(mapping) == {"fine"}
+
+
+def test_module_map_root_itself_unparseable_raises(tmp_path):
+    broken = tmp_path / "broken.scad"
+    broken.write_text("module broken(a")  # truncated -- no closing ")" at all
+    with pytest.raises((IndexError, ValueError)):
+        module_map(broken)
+
+
+def test_module_map_is_cached_by_path_and_mtime(tmp_path):
+    lib = tmp_path / "lib.scad"
+    lib.write_text("module a() cube(1);")
+    assert module_map(lib) is module_map(lib)
+
+
+def test_clear_cache_forces_a_rescan(tmp_path):
+    lib = tmp_path / "lib.scad"
+    lib.write_text("module a() cube(1);")
+    first = module_map(lib)
+    clear_cache()
+    second = module_map(lib)
+    assert first is not second
+    assert first == second

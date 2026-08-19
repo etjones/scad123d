@@ -134,6 +134,9 @@ def _parse_parameters(tokens: list[str], i: int) -> tuple[tuple[ScadParameter, .
         params.append(ScadParameter(name=name, required=required))
         if tokens[i] == ",":
             i += 1
+            if tokens[i] == ")":  # trailing comma, e.g. BOSL2's own strings.scad
+                i += 1
+                break
             continue
         if tokens[i] == ")":
             i += 1
@@ -205,54 +208,126 @@ def parse_file(path: str | Path) -> ParsedScadFile:
     return ParsedScadFile(path=resolved, declarations=tuple(declarations), references=tuple(references))
 
 
+_graph_cache: dict[Path, tuple[float, dict[str, tuple[ScadDeclaration, Path]]]] = {}
+
+
+def _resolve_reference(parsed: ParsedScadFile, ref: str) -> Path | None:
+    # A relative reference inside a library file is relative to *that
+    # file's own directory*, same as OpenSCAD resolves it -- not the
+    # caller's cwd or the library search paths, which is what
+    # resolve_scad_path alone would try. BOSL2's std.scad saying
+    # `include <version.scad>` means the version.scad next to std.scad, not
+    # one hypothetically sitting at the library root. Only fall back to the
+    # normal search if that's not it (e.g. the reference names a different
+    # top-level library).
+    sibling = parsed.path.parent / ref
+    if sibling.exists():
+        return sibling.resolve()
+    try:
+        return resolve_scad_path(ref)
+    except FileNotFoundError:
+        return None
+
+
+def _scan_module_graph(root: Path) -> dict[str, tuple[ScadDeclaration, Path]]:
+    """Every ``module`` reachable from ``root`` via ``use``/``include``,
+    however deep, as ``{name: (declaration, the file that declares it)}``.
+
+    Visits depth-first, recording a file's own declarations *after*
+    recursing into what it references -- so a name declared directly in a
+    file overrides a same-named one pulled in transitively, approximating
+    OpenSCAD's real "last definition wins" behavior (true textual-order
+    resolution, since ``include`` is literally textual substitution) for
+    the overwhelmingly common shape of real library files: `use`/`include`
+    directives gathered at the top, declarations after. A file that
+    interleaves its own declarations *between* includes is not modeled
+    exactly right, but name collisions across a library's own include graph
+    are rare to begin with -- most libraries treat that as a bug in
+    themselves.
+
+    A file reached transitively that this scanner can't parse (this is a
+    declaration scanner, not a full OpenSCAD parser -- confirmed against
+    real BOSL2 source: unusual-but-legal constructs like a trailing comma in
+    a parameter list can still trip it) is skipped, same as a missing one --
+    its own declarations are lost, but the rest of the graph still resolves.
+    ``root`` itself is the one file the caller explicitly named, so a parse
+    failure there is not swallowed the same way.
+    """
+    mapping: dict[str, tuple[ScadDeclaration, Path]] = {}
+    visited: set[Path] = set()
+
+    def visit(path: Path, *, required: bool) -> None:
+        if path in visited:
+            return
+        visited.add(path)
+        if required:
+            parsed = parse_file(path)
+        else:
+            try:
+                parsed = parse_file(path)
+            except (IndexError, ValueError):
+                return
+        for ref in parsed.references:
+            resolved = _resolve_reference(parsed, ref)
+            if resolved is not None:
+                visit(resolved, required=False)
+        for decl in parsed.declarations:
+            if decl.kind == "module":
+                mapping[decl.name] = (decl, parsed.path)
+
+    visit(root, required=True)
+    return mapping
+
+
+def module_map(path: str | Path) -> dict[str, tuple[ScadDeclaration, Path]]:
+    """The cached ``{name: (declaration, declaring file)}`` map for every
+    ``module`` reachable from ``path``.
+
+    Cached on ``path``'s resolved location and its modification time, so
+    repeated calls (e.g. from repeated ``import_module()`` calls) don't
+    re-tokenize and re-walk the include graph. Only ``path`` itself is
+    watched for changes -- a file it transitively ``use``s/``include``s
+    being edited without ``path`` itself changing won't invalidate the
+    cache. That's the right tradeoff for third-party libraries (static) and
+    covers the common case of iterating on your own single file directly;
+    call ``clear_cache()`` if you're editing something reached only
+    transitively and need a fresh scan.
+    """
+    root = resolve_scad_path(path)
+    mtime = root.stat().st_mtime
+    cached = _graph_cache.get(root)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    mapping = _scan_module_graph(root)
+    _graph_cache[root] = (mtime, mapping)
+    return mapping
+
+
+def clear_cache() -> None:
+    """Forget every cached module map, forcing the next lookup to rescan."""
+    _graph_cache.clear()
+
+
 def find_module(path: str | Path, module_name: str) -> tuple[ScadDeclaration, Path]:
     """Find a ``module`` declaration named ``module_name``, searching ``path``
-    and then, breadth-first, whatever it ``use``s/``include``s -- however
-    deep that goes -- since a library's entry point commonly has no
-    declarations of its own and just gathers them from other files.
+    and everything it ``use``s/``include``s, however deep that goes -- since
+    a library's entry point commonly has no declarations of its own and
+    just gathers them from other files. See ``module_map`` for caching.
 
     Returns ``(declaration, the file that actually declares it)``. Raises
     ``FileNotFoundError`` immediately if ``path`` itself can't be located,
-    and ``LookupError`` if the search space is exhausted without finding
-    ``module_name`` (message lists every module name seen along the way).
-    A referenced file that can't be found is skipped rather than treated as
-    fatal -- only ``path`` itself, the file the caller asked for directly,
-    must exist.
+    and ``LookupError`` if ``module_name`` isn't anywhere in the reachable
+    graph (message lists every module name that was found instead).
     """
-    root = resolve_scad_path(path)
-    visited: set[Path] = set()
-    queue: list[Path] = [root]
-    seen_modules: set[str] = set()
-    while queue:
-        candidate = queue.pop(0)
-        if candidate in visited:
-            continue
-        visited.add(candidate)
-        parsed = parse_file(candidate)
-        for decl in parsed.declarations:
-            if decl.kind != "module":
-                continue
-            seen_modules.add(decl.name)
-            if decl.name == module_name:
-                return decl, parsed.path
-        for ref in parsed.references:
-            # A relative reference inside a library file is relative to
-            # *that file's own directory*, same as OpenSCAD resolves it --
-            # not the caller's cwd or the library search paths, which is
-            # what resolve_scad_path alone would try. BOSL2's std.scad
-            # saying `include <version.scad>` means the version.scad next
-            # to std.scad, not one hypothetically sitting at the library
-            # root. Only fall back to the normal search if that's not it
-            # (e.g. the reference names a *different* top-level library).
-            sibling = parsed.path.parent / ref
-            if sibling.exists():
-                queue.append(sibling.resolve())
-                continue
-            try:
-                queue.append(resolve_scad_path(ref))
-            except FileNotFoundError:
-                continue
-    hint = f" Modules found in {path} and what it use<>s/include<>s: {', '.join(sorted(seen_modules))}." if seen_modules else f" No module declarations found anywhere reachable from {path}."
+    mapping = module_map(path)
+    entry = mapping.get(module_name)
+    if entry is not None:
+        return entry
+    hint = (
+        f" Modules found in {path} and what it use<>s/include<>s: {', '.join(sorted(mapping))}."
+        if mapping
+        else f" No module declarations found anywhere reachable from {path}."
+    )
     raise LookupError(f"no module {module_name!r} found from {path!r}.{hint}")
 
 

@@ -157,9 +157,17 @@ small_box = cuboid(size=[10, 10, 10], rounding=1, **extra)
 depend on — BOSL2 above is normally used this way. `"use"` brings in only
 module and function definitions, which is how some libraries (MCAD above)
 are conventionally used instead. See
-[docs/REFERENCE.md](docs/REFERENCE.md#calling-a-single-module) for exactly
-how that resolution works, and what happens if you get a module or argument
-name wrong.
+[docs/REFERENCE.md](docs/REFERENCE.md#calling-a-module-or-a-whole-files-worth-of-them)
+for exactly how that resolution works, and what happens if you get a module
+or argument name wrong.
+
+Leave out the module name and you get every module in the file as a
+namespace instead, built lazily as you use it:
+
+```python
+gears = scad123d.import_module("MCAD/involute_gears.scad", import_style="use")
+part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
+```
 
 If you already have a complete `.scad` file — your own design, or someone
 else's — and just want the geometry it produces, `import_scad()` brings in

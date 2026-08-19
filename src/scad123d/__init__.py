@@ -23,7 +23,7 @@ from .errors import (
     UnsupportedNodeError,
 )
 from .facets import DEFAULT_FACET_THRESHOLD
-from .module_import import import_module
+from .module_import import ScadLibrary, import_module
 from .nodes import CsgNode
 from .openscad import export_csg, find_openscad, openscad_version
 from .parser import parse_csg, parse_csg_file
@@ -35,6 +35,7 @@ __all__ = [
     "OpenSCADNotFoundError",
     "OpenSCADRunError",
     "Scad123dError",
+    "ScadLibrary",
     "UndeclaredModuleError",
     "UnsupportedNodeError",
     "find_openscad",

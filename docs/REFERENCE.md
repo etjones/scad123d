@@ -63,7 +63,7 @@ of OpenSCAD; it delegates to it. Discovery order:
 
 CSG export needs no OpenGL, so no `xvfb` wrapper is required on headless Linux.
 
-## Calling a single module
+## Calling a module, or a whole file's worth of them
 
 There is no OpenSCAD-level operation for "just run this one module" — a
 `.scad` file's CSG export is always the result of its top-level statements.
@@ -142,6 +142,46 @@ module name that plainly isn't declared anywhere reachable from `path`, but
 can't catch every way a call can still go wrong inside OpenSCAD itself. When
 that happens, the raised `UnsupportedNodeError` includes OpenSCAD's own
 warning text.
+
+**Importing a whole file's modules as a namespace.** Leave out `name` and
+`import_module(path)` returns a `ScadLibrary` — one attribute per `module`
+declared in (or reachable from) `path`:
+
+```python
+gears = scad123d.import_module("MCAD/involute_gears.scad", import_style="use")
+part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
+```
+
+Each attribute is built the first time you access it, not up front — so
+importing a file with dozens of declarations only ever builds the ones you
+actually call. `dir(gears)` and `hasattr()` work normally; an attribute
+that isn't a declared module raises `AttributeError`, same as any other
+object. Only `module` declarations are exposed. OpenSCAD `function`s return
+plain values (numbers, lists, strings), and there's no mechanism in this
+CSG-based pipeline to extract one — functions are parsed (so a name
+collision with a module is still detected) but never surfaced as an
+attribute.
+
+If two files reachable from `path` both declare a module with the same
+name, the one that wins is whichever `find_module`/the namespace resolves
+to via a depth-first walk that records a file's own declarations *after*
+recursing into what it references — approximating OpenSCAD's actual
+"textual substitution, last definition wins" behavior for the common case
+(a file's own `use`/`include` directives gathered at the top, its
+declarations after). A file that interleaves declarations *between*
+includes isn't modeled exactly right; this is rare enough in practice
+(most libraries treat their own name collisions as a bug) that it wasn't
+worth a fully textual-order scan.
+
+**Caching.** The declaration scan (tokenizing `path` and walking its
+`use`/`include` graph) is cached on `path`'s resolved location and
+modification time, so repeated `import_module()` calls for the same file
+don't re-parse it — whether or not you ask for the same module each time.
+Only `path` itself is watched for changes; a file it reaches transitively
+being edited won't invalidate the cache. That covers third-party libraries
+(static) and the common case of iterating on your own single file directly.
+If you're editing something reached only transitively, call
+`scad123d.scad_declarations.clear_cache()` to force a rescan.
 
 ## `hull()` and `minkowski()`
 

@@ -82,6 +82,76 @@ def test_module_found_transitively_through_use_and_include(tmp_path):
     assert list(inspect.signature(leaf_box).parameters) == ["size"]
 
 
+class TestScadLibrary:
+    """import_module(path), no module_name -- a namespace of every module."""
+
+    def test_returns_a_scad_library(self):
+        lib = scad123d.import_module(MODULE_LIB)
+        assert isinstance(lib, scad123d.ScadLibrary)
+
+    def test_dir_lists_declared_modules(self):
+        lib = scad123d.import_module(MODULE_LIB)
+        assert dir(lib) == ["sized_box"]
+
+    def test_attribute_access_gives_a_real_signature(self):
+        lib = scad123d.import_module(MODULE_LIB)
+        assert list(inspect.signature(lib.sized_box).parameters) == ["size", "rounded"]
+
+    def test_repeated_attribute_access_returns_the_same_callable(self):
+        # Proves __getattr__ only builds once -- the second access finds the
+        # function already sitting in the instance __dict__ and never calls
+        # __getattr__ (a fresh exec()'d function each time would fail this).
+        lib = scad123d.import_module(MODULE_LIB)
+        assert lib.sized_box is lib.sized_box
+
+    def test_unknown_attribute_raises_attribute_error(self):
+        lib = scad123d.import_module(MODULE_LIB)
+        with pytest.raises(AttributeError, match="this_module_does_not_exist"):
+            lib.this_module_does_not_exist
+
+    def test_hasattr_works_normally(self):
+        lib = scad123d.import_module(MODULE_LIB)
+        assert hasattr(lib, "sized_box")
+        assert not hasattr(lib, "this_module_does_not_exist")
+
+    def test_functions_are_parsed_but_not_exposed(self, tmp_path):
+        lib_file = tmp_path / "lib.scad"
+        lib_file.write_text(
+            "module a_module(x) { cube(x); }\nfunction a_function(x) = x + 1;\n"
+        )
+        lib = scad123d.import_module(lib_file)
+        assert dir(lib) == ["a_module"]
+        with pytest.raises(AttributeError):
+            lib.a_function
+
+    def test_repr_lists_modules(self):
+        lib = scad123d.import_module(MODULE_LIB)
+        assert "sized_box" in repr(lib)
+
+    @pytest.mark.needs_openscad
+    def test_calling_a_namespace_module_builds_real_geometry(self):
+        lib = scad123d.import_module(MODULE_LIB)
+        box = lib.sized_box(size=[20, 15, 10], rounded=False)
+        assert box.volume == pytest.approx(20 * 15 * 10, rel=1e-9)
+
+
+def test_repeated_import_module_calls_do_not_require_a_fresh_file_read(tmp_path):
+    # Black-box: caching is scad_declarations.module_map's job (see
+    # test_scad_declarations.py for the cache-identity/mtime-invalidation
+    # tests) -- this just confirms import_module() itself keeps working
+    # correctly across repeated calls for the same file, whatever caching
+    # happens underneath.
+    lib = tmp_path / "lib.scad"
+    lib.write_text("module a(x) cube(x);\nmodule b(y) sphere(y);")
+
+    a1 = scad123d.import_module(lib, "a")
+    a2 = scad123d.import_module(lib, "a")
+    assert list(inspect.signature(a1).parameters) == list(inspect.signature(a2).parameters)
+
+    library = scad123d.import_module(lib)
+    assert dir(library) == ["a", "b"]
+
+
 class TestModuleImport:
     pytestmark = pytest.mark.needs_openscad
 
