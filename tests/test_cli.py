@@ -59,7 +59,11 @@ def test_repeated_d_flags_accumulate():
     assert args.overrides == ["width=40", "holes=6"]
 
 
+@pytest.mark.needs_openscad
 def test_missing_input_file_is_a_clean_error(tmp_path, capsys):
+    # needs_openscad because import_scad() checks for the OpenSCAD binary
+    # before it ever looks at the input path -- without the binary this
+    # would hit OpenSCADNotFoundError first, not FileNotFoundError.
     exit_code = main([str(tmp_path / "does_not_exist.scad")])
     assert exit_code == 1
     assert "no such file" in capsys.readouterr().err
