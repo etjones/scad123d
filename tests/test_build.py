@@ -302,16 +302,18 @@ class TestStructure:
 
 
 class TestColor:
-    """color() on more than one child of a group -- a real boolean fuse
-    can't tell you which color survives once it's merged material away, so
-    a disjoint (non-overlapping) group is returned as a Compound of its
-    children instead, each keeping its own color -- geometrically identical
-    to the fused shape, but grouping (unlike fusing) doesn't erase each
-    child's own attributes. An overlapping group still falls back to a real
-    fuse -- unaffected geometrically -- but a bare fuse of colored,
-    overlapping shapes carries no color at all (confirmed directly), so
-    scad123d applies the first child's color to the fused result rather
-    than leaving it uncolored.
+    """color() on more than one child of a group. Three regimes:
+
+    - Disjoint children: returned as a Compound, each keeping its own
+      color -- geometrically identical to a fuse, which keeps disjoint
+      bodies separate anyway.
+    - Touching children (zero shared volume, real shared surface): colors
+      are the tie breaker. Colored children are evidence the author means
+      distinct parts, so they stay separate bodies; uncolored children
+      keep OpenSCAD's faithful union semantics (one merged solid).
+    - Overlapping children: always a real fuse. A bare fuse of colored
+      shapes carries no color at all (confirmed directly), so scad123d
+      applies the first child's color rather than leaving it uncolored.
     """
 
     _RED = (1.0, 0.0, 0.0, 1.0)
@@ -365,6 +367,40 @@ class TestColor:
         )
         assert len(shape.solids()) == 1
         assert tuple(shape.color) == pytest.approx(self._BLUE)
+
+    def test_touching_colored_children_stay_separate_bodies(self):
+        # Zero shared volume, real shared surface: a part designed to sit
+        # exactly in a cavity cut for it (from a user's actual .scad: a red
+        # cube with a cylindrical hole, a blue cylinder filling it). Volume
+        # matches the naive sum, area doesn't -- a fuse would glue the
+        # shared face away and merge the parts. Colors mark them as
+        # intentionally distinct parts, so they must stay two bodies.
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
+            "\tcolor([0, 0, 1, 1]) {\n"
+            "\t\tmultmatrix([[1, 0, 0, 10], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
+        )
+        assert len(shape.children) == 2
+        left, right = shape.children
+        assert tuple(left.color) == pytest.approx(self._RED)
+        assert tuple(right.color) == pytest.approx(self._BLUE)
+        assert shape.volume == pytest.approx(2000, rel=1e-9)
+
+    def test_touching_uncolored_children_still_fuse_to_one_solid(self):
+        # The color-free counterpart of the test above: without colors
+        # there's no evidence the author means separate parts, so touching
+        # children keep OpenSCAD's faithful union semantics -- one merged
+        # solid, shared face glued away.
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tmultmatrix([[1, 0, 0, 10], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\tcube(size = [10, 10, 10], center = false);\n\t}\n}"
+        )
+        assert len(shape.solids()) == 1
+        assert shape.volume == pytest.approx(2000, rel=1e-9)
 
     def test_nested_color_overrides_the_outer_color_for_that_child(self):
         # color("red") union() { cube(...); color("blue") sphere(...); }

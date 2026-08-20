@@ -289,26 +289,43 @@ cases that are feasible but not yet built.
 into STEP export (and glTF) as real per-part color — not just a preview
 hint.
 
-**Disjoint colored children keep their own color; overlapping ones share
-one.** A real boolean fuse can't tell you which color survives once it's
-merged overlapping material away — confirmed directly, it doesn't even keep
-the first child's color, the fused result comes back with none at all.
-scad123d detects the common case where a group's children don't actually
-overlap — their combined volume *and* area both match the naive sum of the
-children's own volume/area — and in that case returns a `Compound` of the
-children directly instead of a fused shape: geometrically identical, but
-grouping (unlike fusing) doesn't touch each child's own color. When
-children genuinely overlap, this falls back to a real fuse, the same
-geometrically-correct result scad123d has always produced, and applies the
-first child's color to the whole thing rather than leaving it uncolored —
-which color should really win on the merged region is genuinely undefined
-without OCCT-level boolean history tracking, but one color is a better
-default than none:
+**Colored children that don't share volume keep their own color;
+overlapping ones share one.** A real boolean fuse can't tell you which
+color survives once it's merged overlapping material away — confirmed
+directly, it doesn't even keep the first child's color, the fused result
+comes back with none at all. scad123d compares the combined result against
+the naive sum of the children's own volume and area, giving three regimes:
+
+- **Disjoint** (volume and area both match the sums): the children are
+  returned as a `Compound`, each keeping its own color — geometrically
+  identical to a fuse, which keeps disjoint bodies separate anyway.
+- **Touching without overlapping** (volume matches, area doesn't — a part
+  sitting exactly in a cavity cut for it shares a surface but zero
+  volume): colors are the tie breaker. Children carrying `color()` are
+  evidence the author means distinct parts (a multi-material print, an
+  assembly), so they stay separate bodies with their own colors; uncolored
+  children keep OpenSCAD's faithful union semantics — one merged solid,
+  shared face glued away.
+- **Genuinely overlapping**: always a real fuse, the same
+  geometrically-correct result scad123d has always produced, with the
+  first child's color applied to the whole thing rather than none — which
+  color should really win on the merged region is genuinely undefined
+  without OCCT-level boolean history tracking, but one color is a better
+  default than no color at all.
 
 ```openscad
 // Disjoint -- each part keeps its own color through STEP export.
 color("red") cube([10, 10, 10]);
 color("blue") translate([20, 0, 0]) sphere(r=5);
+
+// Touching, not overlapping -- the blue part exactly fills a cavity cut
+// from the red part. Zero shared volume, so both parts and both colors
+// survive as separate bodies in the exported STEP.
+color("red") difference() {
+    cube(10);
+    cylinder(h = 15, r = 5);
+}
+color("blue") cylinder(h = 15, r = 5);
 
 // Overlapping -- correctly fused into one solid (same volume scad123d has
 // always produced); the whole result gets colored red, the first child's

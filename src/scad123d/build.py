@@ -76,6 +76,22 @@ def _children(node: CsgNode, options: BuildOptions) -> list[Shape]:
     return marked or out
 
 
+def _carries_color(shape: Shape) -> bool:
+    """Does this shape, or any shape nested under it, have an explicit color?
+
+    Checks the private ``_color`` rather than the ``color`` property: the
+    property walks *up* through parents and caches what it finds, so it
+    reports inherited color, not authored color -- and it's authored color
+    (an explicit ``color()`` in the .scad) that signals "these are distinct
+    parts". Descends through ``children`` because a nested disjoint colored
+    group arrives here as a Compound whose own color is unset but whose
+    children carry theirs.
+    """
+    if shape._color is not None:
+        return True
+    return any(_carries_color(child) for child in shape.children)
+
+
 def _union(shapes: list[Shape]) -> Shape | None:
     """Union children the way an OpenSCAD block does.
 
@@ -101,18 +117,31 @@ def _union(shapes: list[Shape]) -> Shape | None:
     # A real boolean fuse can't tell us which color survives once it's
     # merged overlapping material away, so it only ever keeps one color for
     # the whole result -- losing distinctly-colored children (see color()
-    # below) the moment they're grouped with anything else. Detect the
-    # common case where nothing was actually merged -- volume AND area both
-    # match the naive sum of the children -- and in that case return a
-    # Compound of the children directly instead: geometrically identical to
-    # the fuse, but grouping (unlike fusing) doesn't touch each child's own
-    # color/label/material. Checking area as well as volume catches the
-    # case a volume check alone would miss: two solids exactly touching
-    # along a shared face have unchanged total volume but a real fuse
-    # still glues that face away, changing area and solid count -- exactly
-    # the case where returning a Compound instead would be topologically
-    # wrong (confirmed directly: two touching unit cubes fuse to 1 solid,
-    # not 2, with unchanged volume but a smaller total area).
+    # below) the moment they're grouped with anything else. Detect when
+    # nothing was actually merged -- the fused volume matches the naive sum
+    # of the children's volumes -- and in that case a Compound of the
+    # children, kept as separate bodies, is a legitimate alternative to the
+    # fuse: same total volume, but grouping (unlike fusing) doesn't touch
+    # each child's own color/label/material.
+    #
+    # Volume alone can't distinguish *disjoint* children from children that
+    # touch along a shared surface without overlapping (a part designed to
+    # sit exactly in a cavity cut for it -- zero shared volume, real shared
+    # face). A fuse glues that shared face away, merging the parts into one
+    # solid with a smaller total surface area (confirmed directly: two
+    # touching unit cubes fuse to 1 solid, unchanged volume, smaller area),
+    # so the area comparison below tells the two cases apart:
+    #
+    # - Truly disjoint (volume AND area both match the naive sums): always
+    #   return the Compound. A fuse of disjoint bodies keeps them as
+    #   separate solids anyway, so nothing is lost and colors survive.
+    # - Touching (volume matches, area doesn't): the two results genuinely
+    #   differ -- OpenSCAD's union semantics say one merged solid, but
+    #   merging is exactly what destroys per-part color. Color is the tie
+    #   breaker: children that carry colors are evidence the author means
+    #   them as distinct parts (a multi-material print, an assembly), so
+    #   keep them separate; uncolored children get the faithful OpenSCAD
+    #   merge, preserving longstanding behavior for plain geometry.
     #
     # `children=` (not a flat `Compound(shapes)`) matters too: it's what
     # makes this an assembly the STEP exporter's PreOrderIter walks node by
@@ -120,11 +149,13 @@ def _union(shapes: list[Shape]) -> Shape | None:
     # parent/child tree is treated as one leaf and gets a single color
     # splashed across every solid inside it instead.
     total_volume = sum(s.volume for s in shapes)
-    total_area = sum(s.area for s in shapes)
-    if math.isclose(fused.volume, total_volume, rel_tol=1e-9, abs_tol=1e-9) and math.isclose(
-        fused.area, total_area, rel_tol=1e-9, abs_tol=1e-9
-    ):
-        return Compound(children=list(shapes))
+    if math.isclose(fused.volume, total_volume, rel_tol=1e-9, abs_tol=1e-9):
+        total_area = sum(s.area for s in shapes)
+        areas_match = math.isclose(
+            fused.area, total_area, rel_tol=1e-9, abs_tol=1e-9
+        )
+        if areas_match or any(_carries_color(s) for s in shapes):
+            return Compound(children=list(shapes))
 
     # Real overlap: which color the merged region should be is genuinely
     # undefined without OCCT-level boolean history tracking, but a real
