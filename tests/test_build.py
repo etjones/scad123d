@@ -308,7 +308,10 @@ class TestColor:
     children instead, each keeping its own color -- geometrically identical
     to the fused shape, but grouping (unlike fusing) doesn't erase each
     child's own attributes. An overlapping group still falls back to a real
-    fuse, matching the pre-existing (uncolored) behavior exactly.
+    fuse -- unaffected geometrically -- but a bare fuse of colored,
+    overlapping shapes carries no color at all (confirmed directly), so
+    scad123d applies the first child's color to the fused result rather
+    than leaving it uncolored.
     """
 
     _RED = (1.0, 0.0, 0.0, 1.0)
@@ -331,7 +334,13 @@ class TestColor:
     def test_overlapping_colored_children_fall_back_to_a_real_fuse(self):
         # Same shapes as the disjoint case, but overlapping -- a real fuse
         # must still happen (unaffected by this feature), and the exact
-        # pre-existing overlap-corrected volume is preserved.
+        # pre-existing overlap-corrected volume is preserved. Which color
+        # "wins" the merged region is genuinely undefined, but a real fuse
+        # doesn't even keep the first child's color on its own -- confirmed
+        # directly -- so this checks that scad123d applies one anyway
+        # (first child with a color) rather than leaving it uncolored,
+        # which is what a real, reported .scad file (cube+cylinder both
+        # near the origin, genuinely overlapping) hit in practice.
         shape = scad123d.import_csg(
             "union() {\n"
             "\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
@@ -341,6 +350,21 @@ class TestColor:
         )
         assert len(shape.solids()) == 1
         assert shape.volume == pytest.approx(1000 + 1000 - 125, rel=1e-9)
+        assert tuple(shape.color) == pytest.approx(self._RED)
+
+    def test_overlap_fallback_color_is_not_hardcoded_to_the_first_child(self):
+        # Same overlap shape, but only the *second* child has a color --
+        # proves the fallback searches for the first child that has one,
+        # rather than always reading shapes[0].
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tcolor([0, 0, 1, 1]) {\n"
+            "\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 5], [0, 0, 1, 5], [0, 0, 0, 1]]) {\n"
+            "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
+        )
+        assert len(shape.solids()) == 1
+        assert tuple(shape.color) == pytest.approx(self._BLUE)
 
     def test_nested_color_overrides_the_outer_color_for_that_child(self):
         # color("red") union() { cube(...); color("blue") sphere(...); }

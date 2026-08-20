@@ -125,6 +125,20 @@ def _union(shapes: list[Shape]) -> Shape | None:
         fused.area, total_area, rel_tol=1e-9, abs_tol=1e-9
     ):
         return Compound(children=list(shapes))
+
+    # Real overlap: which color the merged region should be is genuinely
+    # undefined without OCCT-level boolean history tracking, but a real
+    # fuse doesn't even keep the *first* child's color -- confirmed
+    # directly, fusing two colored, overlapping shapes gives a result with
+    # no color at all. No color is a worse default than picking one, so
+    # fall back to the first child that had one, same as OpenSCAD's own
+    # rendering of overlapping colors effectively does (one object's color
+    # wins the ambiguous region, not neither).
+    if fused.color is None:
+        for s in shapes:
+            if s.color is not None:
+                fused.color = s.color
+                break
     return fused
 
 

@@ -289,18 +289,21 @@ cases that are feasible but not yet built.
 into STEP export (and glTF) as real per-part color — not just a preview
 hint.
 
-**Disjoint colored children keep their own color; overlapping ones don't.**
-A real boolean fuse can't tell you which color survives once it's merged
-overlapping material away, so it only ever keeps one color for the whole
-result. scad123d detects the common case where a group's children don't
-actually overlap — their combined volume *and* area both match the naive
-sum of the children's own volume/area — and in that case returns a
-`Compound` of the children directly instead of a fused shape: geometrically
-identical, but grouping (unlike fusing) doesn't touch each child's own
-color. When children genuinely overlap, this falls back to a real fuse, the
-same geometrically-correct result scad123d has always produced — just
-without per-child color, since which color should win on the merged region
-is genuinely undefined without OCCT-level boolean history tracking:
+**Disjoint colored children keep their own color; overlapping ones share
+one.** A real boolean fuse can't tell you which color survives once it's
+merged overlapping material away — confirmed directly, it doesn't even keep
+the first child's color, the fused result comes back with none at all.
+scad123d detects the common case where a group's children don't actually
+overlap — their combined volume *and* area both match the naive sum of the
+children's own volume/area — and in that case returns a `Compound` of the
+children directly instead of a fused shape: geometrically identical, but
+grouping (unlike fusing) doesn't touch each child's own color. When
+children genuinely overlap, this falls back to a real fuse, the same
+geometrically-correct result scad123d has always produced, and applies the
+first child's color to the whole thing rather than leaving it uncolored —
+which color should really win on the merged region is genuinely undefined
+without OCCT-level boolean history tracking, but one color is a better
+default than none:
 
 ```openscad
 // Disjoint -- each part keeps its own color through STEP export.
@@ -308,7 +311,8 @@ color("red") cube([10, 10, 10]);
 color("blue") translate([20, 0, 0]) sphere(r=5);
 
 // Overlapping -- correctly fused into one solid (same volume scad123d has
-// always produced), but the merged region has no well-defined single color.
+// always produced); the whole result gets colored red, the first child's
+// color, since the merged region has no well-defined color of its own.
 union() {
     color("red") cube([10, 10, 10]);
     color("blue") translate([5, 5, 5]) cube([10, 10, 10]);
