@@ -12,6 +12,7 @@ from functools import reduce
 from operator import add, and_, sub
 
 import solid123d as s1
+import webcolors
 from build123d import Compound, Shape
 
 from .facets import (
@@ -74,6 +75,23 @@ def _children(node: CsgNode, options: BuildOptions) -> list[Shape]:
         if c.modifier == "!"
     ]
     return marked or out
+
+
+def _color_label(rgba: list[float] | tuple[float, ...]) -> str:
+    """A human-readable name for an rgba value: the exact CSS color name
+    when there is one (OpenSCAD's color names are the CSS/SVG names, so
+    ``color("red")`` round-trips back to ``"red"`` even though the CSG
+    export only records ``[1, 0, 0, 1]``), otherwise the hex string.
+
+    Used to label the build123d shapes that ``color()`` produces, so parts
+    show up in STEP viewers and slicers under a recognizable name instead
+    of OCCT's auto-generated ``COMPOUND``/``SOLID``.
+    """
+    r, g, b = (round(float(v) * 255) for v in list(rgba)[:3])
+    try:
+        return webcolors.rgb_to_name((r, g, b))
+    except ValueError:
+        return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def _carries_color(shape: Shape) -> bool:
@@ -170,6 +188,8 @@ def _union(shapes: list[Shape]) -> Shape | None:
             if s.color is not None:
                 fused.color = s.color
                 break
+    if fused.color is not None and not fused.label:
+        fused.label = _color_label(tuple(fused.color))
     return fused
 
 
@@ -258,6 +278,8 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
             shape = s1.color(
                 list(rgba)[:3], alpha=float(list(rgba)[3]) if len(rgba) > 3 else 1.0
             )(shape)
+            if not shape.label:
+                shape.label = _color_label(rgba)
         return shape
 
     if name == "resize":

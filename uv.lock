@@ -1034,6 +1034,7 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "solid123d" },
+    { name = "webcolors" },
 ]
 
 [package.dev-dependencies]
@@ -1049,6 +1050,7 @@ requires-dist = [
     { name = "lark", specifier = ">=1.1.9" },
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "solid123d", specifier = ">=0.1.0" },
+    { name = "webcolors", specifier = ">=24.8" },
 ]
 
 [package.metadata.requires-dev]

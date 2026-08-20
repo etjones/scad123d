@@ -431,6 +431,31 @@ class TestColor:
         )
         assert shape.volume == pytest.approx(1000 + 125, rel=1e-9)
 
+    def test_named_color_labels_the_shape_with_its_css_name(self):
+        # OpenSCAD's color names are the CSS/SVG names, so even though the
+        # CSG export only records the rgba value, an exact reverse lookup
+        # recovers the name the author wrote.
+        shape = scad123d.import_csg(
+            "color([1, 0, 0, 1]) { cube(size = [5, 5, 5], center = false); }"
+        )
+        assert shape.label == "red"
+
+    def test_unnamed_color_labels_the_shape_with_its_hex_value(self):
+        shape = scad123d.import_csg(
+            "color([0.2, 0.3, 0.4, 1]) { cube(size = [5, 5, 5], center = false); }"
+        )
+        assert shape.label == "#334c66"
+
+    def test_overlap_fused_result_is_labeled_with_its_color(self):
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
+            "\tcolor([0, 0, 1, 1]) {\n"
+            "\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 5], [0, 0, 1, 5], [0, 0, 0, 1]]) {\n"
+            "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
+        )
+        assert shape.label == "red"
+
     @pytest.mark.needs_openscad
     def test_colors_survive_into_a_real_step_file(self, tmp_path):
         # The one link in this chain the tier-1 tests above can't cover:
@@ -454,3 +479,10 @@ class TestColor:
         text = step_path.read_text().lower()
         assert "draughting_pre_defined_colour('red')" in text
         assert "draughting_pre_defined_colour('blue')" in text
+        # Labels ride along as STEP PRODUCT names: the parts under their
+        # color names, the root under the source file's stem -- no
+        # OCCT-auto-generated 'COMPOUND' products left anywhere.
+        assert "product('red'" in text
+        assert "product('blue'" in text
+        assert "product('colors'" in text
+        assert "product('compound'" not in text

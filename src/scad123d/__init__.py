@@ -80,12 +80,19 @@ def import_scad(
         and read arbitrary paths. Do not call this on untrusted input.
     """
     tree = parse_csg(export_csg(path, overrides or None, timeout))
-    return import_csg(
+    shape = import_csg(
         tree,
         facet_threshold=facet_threshold,
         mesh_scope=mesh_scope,
         timeout=timeout,
     )
+    # Name the result after its source file, so the top-level object shows
+    # up in STEP viewers/slicers as e.g. "bracket" rather than OCCT's
+    # auto-generated "COMPOUND". Colored children keep their own
+    # color-derived labels (see build.py).
+    if not shape.label:
+        shape.label = Path(path).stem
+    return shape
 
 
 def import_csg(

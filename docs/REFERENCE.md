@@ -341,6 +341,19 @@ ancestor's color — matching OpenSCAD, and exactly what build123d's own
 `Shape.color` property and STEP exporter already do when a node's color
 isn't explicitly set.
 
+**Parts get names, not `COMPOUND`.** Every shape a `color()` produces is
+also labeled — with the exact CSS color name when there is one
+(OpenSCAD's color names *are* the CSS names, so `color("red")` round-trips
+back to `"red"` even though the CSG export only records `[1, 0, 0, 1]`),
+otherwise the hex value (`#334c66`). The top-level result of
+`import_scad()` is labeled with the source file's stem, and a shape from
+an `import_module()` callable with its module's name. Labels become STEP
+`PRODUCT` names, so parts show up in CAD viewers and slicers under
+recognizable names instead of OCCT's auto-generated `COMPOUND`/`SOLID`.
+Labels are only ever filled in when empty — a label you set yourself on
+the returned build123d shape (or in code between import and export) is
+never overwritten.
+
 ## `$fn`, `$fa`, `$fs`
 
 `$fn` is genuinely ambiguous. Set globally it is usually a complexity switch
