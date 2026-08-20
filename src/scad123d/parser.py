@@ -23,14 +23,16 @@ def _get_parser() -> Lark:
     return _parser
 
 
-def _value(tree: Tree | Token) -> Any:
-    if isinstance(tree, Token):
-        raise ValueError(f"unexpected bare token {tree!r}")
+def _value(tree: Tree) -> Any:
     kind = tree.data
     if kind == "number":
         text = str(tree.children[0])
         number = float(text)
-        return int(number) if number.is_integer() and "." not in text and "e" not in text.lower() else number
+        return (
+            int(number)
+            if number.is_integer() and "." not in text and "e" not in text.lower()
+            else number
+        )
     if kind == "string":
         raw = str(tree.children[0])[1:-1]
         return raw.encode().decode("unicode_escape")

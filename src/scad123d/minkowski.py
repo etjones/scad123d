@@ -26,7 +26,8 @@ than calling `sphere()`.
 
 import math
 
-from build123d import GeomType, Kind, Shape, offset as _bd_offset
+from build123d import GeomType, Kind, Shape
+from build123d import offset as _bd_offset
 from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
 from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Sphere
 
@@ -83,7 +84,12 @@ def ball_radius(shape: Shape) -> float | None:
         return sphere.Radius()
 
     edges = shape.edges()
-    if not solids and len(faces) == 1 and len(edges) == 1 and edges[0].geom_type == GeomType.CIRCLE:
+    if (
+        not solids
+        and len(faces) == 1
+        and len(edges) == 1
+        and edges[0].geom_type == GeomType.CIRCLE
+    ):
         adaptor = BRepAdaptor_Curve(edges[0].wrapped)
         if adaptor.GetType() != GeomAbs_Circle:
             return None
@@ -113,7 +119,7 @@ def analytic_minkowski(built: list[Shape]) -> Shape | None:
         target = built[1 - ball_index]
         try:
             result = _bd_offset(target, amount=radius, kind=Kind.ARC)
-        except Exception:
+        except Exception:  # noqa: S112, BLE001
             continue
         if result is not None and result.is_valid:
             return result
