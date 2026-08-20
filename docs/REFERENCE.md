@@ -283,6 +283,43 @@ See [ROADMAP.md](../ROADMAP.md) for the verification behind each of these
 (exact error bounds, what was checked against what) and the further analytic
 cases that are feasible but not yet built.
 
+## `color()`
+
+`color()` maps onto build123d's own `.color` attribute, which round-trips
+into STEP export (and glTF) as real per-part color — not just a preview
+hint.
+
+**Disjoint colored children keep their own color; overlapping ones don't.**
+A real boolean fuse can't tell you which color survives once it's merged
+overlapping material away, so it only ever keeps one color for the whole
+result. scad123d detects the common case where a group's children don't
+actually overlap — their combined volume *and* area both match the naive
+sum of the children's own volume/area — and in that case returns a
+`Compound` of the children directly instead of a fused shape: geometrically
+identical, but grouping (unlike fusing) doesn't touch each child's own
+color. When children genuinely overlap, this falls back to a real fuse, the
+same geometrically-correct result scad123d has always produced — just
+without per-child color, since which color should win on the merged region
+is genuinely undefined without OCCT-level boolean history tracking:
+
+```openscad
+// Disjoint -- each part keeps its own color through STEP export.
+color("red") cube([10, 10, 10]);
+color("blue") translate([20, 0, 0]) sphere(r=5);
+
+// Overlapping -- correctly fused into one solid (same volume scad123d has
+// always produced), but the merged region has no well-defined single color.
+union() {
+    color("red") cube([10, 10, 10]);
+    color("blue") translate([5, 5, 5]) cube([10, 10, 10]);
+}
+```
+
+A child with no `color()` of its own inherits its nearest colored
+ancestor's color — matching OpenSCAD, and exactly what build123d's own
+`Shape.color` property and STEP exporter already do when a node's color
+isn't explicitly set.
+
 ## `$fn`, `$fa`, `$fs`
 
 `$fn` is genuinely ambiguous. Set globally it is usually a complexity switch

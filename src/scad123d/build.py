@@ -5,13 +5,14 @@ build123d objects. Nodes solid123d has no concept of (multmatrix, polyhedron)
 live in .solids; nodes with no BRep equivalent take the mesh fallback.
 """
 
+import math
 import warnings
 from dataclasses import dataclass, field
 from functools import reduce
 from operator import add, and_, sub
 
 import solid123d as s1
-from build123d import Shape
+from build123d import Compound, Shape
 
 from .facets import (
     DEFAULT_FACET_THRESHOLD,
@@ -94,7 +95,37 @@ def _union(shapes: list[Shape]) -> Shape | None:
         shapes = solid
     if len(shapes) == 1:
         return shapes[0]
-    return reduce(add, shapes)
+
+    fused = reduce(add, shapes)
+
+    # A real boolean fuse can't tell us which color survives once it's
+    # merged overlapping material away, so it only ever keeps one color for
+    # the whole result -- losing distinctly-colored children (see color()
+    # below) the moment they're grouped with anything else. Detect the
+    # common case where nothing was actually merged -- volume AND area both
+    # match the naive sum of the children -- and in that case return a
+    # Compound of the children directly instead: geometrically identical to
+    # the fuse, but grouping (unlike fusing) doesn't touch each child's own
+    # color/label/material. Checking area as well as volume catches the
+    # case a volume check alone would miss: two solids exactly touching
+    # along a shared face have unchanged total volume but a real fuse
+    # still glues that face away, changing area and solid count -- exactly
+    # the case where returning a Compound instead would be topologically
+    # wrong (confirmed directly: two touching unit cubes fuse to 1 solid,
+    # not 2, with unchanged volume but a smaller total area).
+    #
+    # `children=` (not a flat `Compound(shapes)`) matters too: it's what
+    # makes this an assembly the STEP exporter's PreOrderIter walks node by
+    # node, applying each child's own .color -- a flat Compound with no
+    # parent/child tree is treated as one leaf and gets a single color
+    # splashed across every solid inside it instead.
+    total_volume = sum(s.volume for s in shapes)
+    total_area = sum(s.area for s in shapes)
+    if math.isclose(fused.volume, total_volume, rel_tol=1e-9, abs_tol=1e-9) and math.isclose(
+        fused.area, total_area, rel_tol=1e-9, abs_tol=1e-9
+    ):
+        return Compound(children=list(shapes))
+    return fused
 
 
 def _fallback(node: CsgNode, options: BuildOptions, reason: str) -> Shape | None:

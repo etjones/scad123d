@@ -7,7 +7,6 @@ import pytest
 from build123d import GeomType
 
 import scad123d
-from scad123d.parser import parse_csg
 from scad123d.solids import apply_matrix
 
 from .conftest import FIXTURES, assert_close, shape_metrics
@@ -295,6 +294,103 @@ class TestStructure:
         assert shape.volume == pytest.approx(27, rel=1e-9)
 
     def test_unrecognised_node_warns_and_is_ignored(self):
-        with pytest.warns(UserWarning, match="unrecognised CSG node"):
-            with pytest.raises(scad123d.UnsupportedNodeError):
-                scad123d.import_csg("bogus_node(x = 1);")
+        with (
+            pytest.warns(UserWarning, match="unrecognised CSG node"),
+            pytest.raises(scad123d.UnsupportedNodeError),
+        ):
+            scad123d.import_csg("bogus_node(x = 1);")
+
+
+class TestColor:
+    """color() on more than one child of a group -- a real boolean fuse
+    can't tell you which color survives once it's merged material away, so
+    a disjoint (non-overlapping) group is returned as a Compound of its
+    children instead, each keeping its own color -- geometrically identical
+    to the fused shape, but grouping (unlike fusing) doesn't erase each
+    child's own attributes. An overlapping group still falls back to a real
+    fuse, matching the pre-existing (uncolored) behavior exactly.
+    """
+
+    _RED = (1.0, 0.0, 0.0, 1.0)
+    _BLUE = (0.0, 0.0, 1.0, 1.0)
+
+    def test_disjoint_colored_children_keep_their_own_color(self):
+        shape = scad123d.import_csg(
+            "color([1, 0, 0, 1]) {\n\tcube(size = [10, 10, 10], center = false);\n}\n"
+            "color([0, 0, 1, 1]) {\n"
+            "\tmultmatrix([[1, 0, 0, 20], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\tsphere($fn = 32, $fa = 12, $fs = 2, r = 5);\n\t}\n}"
+        )
+        assert len(shape.children) == 2
+        cube, sphere = shape.children
+        assert tuple(cube.color) == pytest.approx(self._RED)
+        assert tuple(sphere.color) == pytest.approx(self._BLUE)
+        # Geometrically unaffected -- same total volume as a real fuse would give.
+        assert shape.volume == pytest.approx(1000 + (4 / 3) * math.pi * 125, rel=1e-6)
+
+    def test_overlapping_colored_children_fall_back_to_a_real_fuse(self):
+        # Same shapes as the disjoint case, but overlapping -- a real fuse
+        # must still happen (unaffected by this feature), and the exact
+        # pre-existing overlap-corrected volume is preserved.
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
+            "\tcolor([0, 0, 1, 1]) {\n"
+            "\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 5], [0, 0, 1, 5], [0, 0, 0, 1]]) {\n"
+            "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
+        )
+        assert len(shape.solids()) == 1
+        assert shape.volume == pytest.approx(1000 + 1000 - 125, rel=1e-9)
+
+    def test_nested_color_overrides_the_outer_color_for_that_child(self):
+        # color("red") union() { cube(...); color("blue") sphere(...); }
+        shape = scad123d.import_csg(
+            "color([1, 0, 0, 1]) {\n\tunion() {\n"
+            "\t\tcube(size = [10, 10, 10], center = false);\n"
+            "\t\tcolor([0, 0, 1, 1]) {\n"
+            "\t\t\tmultmatrix([[1, 0, 0, 20], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\t\t\tsphere($fn = 32, $fa = 12, $fs = 2, r = 5);\n\t\t\t}\n\t\t}\n\t}\n}"
+        )
+        assert tuple(shape.color) == pytest.approx(self._RED)
+        cube, sphere = shape.children
+        # The cube has no color of its own -- build123d's Shape.color is a
+        # property that, when unset locally, walks up .parent and resolves
+        # to the nearest ancestor's color (matching OpenSCAD; this is also
+        # exactly what export_step's own color-inheritance docs describe).
+        assert cube._color is None
+        assert tuple(cube.color) == pytest.approx(self._RED)
+        # The sphere's own nested color() overrides the ancestor's.
+        assert tuple(sphere.color) == pytest.approx(self._BLUE)
+
+    def test_same_colored_children_still_group_correctly(self):
+        shape = scad123d.import_csg(
+            "color([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
+            "color([1, 0, 0, 1]) {\n"
+            "\tmultmatrix([[1, 0, 0, 20], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\tcube(size = [5, 5, 5], center = false);\n\t}\n}"
+        )
+        assert shape.volume == pytest.approx(1000 + 125, rel=1e-9)
+
+    @pytest.mark.needs_openscad
+    def test_colors_survive_into_a_real_step_file(self, tmp_path):
+        # The one link in this chain the tier-1 tests above can't cover:
+        # that Compound(children=...) is actually what makes export_step's
+        # own XCAF/PreOrderIter walk write a distinct color per part,
+        # rather than one color for the whole assembly. No test anywhere
+        # in this repo exercised export_step at all before this.
+        from build123d import export_step
+
+        scad = tmp_path / "colors.scad"
+        scad.write_text(
+            'color("red") cube([10, 10, 10]);\n'
+            'color("blue") translate([20, 0, 0]) sphere(r=5, $fn=32);\n'
+        )
+        part = scad123d.import_scad(scad)
+        step_path = tmp_path / "colors.step"
+        export_step(part, str(step_path))
+
+        # Confirmed directly: pure red/blue round-trip through OCCT's STEP
+        # writer as named DRAUGHTING_PRE_DEFINED_COLOUR entities.
+        text = step_path.read_text().lower()
+        assert "draughting_pre_defined_colour('red')" in text
+        assert "draughting_pre_defined_colour('blue')" in text
