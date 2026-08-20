@@ -354,6 +354,51 @@ Labels are only ever filled in when empty — a label you set yourself on
 the returned build123d shape (or in code between import and export) is
 never overwritten.
 
+**Authoring for multi-part output.** The expected way to get a multi-part,
+multi-color result is to structure the `.scad` so each colored part is a
+separate, already-subtracted top-level object — a separate module call per
+part works well. Inset lettering, for instance: one call for the plate
+with the text already cut out of it, one for the lettering that fills the
+recess. The parts then touch without sharing any volume, which is exactly
+what keeps them separate bodies (verified — this example imports as two
+parts named `black` and `white`, both colors intact in the STEP):
+
+```openscad
+module plate() {
+    difference() {
+        cube([40, 14, 4]);
+        translate([3, 3, 2]) linear_extrude(3) text("Hi", size=9);
+    }
+}
+module lettering() {
+    translate([3, 3, 2]) linear_extrude(2) text("Hi", size=9);
+}
+color("black") plate();
+color("white") lettering();
+```
+
+**What you get back in Python.** The returned object's concrete type
+varies with the content — a single primitive can come back as `Box` or
+`Cylinder`, fused geometry as `Part`, and colored non-overlapping parts as
+a `Compound` whose `.children` are the parts — but everything is a
+build123d `Shape`, so selectors, booleans, fillets, transforms, and
+exporters all work on any of them. Two things a build123d user could
+genuinely lose data to:
+
+- **Booleans and fillets flatten the assembly.** `part - tool` on a
+  multi-part `Compound` returns the geometrically-correct result, but as
+  one fused shape — `children`, per-part colors, and labels are gone.
+  That's inherent to booleans (they merge geometry, and a merged region
+  has no single owner), not a scad123d choice. To modify one part while
+  keeping the assembly, operate on the child and rebuild:
+  `Compound(children=[modified_part, *others])`.
+- **Iterate `.children`, not `.solids()`, when you care about colors or
+  labels.** `.solids()` re-casts each body to a bare `Solid` and drops the
+  Python-level `.color`/`.label` attributes; `.children` hands you the
+  parts with their metadata intact. (Whole-assembly transforms are safe:
+  `Pos(100, 0, 0) * part` moves everything and keeps children, colors, and
+  labels — verified.)
+
 ## `$fn`, `$fa`, `$fs`
 
 `$fn` is genuinely ambiguous. Set globally it is usually a complexity switch
