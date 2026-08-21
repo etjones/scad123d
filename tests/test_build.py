@@ -262,6 +262,208 @@ class TestHull:
         assert shape.volume == pytest.approx((4 / 3) * math.pi * 27, rel=1e-9)
 
 
+def _pair_hull_volume(ra: float, rb: float, d: float) -> float:
+    """Closed-form hull volume of two spheres: two caps + tangent frustum."""
+    sin_a = (rb - ra) / d
+    cos_a = math.sqrt(1 - sin_a**2)
+    h1, h2 = ra * (1 - sin_a), rb * (1 + sin_a)
+    rho1, rho2 = ra * cos_a, rb * cos_a
+    length = d * cos_a**2
+    return (
+        math.pi * h1 * h1 * (3 * ra - h1) / 3
+        + math.pi * length / 3 * (rho1**2 + rho1 * rho2 + rho2**2)
+        + math.pi * h2 * h2 * (3 * rb - h2) / 3
+    )
+
+
+def _pair_hull_area_2d(ra: float, rb: float, d: float) -> float:
+    """Closed-form hull area of two discs: two segments + tangent trapezoid."""
+    alpha = math.asin((rb - ra) / d)
+    sin_2a = math.sin(2 * alpha)
+    return (
+        0.5 * ra * ra * (math.pi - 2 * alpha - sin_2a)
+        + 0.5 * rb * rb * (math.pi + 2 * alpha + sin_2a)
+        + (ra + rb) * d * math.cos(alpha) ** 3
+    )
+
+
+class TestPairHull:
+    """hull() of exactly two unequal-radius spheres (3D) or discs (2D):
+    exact, via the external tangent cone / tangent lines. The 3D solid is
+    sewn from its three boundary patches (two spherical caps + the cone)
+    rather than fused -- OCCT booleans are flakiest exactly at tangent
+    contact, which is the only seam this shape has. Strictly pairwise:
+    three non-collinear unequal spheres need tritangent planes with
+    power-diagram combinatorics, and fall back to a mesh.
+    """
+
+    def test_two_unequal_spheres_match_the_closed_form(self):
+        import warnings as _warnings
+
+        source = _hull_of(
+            _SPHERE.format(r=3), _translated(14, 0, 0, _SPHERE.format(r=5))
+        )
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error")  # any fallback warning = failure
+            shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(_pair_hull_volume(3, 5, 14), rel=1e-9)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.SPHERE: 2, GeomType.CONE: 1}
+        assert shape.is_valid
+
+    def test_order_does_not_matter(self):
+        big_first = _hull_of(
+            _SPHERE.format(r=5), _translated(14, 0, 0, _SPHERE.format(r=3))
+        )
+        shape = scad123d.import_csg(big_first)
+        assert shape.volume == pytest.approx(_pair_hull_volume(3, 5, 14), rel=1e-9)
+
+    def test_contained_sphere_hulls_to_the_big_sphere(self):
+        source = _hull_of(
+            _SPHERE.format(r=1), _translated(2, 0, 0, _SPHERE.format(r=5))
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx((4 / 3) * math.pi * 125, rel=1e-9)
+
+    def test_near_containment_stays_valid_and_exact(self):
+        # sin(a) = 2/2.05 = 0.9756 -- the cone is nearly a tangent plane
+        # disc and the small kept cap nearly vanishes. The rung's
+        # volume-vs-formula self-gate would send any sewing artifact to the
+        # mesh fallback instead of shipping bad geometry.
+        source = _hull_of(
+            _SPHERE.format(r=1), _translated(2.05, 0, 0, _SPHERE.format(r=3))
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.is_valid
+        assert shape.volume == pytest.approx(_pair_hull_volume(1, 3, 2.05), rel=1e-9)
+
+    def test_internal_tangency_is_exactly_the_big_sphere(self):
+        # d == r2 - r1 exactly: the small sphere touches the big one from
+        # inside, and the hull IS the big sphere. The containment branch
+        # (d + r1 <= r2 within tolerance) covers this boundary.
+        source = _hull_of(
+            _SPHERE.format(r=1), _translated(4, 0, 0, _SPHERE.format(r=5))
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx((4 / 3) * math.pi * 125, rel=1e-9)
+
+    def test_barely_outside_containment_survives_extreme_degeneracy(self):
+        # sin(a) = 4/4.0000004 -- the exact hull exceeds the big sphere by
+        # a vanishing sliver. Verified empirically that the sewn
+        # construction (not the mesh fallback: warnings are errors here)
+        # still produces a valid solid whose volume matches the closed
+        # form; the self-gate stands behind it if OCCT ever degrades.
+        import warnings as _warnings
+
+        source = _hull_of(
+            _SPHERE.format(r=1), _translated(4.0000004, 0, 0, _SPHERE.format(r=5))
+        )
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error")
+            shape = scad123d.import_csg(source)
+        assert shape.is_valid
+        assert shape.volume == pytest.approx(
+            _pair_hull_volume(1, 5, 4.0000004), rel=1e-6
+        )
+
+    def test_overlapping_spheres_still_hull_exactly(self):
+        # The support-function argument is independent of overlap: the same
+        # tangent cone bounds the hull whether or not the spheres intersect.
+        source = _hull_of(
+            _SPHERE.format(r=3), _translated(5, 0, 0, _SPHERE.format(r=5))
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(_pair_hull_volume(3, 5, 5), rel=1e-9)
+
+    def test_three_unequal_spheres_decline(self):
+        from build123d import Pos, Sphere
+
+        from scad123d.hull import _hull_of_spheres
+
+        shapes = [
+            Sphere(3),
+            Pos(14, 0, 0) * Sphere(5),
+            Pos(7, 12, 0) * Sphere(4),
+        ]
+        assert _hull_of_spheres(shapes) is None
+
+    def test_2d_keyhole_extrudes_exactly(self):
+        import warnings as _warnings
+
+        source = (
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\thull() {\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 3);\n"
+            "\t\tmultmatrix([[1,0,0,10],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
+            "\t\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n\t\t}\n"
+            "\t}\n}"
+        )
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error")
+            shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4 * _pair_hull_area_2d(3, 5, 10), rel=1e-9)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.PLANE: 4, GeomType.CYLINDER: 2}
+
+    def test_2d_equal_circles_make_a_stadium(self):
+        # Equal radii is the alpha = 0 case of the same construction. Also
+        # notable: before this rung, *any* 2D hull hard-failed -- OpenSCAD
+        # cannot render a 2D subtree to a mesh, so there was no fallback.
+        source = (
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\thull() {\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
+            "\t\tmultmatrix([[1,0,0,10],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
+            "\t\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n\t\t}\n"
+            "\t}\n}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4 * (math.pi * 25 + 100), rel=1e-9)
+
+    def test_2d_contained_circle_hulls_to_the_big_circle(self):
+        source = (
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\thull() {\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 1);\n"
+            "\t\tmultmatrix([[1,0,0,2],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
+            "\t\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n\t\t}\n"
+            "\t}\n}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4 * math.pi * 25, rel=1e-9)
+
+    def test_2d_coincident_equal_circles_hull_to_the_circle(self):
+        # d = 0 with equal radii: the containment inequality
+        # (d + r1 <= r2 within relative tolerance) absorbs this before any
+        # division by d or degenerate wire construction can happen --
+        # important because a 2D decline has no mesh fallback to save it.
+        source = (
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\thull() {\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
+            "\t}\n}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4 * math.pi * 25, rel=1e-9)
+
+    def test_2d_micro_stadium_past_the_containment_tolerance(self):
+        # Equal circles separated by d = 1e-4: past the containment
+        # tolerance window, so the real tangent-wire construction runs with
+        # segments of length 1e-4 -- and the result is exactly the stadium,
+        # circle area plus 2*r*d.
+        source = (
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\thull() {\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
+            "\t\tmultmatrix([[1,0,0,0.0001],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
+            "\t\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n\t\t}\n"
+            "\t}\n}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4 * (math.pi * 25 + 2 * 5 * 1e-4), rel=1e-9)
+
+
 class TestPolyhedralHull:
     """Rung 3: hull() of all-polyhedral children is exactly the convex hull
     of their combined vertices, built as a real BRep solid via build123d's

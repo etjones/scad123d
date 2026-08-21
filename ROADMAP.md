@@ -139,11 +139,30 @@ circles, discs, coaxial cylinders); needs per-type silhouette derivation.
 Note this does **not** generalise to n children: `hull(a,b,c)` strictly contains
 the union of the pairwise hulls, so the middle region would be missed.
 
-### Rung 4 — unequal-radius sphere hulls, Minkowski with a box
+### Rung 4a — two-sphere and two-circle pair hulls (shipped)
 
-- Hull of spheres with differing radii is the additively-weighted hull: tangent
-  cones per pair, tangent planes per triple. The combinatorics come from a
-  power diagram rather than a plain hull of centers.
+The **pair** case of the additively-weighted hull is closed-form: with
+`sin α = (r₂ − r₁)/d`, the hull of two spheres is two spherical caps joined
+by the external tangent cone, which grazes each sphere at latitude `−α`
+(radius `r·cos α`, axial offset `−r·sin α` toward the small side — *not* at
+the equator). Built by **sewing** exactly those three boundary patches
+(partial-sphere and cone primitives share their seam circles by
+construction) rather than fusing solids, since OCCT booleans are flakiest
+at tangent contact — the only seam type this shape has. Self-checks
+against the closed-form volume; mismatch → mesh fallback. Valid for any
+non-contained spacing, overlapping included (the support-function split
+`u·n = −sin α` is independent of overlap); containment short-circuits to
+the big sphere. The 2D version (two discs → two arcs + two tangent
+segments, built directly as a wire, zero booleans) also fixes what was
+previously a hard *crash*: OpenSCAD cannot render a 2D subtree to a mesh,
+so 2D hulls had no fallback at all. Strictly pairwise — see rung 4.
+
+### Rung 4 — n-sphere unequal-radius hulls, Minkowski with a box
+
+- Hull of **three or more** spheres with differing radii is the general
+  additively-weighted hull: tangent cones per pair, tangent planes per
+  triple. The combinatorics come from a power diagram rather than a plain
+  hull of centers. (The pair case shipped as rung 4a.)
 - `minkowski(X, box)`: the obvious decomposition into three successive prism
   sweeps does **not** work — OCCT's `BRepPrimAPI_MakePrism` rejects solids
   (`Standard_Failure: Solids are not Processed`). It only prisms faces and

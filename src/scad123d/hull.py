@@ -41,20 +41,26 @@ import numpy as np
 from build123d import (
     Align,
     Circle,
+    Cone,
     ConvexPolyhedron,
     Cylinder,
     Edge,
     Face,
     GeomType,
     Kind,
+    Line,
     Plane,
     Polygon,
     Pos,
     Shape,
+    Shell,
+    Solid,
     Sphere,
+    ThreePointArc,
     Vector,
     Wire,
     extrude,
+    make_face,
 )
 from build123d import (
     offset as _bd_offset,
@@ -262,6 +268,87 @@ def _hull2d_offset(points: list[Point2], r: float) -> Face | None:
     return result if result is not None and result.is_valid else None
 
 
+def _two_sphere_hull(ca: Point3, ra: float, cb: Point3, rb: float) -> Shape | None:
+    """Exact hull of two spheres with ra < rb, neither containing the other.
+
+    Sewn directly from its three boundary patches -- two spherical caps and
+    the external tangent cone -- rather than fusing solids: OCCT booleans
+    are at their flakiest exactly at tangent (G1) contact, which is the
+    only kind of seam this shape has. The patches share their seam circles
+    by construction (each is cut from a primitive at the exact tangency
+    latitude), so sewing them into a shell is exact, deterministic, and
+    boolean-free.
+
+    The mathematics (with d = |cb - ca|, axis u from small to big):
+    sin(a) = (rb - ra)/d. The external tangent cone grazes each sphere not
+    at its equator but at latitude -a (measured from each sphere's equator
+    plane, tilted toward the small side): a circle of radius r*cos(a) at
+    axial offset -r*sin(a) from the center. The kept boundary of the small
+    sphere is its back cap (latitude -90 to -a); of the big sphere, its
+    front portion (latitude -a to 90) -- more than a hemisphere. This is
+    exact for *any* non-contained spacing, overlapping included: sphere i
+    supports direction n iff (ci . n + ri) is the max, and that inequality
+    splits directions at exactly u . n = -sin(a), independent of overlap.
+
+    The support-function argument does NOT extend to three non-collinear
+    spheres of unequal radii -- that hull needs tritangent planes with
+    power-diagram combinatorics (see ROADMAP rung 4), so this stays a
+    strictly-two-children rung.
+    """
+    d = _dist(ca, cb)
+    sin_a = (rb - ra) / d
+    cos_a = math.sqrt(1.0 - sin_a * sin_a)
+    alpha_deg = math.degrees(math.asin(sin_a))
+    u = (Vector(*cb) - Vector(*ca)) / d
+
+    def sphere_cap(centre: Point3, r: float, lat_lo: float, lat_hi: float) -> Face:
+        # align=None: the default align=CENTER would re-center the cap
+        # solid's *bounding box* at the origin, sliding the cap off the
+        # sphere's true center (confirmed directly). None keeps the native
+        # placement: sphere centered at the origin, latitudes about +Z.
+        solid = Plane(origin=Vector(*centre), z_dir=u) * Sphere(
+            r, arc_size1=lat_lo, arc_size2=lat_hi, align=None
+        )
+        return solid.faces().filter_by(GeomType.SPHERE)[0]
+
+    x1 = -ra * sin_a
+    x2 = d - rb * sin_a
+    length = x2 - x1  # = d * cos_a**2, > 0 whenever not contained
+    mid = Vector(*ca) + u * ((x1 + x2) / 2)
+    cone_solid = Plane(origin=mid, z_dir=u) * Cone(
+        bottom_radius=ra * cos_a, top_radius=rb * cos_a, height=length
+    )
+
+    try:
+        result = Solid(
+            Shell(
+                [
+                    sphere_cap(ca, ra, -90, -alpha_deg),
+                    cone_solid.faces().filter_by(GeomType.CONE)[0],
+                    sphere_cap(cb, rb, -alpha_deg, 90),
+                ]
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if not result.is_valid:
+        return None
+
+    # Self-check against the closed form (caps + frustum); a sewing artifact
+    # that survived is_valid would be a silently-wrong smooth solid, which is
+    # strictly worse than the mesh fallback.
+    h1, h2 = ra * (1 - sin_a), rb * (1 + sin_a)
+    rho1, rho2 = ra * cos_a, rb * cos_a
+    exact = (
+        math.pi * h1 * h1 * (3 * ra - h1) / 3
+        + math.pi * length / 3 * (rho1**2 + rho1 * rho2 + rho2**2)
+        + math.pi * h2 * h2 * (3 * rb - h2) / 3
+    )
+    if not math.isclose(result.volume, exact, rel_tol=1e-6):
+        return None
+    return result
+
+
 def _hull_of_spheres(shapes: list[Shape]) -> Shape | None:
     classified = [_sphere_center_radius(s) for s in shapes]
     if any(c is None for c in classified):
@@ -269,7 +356,15 @@ def _hull_of_spheres(shapes: list[Shape]) -> Shape | None:
     radii = [r for _, r in classified]
     r0 = radii[0]
     if any(abs(r - r0) > _RADIUS_REL_TOL * r0 for r in radii):
-        return None
+        if len(shapes) != 2:
+            return None
+        # Exactly two spheres of unequal radii: the tangent-cone pair case.
+        (ca, ra), (cb, rb) = classified
+        small, big = (0, 1) if ra <= rb else (1, 0)
+        (ca, ra), (cb, rb) = classified[small], classified[big]
+        if _dist(ca, cb) + ra <= rb * (1 + _RADIUS_REL_TOL):
+            return shapes[big]  # small sphere entirely inside the big one
+        return _two_sphere_hull(ca, ra, cb, rb)
     centers = [c for c, _ in classified]
     return _hull3d_offset(centers, r0)
 
@@ -369,6 +464,91 @@ def _hull_of_polyhedra(shapes: list[Shape]) -> Shape | None:
     return result if result.is_valid else None
 
 
+def _circle_center_radius(shape: Shape) -> tuple[Point2, float] | None:
+    """(center, radius) if shape is a single planar disc in the XY plane."""
+    if shape.solids():
+        return None
+    faces = shape.faces()
+    if len(faces) != 1:
+        return None
+    edges = faces[0].edges()
+    if len(edges) != 1 or edges[0].geom_type != GeomType.CIRCLE:
+        return None
+    centre = edges[0].arc_center
+    if abs(centre.Z) > 1e-9:
+        return None
+    return (centre.X, centre.Y), edges[0].radius
+
+
+def _hull_of_two_circles(shapes: list[Shape]) -> Shape | None:
+    """Exact 2D hull of two discs: two arcs joined by the external tangent
+    lines, built directly as a wire -- no booleans at all.
+
+    Same tangent geometry as the sphere pair, one dimension down: with
+    sin(a) = (rb - ra)/d, each tangent line grazes circle i at the point
+    tilted a past its top (and bottom), so the small circle keeps an arc of
+    180 - 2a degrees and the big circle 180 + 2a. Equal radii is just the
+    a = 0 case (the classic stadium), so this rung also covers it -- and
+    matters beyond exactness: OpenSCAD cannot render a 2D subtree to a
+    mesh, so before this rung *any* 2D hull() hard-failed rather than
+    falling back.
+    """
+    if len(shapes) != 2:
+        return None
+    classified = [_circle_center_radius(s) for s in shapes]
+    if any(c is None for c in classified):
+        return None
+    (ca, ra), (cb, rb) = classified
+    small, big = (0, 1) if ra <= rb else (1, 0)
+    (ca, ra), (cb, rb) = classified[small], classified[big]
+    d = math.hypot(cb[0] - ca[0], cb[1] - ca[1])
+    if d + ra <= rb * (1 + _RADIUS_REL_TOL):
+        return shapes[big]  # small disc entirely inside the big one
+    sin_a = (rb - ra) / d
+    cos_a = math.sqrt(1.0 - sin_a * sin_a)
+    ux, uy = (cb[0] - ca[0]) / d, (cb[1] - ca[1]) / d
+    nx, ny = -uy, ux
+
+    def graze(c: Point2, r: float, side: float) -> tuple[float, float]:
+        return (
+            c[0] + r * (-sin_a * ux + side * cos_a * nx),
+            c[1] + r * (-sin_a * uy + side * cos_a * ny),
+        )
+
+    p1p, p1m = graze(ca, ra, +1), graze(ca, ra, -1)
+    p2p, p2m = graze(cb, rb, +1), graze(cb, rb, -1)
+    back = (ca[0] - ra * ux, ca[1] - ra * uy)  # far point of the small circle
+    front = (cb[0] + rb * ux, cb[1] + rb * uy)  # far point of the big circle
+    try:
+        face = make_face(
+            [
+                ThreePointArc(p1p, back, p1m),
+                Line(p1m, p2m),
+                ThreePointArc(p2m, front, p2p),
+                Line(p2p, p1p),
+            ]
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if face is None or not face.is_valid:
+        return None
+    # Self-check against the closed form. Decompose by the two tangency
+    # chords (P+ to P- on each circle): a circular segment of the small
+    # circle (arc angle pi - 2a), the trapezoid between the chords, and a
+    # segment of the big circle (arc angle pi + 2a, more than half).
+    # Segment area is r^2/2 * (theta - sin theta).
+    alpha = math.asin(sin_a)
+    sin_2a = math.sin(2 * alpha)
+    exact = (
+        0.5 * ra * ra * (math.pi - 2 * alpha - sin_2a)
+        + 0.5 * rb * rb * (math.pi + 2 * alpha + sin_2a)
+        + (ra + rb) * d * cos_a**3
+    )
+    if not math.isclose(face.area, exact, rel_tol=1e-6):
+        return None
+    return face
+
+
 def analytic_hull(shapes: list[Shape]) -> Shape | None:
     """Try to evaluate hull() analytically; None means fall back to a mesh."""
     if not shapes:
@@ -379,6 +559,9 @@ def analytic_hull(shapes: list[Shape]) -> Shape | None:
     if result is not None:
         return result
     result = _hull_of_cylinders(shapes)
+    if result is not None:
+        return result
+    result = _hull_of_two_circles(shapes)
     if result is not None:
         return result
     return _hull_of_polyhedra(shapes)

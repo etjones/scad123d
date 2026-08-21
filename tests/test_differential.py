@@ -141,10 +141,12 @@ def test_overrides_change_the_geometry():
 def test_hull_falls_back_to_a_mesh_rather_than_failing():
     """Decision: hull() must never hard-fail -- BOSL2 rounding depends on it.
 
-    Unequal-radius *curved* spheres: no rung covers this (rung 2 needs equal
-    radii, rung 3 needs all-planar faces), so it genuinely still needs the
-    mesh fallback. This test originally used faceted ($fn=16) cylinders,
-    which rung 3 now hulls exactly -- faceted means polyhedral.
+    Three non-collinear spheres of unequal radii: no rung covers this (the
+    tangent-cone rung is strictly pairwise -- three needs tritangent planes
+    with power-diagram combinatorics), so it genuinely still needs the mesh
+    fallback. This test's example has been upgraded twice as rungs landed:
+    faceted cylinders (now exact via the polyhedral rung), then an unequal
+    sphere *pair* (now exact via the tangent-cone rung).
     """
     source = (
         "hull() {\n"
@@ -152,14 +154,16 @@ def test_hull_falls_back_to_a_mesh_rather_than_failing():
         "\tmultmatrix([[1, 0, 0, 14], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
         "\t\tsphere($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
         "\t}\n"
+        "\tmultmatrix([[1, 0, 0, 7], [0, 1, 0, 12], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+        "\t\tsphere($fn = 0, $fa = 12, $fs = 2, r = 4);\n"
+        "\t}\n"
         "}"
     )
     with pytest.warns(UserWarning, match="no BRep equivalent"):
         shape = scad123d.import_csg(source)
-    # Sandwich the volume: the hull contains the larger sphere, and fits
-    # inside a radius-5 capsule spanning both centers.
+    # Loose sandwich: contains the largest sphere; inside the bounding box.
     assert shape.volume > (4 / 3) * math.pi * 125
-    assert shape.volume < math.pi * 25 * 14 + (4 / 3) * math.pi * 125
+    assert shape.volume < shape.bounding_box().size.X * shape.bounding_box().size.Y * shape.bounding_box().size.Z
 
 
 def test_mesh_scope_hoist_meshes_everything():
@@ -186,6 +190,40 @@ def test_mesh_scope_hoist_meshes_everything():
     with pytest.warns(UserWarning, match="no BRep equivalent"):
         hoisted = scad123d.import_csg(source, mesh_scope="hoist")
     assert minimal.volume == pytest.approx(hoisted.volume, rel=0.02)
+
+
+def test_two_sphere_hull_converges_to_openscad():
+    """The tangent-cone pair rung differentially: OpenSCAD's inscribed
+    faceted hull must converge from below toward our exact volume as $fn
+    rises -- the same convergence invariant the generic volume test uses
+    for curved shapes.
+    """
+    from tests.test_build import _pair_hull_volume  # closed form, tested tier-1
+
+    def source(fn: int) -> str:
+        return (
+            "hull() {\n"
+            f"\tsphere($fn = {fn}, $fa = 12, $fs = 2, r = 3);\n"
+            "\tmultmatrix([[1, 0, 0, 14], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            f"\t\tsphere($fn = {fn}, $fa = 12, $fs = 2, r = 5);\n"
+            "\t}\n"
+            "}"
+        )
+
+    import shutil
+
+    ours = _pair_hull_volume(3, 5, 14)
+    volumes = {}
+    for fn in (32, 128):
+        mesh = export_mesh(source(fn), suffix=".stl")
+        try:
+            volumes[fn] = stl_volume(mesh)
+        finally:
+            shutil.rmtree(mesh.parent, ignore_errors=True)
+    assert volumes[32] < ours
+    assert volumes[128] < ours
+    assert abs(ours - volumes[128]) < abs(ours - volumes[32])
+    assert (ours - volumes[128]) / ours < 0.005
 
 
 def test_polyhedral_hull_matches_openscad_exactly():
@@ -288,10 +326,16 @@ def test_minkowski_polyhedron_kernel_matches_steiner_formula():
 # no binary, but these can't complete without one either way.
 
 
-def test_unequal_radius_hull_falls_back_to_mesh():
+def test_three_unequal_sphere_hull_falls_back_to_mesh():
+    """A *pair* of unequal spheres is exact (the tangent-cone rung), but
+    three non-collinear unequal spheres need tritangent planes with
+    power-diagram combinatorics -- no rung covers that, so it's the
+    permanent honest example of the mesh fallback.
+    """
     source = _hull_of(
         _SPHERE.format(r=3),
-        _translated(10, 0, 0, _SPHERE.format(r=5)),
+        _translated(14, 0, 0, _SPHERE.format(r=5)),
+        _translated(7, 12, 0, _SPHERE.format(r=4)),
     )
     with pytest.warns(UserWarning, match="no BRep equivalent"):
         shape = scad123d.import_csg(source)

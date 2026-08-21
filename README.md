@@ -231,22 +231,29 @@ hull() {
 
 <img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_analytic.png" width="450" alt="hull() of 8 equal-radius corner spheres, computed exactly by scad123d">
 
-What's left is hulls of *curved* shapes outside those idioms — spheres of
-different sizes, mismatched cylinders — where the true hull has curved
-faces no vertex set can capture. There, scad123d doesn't fail: it asks the
-real OpenSCAD program to render just that piece as a mesh and stitches the
-result in. Your model still imports and still comes out correct — you just
-lose the "real curved surface" benefits (fillets, exact export) for that
-specific piece:
+**We can hull 2 spheres, but not 3+.** A hull of exactly *two* spheres — any two
+radii — is computed exactly. But the hull of 3 or more spheres is computed
+as a mesh.
 
 ```openscad
-hull() {
-    translate([-8, 0, 0]) sphere(r=5);
-    translate([ 8, 0, 0]) sphere(r=9);   // different radius -- no exact answer
+hull() {                                   // exact: smooth caps + tangent cone
+    translate([-8, 0, 0]) sphere(r = 5);
+    translate([ 8, 0, 0]) sphere(r = 9);
 }
 ```
 
-<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_fallback.png" width="450" alt="hull() of unequal-radius spheres: no exact answer, falls back to a mesh, visibly faceted">
+```openscad
+hull() {                                   // no closed form: mesh fallback
+    translate([-8,  0, 0]) sphere(r = 5);
+    translate([ 8,  0, 0]) sphere(r = 9);
+    translate([ 0, 16, 0]) sphere(r = 7);
+}
+```
+
+<p>
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_two_spheres.png" width="400" alt="hull() of two unequal spheres: exact smooth BRep, two spherical caps joined by the tangent cone">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_three_spheres.png" width="400" alt="hull() of three unequal spheres: no closed form, mesh fallback, visibly faceted">
+</p>
 
 **scad123d never refuses to import something** — it just tells you, with a
 warning naming the exact operation, whenever a piece of your model had to
