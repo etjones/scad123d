@@ -293,25 +293,26 @@ hint.
 overlapping ones share one.** A real boolean fuse can't tell you which
 color survives once it's merged overlapping material away — confirmed
 directly, it doesn't even keep the first child's color, the fused result
-comes back with none at all. scad123d compares the combined result against
-the naive sum of the children's own volume and area, giving three regimes:
+comes back with none at all. All of this is gated on `color()` actually
+appearing in the group: a group with no colors anywhere always gets the
+plain fuse, bit-identical to what scad123d produced before color support
+existed (and skips the volume bookkeeping entirely). For colored groups,
+shared volume is the deciding line — a union's volume equals the naive
+sum of its children's volumes exactly when the children share zero volume:
 
-- **Disjoint** (volume and area both match the sums): the children are
-  returned as a `Compound`, each keeping its own color — geometrically
-  identical to a fuse, which keeps disjoint bodies separate anyway.
-- **Touching without overlapping** (volume matches, area doesn't — a part
-  sitting exactly in a cavity cut for it shares a surface but zero
-  volume): colors are the tie breaker. Children carrying `color()` are
-  evidence the author means distinct parts (a multi-material print, an
-  assembly), so they stay separate bodies with their own colors; uncolored
-  children keep OpenSCAD's faithful union semantics — one merged solid,
-  shared face glued away.
-- **Genuinely overlapping**: always a real fuse, the same
-  geometrically-correct result scad123d has always produced, with the
-  first child's color applied to the whole thing rather than none — which
-  color should really win on the merged region is genuinely undefined
-  without OCCT-level boolean history tracking, but one color is a better
-  default than no color at all.
+- **Zero shared volume** — disjoint parts, or parts touching along a
+  shared surface (a part sitting exactly in a cavity cut for it): the
+  children are returned as a `Compound`, each keeping its own color.
+  Colors are evidence the author means distinct parts (a multi-material
+  print, an assembly), so touching parts deliberately stay separate
+  bodies rather than getting OpenSCAD's merged-solid union — that merge
+  is exactly what would destroy the colors.
+- **Genuinely overlapping**: a real fuse, the same geometrically-correct
+  result scad123d has always produced, with the first child's color
+  applied to the whole thing rather than none — which color should really
+  win on the merged region is genuinely undefined without OCCT-level
+  boolean history tracking, but one color is a better default than no
+  color at all.
 
 ```openscad
 // Disjoint -- each part keeps its own color through STEP export.

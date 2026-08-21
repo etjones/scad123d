@@ -302,18 +302,21 @@ class TestStructure:
 
 
 class TestColor:
-    """color() on more than one child of a group. Three regimes:
+    """color() on more than one child of a group.
 
-    - Disjoint children: returned as a Compound, each keeping its own
-      color -- geometrically identical to a fuse, which keeps disjoint
-      bodies separate anyway.
-    - Touching children (zero shared volume, real shared surface): colors
-      are the tie breaker. Colored children are evidence the author means
-      distinct parts, so they stay separate bodies; uncolored children
-      keep OpenSCAD's faithful union semantics (one merged solid).
-    - Overlapping children: always a real fuse. A bare fuse of colored
-      shapes carries no color at all (confirmed directly), so scad123d
-      applies the first child's color rather than leaving it uncolored.
+    Gated on authored color: a group with no color() anywhere always gets
+    the plain fuse, bit-identical to pre-color-support behavior (and skips
+    the volume bookkeeping entirely). For colored groups, shared volume is
+    the deciding line:
+
+    - Zero shared volume (disjoint, or touching along a surface -- a part
+      sitting exactly in a cavity cut for it): returned as a Compound,
+      each child keeping its own color. Colors are evidence the author
+      means distinct parts, so touching parts deliberately stay separate
+      bodies rather than getting OpenSCAD's merged-solid union.
+    - Overlapping: a real fuse. A bare fuse of colored shapes carries no
+      color at all (confirmed directly), so scad123d applies the first
+      child's color rather than leaving it uncolored.
     """
 
     _RED = (1.0, 0.0, 0.0, 1.0)
@@ -387,6 +390,20 @@ class TestColor:
         assert tuple(left.color) == pytest.approx(self._RED)
         assert tuple(right.color) == pytest.approx(self._BLUE)
         assert shape.volume == pytest.approx(2000, rel=1e-9)
+
+    def test_uncolored_disjoint_children_get_the_plain_fuse(self):
+        # The gate: all the volume bookkeeping and Compound-building exists
+        # only for authored colors. A group with no color() anywhere takes
+        # the plain-fuse path, bit-identical to pre-color-support behavior
+        # -- an OCCT compound of 2 solids, but no assembly children.
+        shape = scad123d.import_csg(
+            "cube(size = [10, 10, 10], center = false);\n"
+            "multmatrix([[1, 0, 0, 20], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\tcube(size = [5, 5, 5], center = false);\n}"
+        )
+        assert len(shape.children) == 0
+        assert len(shape.solids()) == 2
+        assert shape.volume == pytest.approx(1000 + 125, rel=1e-9)
 
     def test_touching_uncolored_children_still_fuse_to_one_solid(self):
         # The color-free counterpart of the test above: without colors
