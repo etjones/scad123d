@@ -283,6 +283,123 @@ See [ROADMAP.md](../ROADMAP.md) for the verification behind each of these
 (exact error bounds, what was checked against what) and the further analytic
 cases that are feasible but not yet built.
 
+## `color()`
+
+`color()` maps onto build123d's own `.color` attribute, which round-trips
+into STEP export (and glTF) as real per-part color — not just a preview
+hint.
+
+**Colored children that don't share volume keep their own color;
+overlapping ones share one.** A real boolean fuse can't tell you which
+color survives once it's merged overlapping material away — confirmed
+directly, it doesn't even keep the first child's color, the fused result
+comes back with none at all. All of this is gated on `color()` actually
+appearing in the group: a group with no colors anywhere always gets the
+plain fuse, bit-identical to what scad123d produced before color support
+existed (and skips the volume bookkeeping entirely). For colored groups,
+shared volume is the deciding line — a union's volume equals the naive
+sum of its children's volumes exactly when the children share zero volume:
+
+- **Zero shared volume** — disjoint parts, or parts touching along a
+  shared surface (a part sitting exactly in a cavity cut for it): the
+  children are returned as a `Compound`, each keeping its own color.
+  Colors are evidence the author means distinct parts (a multi-material
+  print, an assembly), so touching parts deliberately stay separate
+  bodies rather than getting OpenSCAD's merged-solid union — that merge
+  is exactly what would destroy the colors.
+- **Genuinely overlapping**: a real fuse, the same geometrically-correct
+  result scad123d has always produced, with the first child's color
+  applied to the whole thing rather than none — which color should really
+  win on the merged region is genuinely undefined without OCCT-level
+  boolean history tracking, but one color is a better default than no
+  color at all.
+
+```openscad
+// Disjoint -- each part keeps its own color through STEP export.
+color("red") cube([10, 10, 10]);
+color("blue") translate([20, 0, 0]) sphere(r=5);
+
+// Touching, not overlapping -- the blue part exactly fills a cavity cut
+// from the red part. Zero shared volume, so both parts and both colors
+// survive as separate bodies in the exported STEP.
+color("red") difference() {
+    cube(10);
+    cylinder(h = 15, r = 5);
+}
+color("blue") cylinder(h = 15, r = 5);
+
+// Overlapping -- correctly fused into one solid (same volume scad123d has
+// always produced); the whole result gets colored red, the first child's
+// color, since the merged region has no well-defined color of its own.
+union() {
+    color("red") cube([10, 10, 10]);
+    color("blue") translate([5, 5, 5]) cube([10, 10, 10]);
+}
+```
+
+A child with no `color()` of its own inherits its nearest colored
+ancestor's color — matching OpenSCAD, and exactly what build123d's own
+`Shape.color` property and STEP exporter already do when a node's color
+isn't explicitly set.
+
+**Parts get names, not `COMPOUND`.** Every shape a `color()` produces is
+also labeled — with the exact CSS color name when there is one
+(OpenSCAD's color names *are* the CSS names, so `color("red")` round-trips
+back to `"red"` even though the CSG export only records `[1, 0, 0, 1]`),
+otherwise the hex value (`#334c66`). The top-level result of
+`import_scad()` is labeled with the source file's stem, and a shape from
+an `import_module()` callable with its module's name. Labels become STEP
+`PRODUCT` names, so parts show up in CAD viewers and slicers under
+recognizable names instead of OCCT's auto-generated `COMPOUND`/`SOLID`.
+Labels are only ever filled in when empty — a label you set yourself on
+the returned build123d shape (or in code between import and export) is
+never overwritten.
+
+**Authoring for multi-part output.** The expected way to get a multi-part,
+multi-color result is to structure the `.scad` so each colored part is a
+separate, already-subtracted top-level object — a separate module call per
+part works well. Inset lettering, for instance: one call for the plate
+with the text already cut out of it, one for the lettering that fills the
+recess. The parts then touch without sharing any volume, which is exactly
+what keeps them separate bodies (verified — this example imports as two
+parts named `black` and `white`, both colors intact in the STEP):
+
+```openscad
+module plate() {
+    difference() {
+        cube([40, 14, 4]);
+        translate([3, 3, 2]) linear_extrude(3) text("Hi", size=9);
+    }
+}
+module lettering() {
+    translate([3, 3, 2]) linear_extrude(2) text("Hi", size=9);
+}
+color("black") plate();
+color("white") lettering();
+```
+
+**What you get back in Python.** The returned object's concrete type
+varies with the content — a single primitive can come back as `Box` or
+`Cylinder`, fused geometry as `Part`, and colored non-overlapping parts as
+a `Compound` whose `.children` are the parts — but everything is a
+build123d `Shape`, so selectors, booleans, fillets, transforms, and
+exporters all work on any of them. Two things a build123d user could
+genuinely lose data to:
+
+- **Booleans and fillets flatten the assembly.** `part - tool` on a
+  multi-part `Compound` returns the geometrically-correct result, but as
+  one fused shape — `children`, per-part colors, and labels are gone.
+  That's inherent to booleans (they merge geometry, and a merged region
+  has no single owner), not a scad123d choice. To modify one part while
+  keeping the assembly, operate on the child and rebuild:
+  `Compound(children=[modified_part, *others])`.
+- **Iterate `.children`, not `.solids()`, when you care about colors or
+  labels.** `.solids()` re-casts each body to a bare `Solid` and drops the
+  Python-level `.color`/`.label` attributes; `.children` hands you the
+  parts with their metadata intact. (Whole-assembly transforms are safe:
+  `Pos(100, 0, 0) * part` moves everything and keeps children, colors, and
+  labels — verified.)
+
 ## `$fn`, `$fa`, `$fs`
 
 `$fn` is genuinely ambiguous. Set globally it is usually a complexity switch

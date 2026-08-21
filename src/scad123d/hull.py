@@ -28,8 +28,6 @@ declines to match the latter. Both fall back to a mesh. See ROADMAP.md.
 import math
 
 import numpy as np
-from scipy.spatial import ConvexHull
-
 from build123d import (
     Align,
     Circle,
@@ -46,10 +44,13 @@ from build123d import (
     Vector,
     Wire,
     extrude,
+)
+from build123d import (
     offset as _bd_offset,
 )
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Sphere
+from scipy.spatial import ConvexHull
 
 from .solids import polyhedron
 
@@ -132,7 +133,9 @@ def _capsule(a: Point3, b: Point3, r: float) -> Shape:
         return Pos(*a) * Sphere(r)
     direction = Vector(*b) - Vector(*a)
     plane = Plane(origin=Vector(*a), z_dir=direction)
-    cyl = plane.location * Cylinder(r, direction.length, align=(Align.CENTER, Align.CENTER, Align.MIN))
+    cyl = plane.location * Cylinder(
+        r, direction.length, align=(Align.CENTER, Align.CENTER, Align.MIN)
+    )
     return cyl + Pos(*a) * Sphere(r) + Pos(*b) * Sphere(r)
 
 
@@ -162,11 +165,17 @@ def _merge_coplanar_facets(hull: ConvexHull) -> list[list[int]]:
             faces.append(indices)
             continue
         normal = eq[:3]
-        arbitrary = np.array([1.0, 0.0, 0.0]) if abs(normal[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        arbitrary = (
+            np.array([1.0, 0.0, 0.0])
+            if abs(normal[0]) < 0.9
+            else np.array([0.0, 1.0, 0.0])
+        )
         u = np.cross(normal, arbitrary)
         u = u / np.linalg.norm(u)
         v = np.cross(normal, u)
-        planar = np.array([[np.dot(hull.points[i], u), np.dot(hull.points[i], v)] for i in indices])
+        planar = np.array(
+            [[np.dot(hull.points[i], u), np.dot(hull.points[i], v)] for i in indices]
+        )
         ordered = ConvexHull(planar).vertices
         faces.append([indices[i] for i in ordered])
     return faces
@@ -185,7 +194,7 @@ def _hull3d_offset(points: list[Point3], r: float) -> Shape | None:
         verts = [tuple(float(x) for x in p) for p in hull.points]
         poly = polyhedron(verts, faces)
         result = _bd_offset(poly, amount=r, kind=Kind.ARC)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return result if result is not None and result.is_valid else None
 
@@ -230,14 +239,14 @@ def _hull2d_offset(points: list[Point2], r: float) -> Face | None:
 
     try:
         hull = ConvexHull(np.asarray(points))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
     ordered = [tuple(float(x) for x in points[i]) for i in hull.vertices]
     try:
         poly = Polygon(*ordered, align=None)
         result = _bd_offset(poly, amount=r, kind=Kind.ARC)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return result if result is not None and result.is_valid else None
 
@@ -286,7 +295,10 @@ def _hull_of_cylinders(shapes: list[Shape]) -> Shape | None:
         this_span = (min(t_a, t_b), max(t_a, t_b))
         if span is None:
             span = this_span
-        elif abs(this_span[0] - span[0]) > _SPAN_TOL * length0 or abs(this_span[1] - span[1]) > _SPAN_TOL * length0:
+        elif (
+            abs(this_span[0] - span[0]) > _SPAN_TOL * length0
+            or abs(this_span[1] - span[1]) > _SPAN_TOL * length0
+        ):
             return None
         axis_points.append(tuple((a[i] + b[i]) / 2 for i in range(3)))
 
@@ -307,7 +319,7 @@ def _hull_of_cylinders(shapes: list[Shape]) -> Shape | None:
     placed = plane * face2d
     try:
         result = extrude(placed, amount=span[1] - span[0])
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return result if result is not None and result.is_valid else None
 

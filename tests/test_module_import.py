@@ -199,6 +199,9 @@ class TestModuleImport:
         sized_box = scad123d.import_module(MODULE_LIB, "sized_box")
         box = sized_box(size=[20, 15, 10], rounded=False)
         assert box.volume == pytest.approx(20 * 15 * 10, rel=1e-9)
+        # Named after the module it came from, so it shows up in STEP
+        # viewers/slicers as "sized_box" rather than OCCT's "COMPOUND".
+        assert box.label == "sized_box"
 
     def test_positional_arguments(self):
         sized_box = scad123d.import_module(MODULE_LIB, "sized_box")

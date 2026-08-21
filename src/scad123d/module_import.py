@@ -143,6 +143,12 @@ def _build_module_callable(
                 f"\nOpenSCAD reported:\n{warnings.strip()}" if warnings.strip() else ""
             )
             raise UnsupportedNodeError(f"{call_text} produced no geometry.{hint}")
+        # Name the result after the module that made it, so it shows up in
+        # STEP viewers/slicers as e.g. "gear" rather than OCCT's
+        # auto-generated "COMPOUND". Colored children keep their own
+        # color-derived labels (see build.py).
+        if not shape.label:
+            shape.label = module_name
         return shape
 
     func = _build_callable(module_name, decl.parameters, dispatch)

@@ -9,12 +9,12 @@ README. We therefore discriminate on magnitude via ``facet_threshold``.
 
 import math
 
-from build123d import Polygon, Shape, Solid
+from build123d import Polygon, Shape
 
 DEFAULT_FACET_THRESHOLD = 20
 
 
-def should_facet(fn: float | int | None, threshold: int) -> bool:
+def should_facet(fn: float | None, threshold: int) -> bool:
     """True when an explicit, small $fn should be honored as real geometry.
 
     $fn == 0 means unset ($fa/$fs driving), which is never an intentional
@@ -30,8 +30,7 @@ def ngon_points(radius: float, count: int) -> list[tuple[float, float]]:
     """Vertices of an OpenSCAD n-gon: angle i*360/n, first vertex on +X."""
     step = 2 * math.pi / count
     return [
-        (radius * math.cos(i * step), radius * math.sin(i * step))
-        for i in range(count)
+        (radius * math.cos(i * step), radius * math.sin(i * step)) for i in range(count)
     ]
 
 

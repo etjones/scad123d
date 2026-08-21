@@ -104,14 +104,19 @@ def openscad_version() -> str:
         capture_output=True,
         text=True,
         timeout=60,
+        check=False,
     )
-    return (result.stdout + result.stderr).strip().splitlines()[0] if (
-        result.stdout or result.stderr
-    ) else "unknown"
+    return (
+        (result.stdout + result.stderr).strip().splitlines()[0]
+        if (result.stdout or result.stderr)
+        else "unknown"
+    )
 
 
 def _run(args: list[str], timeout: float) -> str:
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    result = subprocess.run(
+        args, capture_output=True, text=True, timeout=timeout, check=False
+    )
     if result.returncode != 0:
         raise OpenSCADRunError(
             f"OpenSCAD exited {result.returncode}\n"
