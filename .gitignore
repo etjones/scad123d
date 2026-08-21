@@ -11,3 +11,4 @@ build/
 *.step
 *.stl
 *.3mf
+.env
