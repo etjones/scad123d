@@ -11,8 +11,6 @@ from build123d import (
     Shape,
     Shell,
     Solid,
-    Vector,
-    Wire,
 )
 from build123d import scale as _bd_scale
 from OCP.gp import gp_Trsf
@@ -48,30 +46,6 @@ def _determinant(m) -> float:
         - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
     )
-
-
-def polyhedron(
-    points: Sequence[Sequence[float]], faces: Sequence[Sequence[int]]
-) -> Shape:
-    """Build a solid from explicit points and index faces (OpenSCAD polyhedron).
-
-    Winding is not trusted: if the result encloses negative volume it is
-    reversed, matching OpenSCAD's tolerance for either orientation.
-    """
-    verts = [Vector(float(p[0]), float(p[1]), float(p[2])) for p in points]
-    built: list[Face] = []
-    for face in faces:
-        if len(face) < 3:
-            continue
-        loop = [verts[i] for i in face]
-        built.append(Face(Wire.make_polygon(loop, close=True)))
-    if not built:
-        raise ValueError("polyhedron() needs at least one face")
-
-    solid = Solid(Shell(built))
-    if solid.volume < 0:
-        solid = Solid(solid.wrapped.Complemented())
-    return solid
 
 
 def _orthonormalized(m: Sequence[Sequence[float]]) -> list[list[float]]:

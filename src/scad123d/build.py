@@ -1,19 +1,24 @@
 """Walk a CSG tree and build native build123d geometry.
 
-Primitives are delegated to solid123d, which already renders OpenSCAD shapes as
-build123d objects. Nodes solid123d has no concept of (multmatrix, polyhedron)
-live in .solids; nodes with no BRep equivalent take the mesh fallback.
+Primitives, grouping (including color()-preserving union), and the analytic
+hull()/minkowski() cores are delegated to solid123d -- the shared
+OpenSCAD-semantics layer, where they are also usable by pure-Python
+SolidPython-style code. What stays here is everything that needs the
+OpenSCAD binary or the CSG pipeline: nodes solid123d has no concept of
+(multmatrix) live in .solids, and nodes with no BRep equivalent take the
+mesh fallback.
 """
 
-import math
 import warnings
 from dataclasses import dataclass, field
 from functools import reduce
-from operator import add, and_, sub
+from operator import and_, sub
 
 import solid123d as s1
-import webcolors
-from build123d import Compound, Shape
+from build123d import Shape
+from solid123d import polyhedron
+from solid123d.hull import analytic_hull
+from solid123d.minkowski import analytic_minkowski
 
 from .facets import (
     DEFAULT_FACET_THRESHOLD,
@@ -21,11 +26,9 @@ from .facets import (
     faceted_cylinder,
     should_facet,
 )
-from .hull import analytic_hull
 from .mesh import mesh_subtree, warn_meshed
-from .minkowski import analytic_minkowski
 from .nodes import CsgNode
-from .solids import apply_matrix, polyhedron
+from .solids import apply_matrix
 
 # CSG text() emits halign/valign="default"; solid123d expects OpenSCAD's names.
 _HALIGN = {"default": "left", "left": "left", "center": "center", "right": "right"}
@@ -77,108 +80,18 @@ def _children(node: CsgNode, options: BuildOptions) -> list[Shape]:
     return marked or out
 
 
-def _color_label(rgba: list[float] | tuple[float, ...]) -> str:
-    """A human-readable name for an rgba value: the exact CSS color name
-    when there is one (OpenSCAD's color names are the CSS/SVG names, so
-    ``color("red")`` round-trips back to ``"red"`` even though the CSG
-    export only records ``[1, 0, 0, 1]``), otherwise the hex string.
-
-    Used to label the build123d shapes that ``color()`` produces, so parts
-    show up in STEP viewers and slicers under a recognizable name instead
-    of OCCT's auto-generated ``COMPOUND``/``SOLID``.
-    """
-    r, g, b = (round(float(v) * 255) for v in list(rgba)[:3])
-    try:
-        return webcolors.rgb_to_name((r, g, b))
-    except ValueError:
-        return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def _carries_color(shape: Shape) -> bool:
-    """Does this shape, or any shape nested under it, have an explicit color?
-
-    Checks the private ``_color`` rather than the ``color`` property: the
-    property walks *up* through parents and caches what it finds, so it
-    reports inherited color, not authored color -- and it's authored color
-    (an explicit ``color()`` in the .scad) that signals "these are distinct
-    parts". Descends through ``children`` because a nested disjoint colored
-    group arrives here as a Compound whose own color is unset but whose
-    children carry theirs.
-    """
-    if shape._color is not None:
-        return True
-    return any(_carries_color(child) for child in shape.children)
-
-
 def _union(shapes: list[Shape]) -> Shape | None:
     """Union children the way an OpenSCAD block does.
 
-    OpenSCAD refuses to mix 2D and 3D in one group and warns; adding a Face to
-    a Solid in build123d silently degenerates instead, so filter explicitly and
-    keep the 3D geometry.
+    Delegates to solid123d's union() applier -- the shared implicit-union
+    with the color()-preserving Compound-vs-fuse logic and the 2D/3D
+    mixing warning. Only the empty case differs: an empty OpenSCAD group
+    is legal and encloses nothing, so it maps to None here, where
+    solid123d (matching SolidPython) raises.
     """
     if not shapes:
         return None
-    solid = [s for s in shapes if s.solids()]
-    if solid and len(solid) != len(shapes):
-        warnings.warn(
-            "scad123d: a group mixes 2D and 3D children, which OpenSCAD does "
-            "not support; the 2D children were dropped",
-            stacklevel=3,
-        )
-        shapes = solid
-    if len(shapes) == 1:
-        return shapes[0]
-
-    fused = reduce(add, shapes)
-
-    # Everything below exists only to keep authored color() information
-    # alive; a group with no colors anywhere in it gets the plain fuse,
-    # bit-identical to what scad123d always produced -- and skips the
-    # mass-property computations below, which OCCT reruns from scratch on
-    # every access (nothing is cached).
-    if not any(_carries_color(s) for s in shapes):
-        return fused
-
-    # A real boolean fuse can't tell us which color survives once it's
-    # merged overlapping material away -- confirmed directly, it doesn't
-    # even keep the first child's color, the result comes back with none.
-    # But a fuse is only *necessary* when material actually merged, and
-    # volume tells us exactly that: a union's volume equals the naive sum
-    # of its children's volumes if and only if the children share zero
-    # volume. In that case -- disjoint parts, or parts touching along a
-    # shared surface (a part sitting exactly in a cavity cut for it) --
-    # return a Compound of the children instead: same total volume, and
-    # grouping (unlike fusing) doesn't touch each child's own
-    # color/label/material. The colors are evidence the author means these
-    # as distinct parts (a multi-material print, an assembly), so touching
-    # parts deliberately stay separate bodies rather than getting OpenSCAD's
-    # merged-solid union semantics -- that merge is exactly what would
-    # destroy the colors.
-    #
-    # `children=` (not a flat `Compound(shapes)`) matters too: it's what
-    # makes this an assembly the STEP exporter's PreOrderIter walks node by
-    # node, applying each child's own .color -- a flat Compound with no
-    # parent/child tree is treated as one leaf and gets a single color
-    # splashed across every solid inside it instead.
-    total_volume = sum(s.volume for s in shapes)
-    if math.isclose(fused.volume, total_volume, rel_tol=1e-9, abs_tol=1e-9):
-        return Compound(children=list(shapes))
-
-    # Real overlap: which color the merged region should be is genuinely
-    # undefined without OCCT-level boolean history tracking. No color at
-    # all is a worse default than picking one, so fall back to the first
-    # child that had one, same as OpenSCAD's own rendering of overlapping
-    # colors effectively does (one object's color wins the ambiguous
-    # region, not neither).
-    if fused.color is None:
-        for s in shapes:
-            if s.color is not None:
-                fused.color = s.color
-                break
-    if fused.color is not None and not fused.label:
-        fused.label = _color_label(tuple(fused.color))
-    return fused
+    return s1.union()(shapes)
 
 
 def _fallback(node: CsgNode, options: BuildOptions, reason: str) -> Shape | None:
@@ -263,11 +176,11 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         shape = _union(_children(node, options))
         rgba = a.get("_0") or a.get("c")
         if shape is not None and rgba:
+            # s1.color() also labels the shape (CSS name or hex) when it
+            # has no label yet -- no separate labeling step needed here.
             shape = s1.color(
                 list(rgba)[:3], alpha=float(list(rgba)[3]) if len(rgba) > 3 else 1.0
             )(shape)
-            if not shape.label:
-                shape.label = _color_label(rgba)
         return shape
 
     if name == "resize":

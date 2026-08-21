@@ -1030,11 +1030,7 @@ source = { editable = "." }
 dependencies = [
     { name = "build123d" },
     { name = "lark" },
-    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "solid123d" },
-    { name = "webcolors" },
 ]
 
 [package.dev-dependencies]
@@ -1048,9 +1044,7 @@ dev = [
 requires-dist = [
     { name = "build123d", specifier = ">=0.11.1" },
     { name = "lark", specifier = ">=1.1.9" },
-    { name = "scipy", specifier = ">=1.15.3" },
-    { name = "solid123d", specifier = ">=0.1.0" },
-    { name = "webcolors", specifier = ">=24.8" },
+    { name = "solid123d", specifier = ">=0.2.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1347,15 +1341,16 @@ wheels = [
 
 [[package]]
 name = "solid123d"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "build123d" },
     { name = "fonttools" },
+    { name = "webcolors" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/35/9f/4dfa16edcda0e5b76745e3e763c9a1d6fe82e50e89a3eb63d70ecea4acd9/solid123d-0.1.0.tar.gz", hash = "sha256:9a262e470e645d4b48236f40f9bc3d79740ba1995b59eb5c8d0b64bd61469b8b", size = 101374, upload-time = "2026-08-13T21:13:15.545Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/9b/2d0977a305d4d53a1ebcf9982f66afaf98dd51bdfeadb3fd15cb0d8d5f2c/solid123d-0.2.0.tar.gz", hash = "sha256:9534935804e98bce8df2032f37e735362c4574fb8b417e3e6a868223ef90ed7e", size = 121616, upload-time = "2026-08-21T16:54:45.867Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/ce/57a81abebb10c02ae88fbb7d25e09aa78ef6fff656cfdad2ba249f50b0e8/solid123d-0.1.0-py3-none-any.whl", hash = "sha256:5fafa381165115e631d3cef4c32d0d1fa6fcdcf1e51a6e7a65bb76c59dc3be09", size = 12092, upload-time = "2026-08-13T21:13:14.44Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/f1/c73ebba8eb9b756e884b0a74ea8e61b5679109fc13029283fb31106d94d3/solid123d-0.2.0-py3-none-any.whl", hash = "sha256:162f4b9d9883eaa4d86ee1f7fe041bf74e59c8cbff62ea8a8acd23282d1195a4", size = 26011, upload-time = "2026-08-21T16:54:44.941Z" },
 ]
 
 [[package]]

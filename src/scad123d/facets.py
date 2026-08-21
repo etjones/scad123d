@@ -69,6 +69,6 @@ def faceted_cylinder(
         else:  # cone widening from a point at the bottom
             faces.append([0, 1 + j, 1 + i])
 
-    from .solids import polyhedron
+    from solid123d import polyhedron
 
     return polyhedron(points, faces)
