@@ -266,16 +266,40 @@ Verified differentially: for polyhedral inputs the result is the same exact
 polytope OpenSCAD computes, so volumes agree to float precision, not just
 the convergence bound curved shapes get.
 
+**`hull()` of exactly two spheres — any radii — is exact, and so is the 2D
+circle-pair version.** With `sin α = (r₂ − r₁)/d`, the external tangent
+cone grazes each sphere not at its equator but at latitude `−α`: a circle
+of radius `r·cos α` at axial offset `−r·sin α` from the center, tilted
+toward the small side. The hull's boundary is exactly two spherical caps
+joined by that cone, and scad123d *sews* precisely those three surface
+patches into the solid rather than fusing solids — OCCT booleans are at
+their flakiest exactly at tangent (G1) contact, which is the only kind of
+seam this shape has, while the sewn patches share their seam circles by
+construction. The result self-checks against the closed-form volume and
+falls back to a mesh on any mismatch rather than shipping silently-wrong
+smooth geometry. Exact for any non-contained spacing, overlapping
+included; a fully contained sphere just yields the big sphere. The same
+tangent construction one dimension down handles a hull of two discs (the
+keyhole/slot idiom) as a directly-built wire — two arcs plus the two
+tangent segments, no booleans at all. Notably, 2D hulls previously
+*hard-failed*: OpenSCAD cannot render a 2D subtree to a mesh, so there was
+no fallback to fall to.
+
+**Strictly pairwise.** Three or more non-collinear spheres of unequal
+radii are a different mathematical object — the additively-weighted hull,
+needing planes tangent to three spheres at once with power-diagram
+combinatorics — and fall back to a mesh (see ROADMAP rung 4).
+
 **Deliberately not handled**, and left to fall back to a mesh: a hull with
-any *curved* child outside the equal-radius sphere/cylinder cases above — a
-curved surface's hull is not determined by its vertices (a BRep cylinder
-has vertices only on its rims), so unequal-radius spheres, non-parallel or
-unequal cylinders, and sphere/cylinder mixtures all still mesh. Likewise a
-hull of equal-radius spheres whose centers are coplanar but not collinear
-(qhull's 3D convex hull raises on degenerate/flat input, so this is a hard
-fallback, not a silent wrong answer), hulls of 2D children, and everything
-else — general Minkowski sums, `projection()`, `surface()`, and mesh
-`import()`.
+any *curved* child outside the cases above — a curved surface's hull is
+not determined by its vertices (a BRep cylinder has vertices only on its
+rims), so three-plus unequal spheres, non-parallel or unequal cylinders,
+and sphere/cylinder mixtures all still mesh. Likewise a hull of
+equal-radius spheres whose centers are coplanar but not collinear (qhull's
+3D convex hull raises on degenerate/flat input, so this is a hard
+fallback, not a silent wrong answer), hulls of 2D children other than two
+discs, and everything else — general Minkowski sums, `projection()`,
+`surface()`, and mesh `import()`.
 
 **The fallback is *exactly as accurate as OpenSCAD*, since it is OpenSCAD.**
 For any node with no analytic path, scad123d writes just that subtree back out

@@ -164,20 +164,36 @@ def mcad_gear() -> None:
     export_gltf(gear, str(MODELS / "mcad_gear.glb"))
 
 
-def hull_fallback() -> None:
-    """hull() of unequal-radius spheres -> no analytic path, mesh fallback.
-    $fn=14 (below facet_threshold) also facets the spheres themselves, so
-    the whole render is visibly a mesh.
+def hull_two_vs_three_spheres() -> None:
+    """The pairwise tangent-cone rung next to its mathematical boundary.
+
+    Two unequal spheres: exact -- two spherical caps sewn to the external
+    tangent cone, with the two tangency seams as the shape's only real
+    edges (export_gltf_with_edges shows exactly those two circles).
+    Three non-collinear unequal spheres: no closed form (tritangent
+    planes, power-diagram combinatorics), so the mesh fallback renders it
+    -- visibly faceted.
     """
-    scad = write(
-        "hull_fallback.scad",
-        "$fn = 14;\nhull() {\n"
+    two = write(
+        "hull_two_spheres.scad",
+        "hull() {\n"
         "    translate([-8, 0, 0]) sphere(r = 5);\n"
         "    translate([8, 0, 0]) sphere(r = 9);\n"
         "}\n",
     )
-    bad = scad123d.import_scad(scad)
-    export_gltf(bad, str(MODELS / "hull_fallback.glb"))
+    smooth = scad123d.import_scad(two)
+    export_gltf_with_edges(smooth, str(MODELS / "hull_two_spheres.glb"))
+
+    three = write(
+        "hull_three_spheres.scad",
+        "$fn = 24;\nhull() {\n"
+        "    translate([-8, 0, 0]) sphere(r = 5);\n"
+        "    translate([8, 0, 0]) sphere(r = 9);\n"
+        "    translate([0, 16, 0]) sphere(r = 7);\n"
+        "}\n",
+    )
+    faceted = scad123d.import_scad(three)
+    export_gltf(faceted, str(MODELS / "hull_three_spheres.glb"))
 
 
 if __name__ == "__main__":
@@ -186,5 +202,5 @@ if __name__ == "__main__":
     boss_stl_vs_step()
     mcad_gear()
     hull_analytic()
-    hull_fallback()
+    hull_two_vs_three_spheres()
     print(f"models written to {MODELS}")

@@ -231,22 +231,36 @@ hull() {
 
 <img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_analytic.png" width="450" alt="hull() of 8 equal-radius corner spheres, computed exactly by scad123d">
 
-What's left is hulls of *curved* shapes outside those idioms — spheres of
-different sizes, mismatched cylinders — where the true hull has curved
-faces no vertex set can capture. There, scad123d doesn't fail: it asks the
-real OpenSCAD program to render just that piece as a mesh and stitches the
-result in. Your model still imports and still comes out correct — you just
-lose the "real curved surface" benefits (fillets, exact export) for that
-specific piece:
+**We can hull 2, but not 3+.** A hull of exactly *two* spheres — any two
+radii — is computed exactly: the boundary is two spherical caps joined by
+the external tangent cone, and scad123d builds precisely those three
+surfaces as real solid geometry. (The same tangent construction covers a
+hull of two 2D circles — the classic keyhole/slot idiom.) But three or
+more non-collinear spheres of unequal radii have no such closed form —
+their hull needs tangent planes touching three spheres at once, a genuinely
+harder mathematical object — so that still renders through the real
+OpenSCAD program as a mesh, stitched in with a warning. Same model family,
+one sphere apart:
 
 ```openscad
-hull() {
-    translate([-8, 0, 0]) sphere(r=5);
-    translate([ 8, 0, 0]) sphere(r=9);   // different radius -- no exact answer
+hull() {                                   // exact: smooth caps + tangent cone
+    translate([-8, 0, 0]) sphere(r = 5);
+    translate([ 8, 0, 0]) sphere(r = 9);
 }
 ```
 
-<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_fallback.png" width="450" alt="hull() of unequal-radius spheres: no exact answer, falls back to a mesh, visibly faceted">
+```openscad
+hull() {                                   // no closed form: mesh fallback
+    translate([-8,  0, 0]) sphere(r = 5);
+    translate([ 8,  0, 0]) sphere(r = 9);
+    translate([ 0, 16, 0]) sphere(r = 7);
+}
+```
+
+<p>
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_two_spheres.png" width="400" alt="hull() of two unequal spheres: exact smooth BRep, two spherical caps joined by the tangent cone">
+<img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_three_spheres.png" width="400" alt="hull() of three unequal spheres: no closed form, mesh fallback, visibly faceted">
+</p>
 
 **scad123d never refuses to import something** — it just tells you, with a
 warning naming the exact operation, whenever a piece of your model had to
