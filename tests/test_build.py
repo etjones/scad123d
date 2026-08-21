@@ -337,6 +337,35 @@ class TestPairHull:
         assert shape.is_valid
         assert shape.volume == pytest.approx(_pair_hull_volume(1, 3, 2.05), rel=1e-9)
 
+    def test_internal_tangency_is_exactly_the_big_sphere(self):
+        # d == r2 - r1 exactly: the small sphere touches the big one from
+        # inside, and the hull IS the big sphere. The containment branch
+        # (d + r1 <= r2 within tolerance) covers this boundary.
+        source = _hull_of(
+            _SPHERE.format(r=1), _translated(4, 0, 0, _SPHERE.format(r=5))
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx((4 / 3) * math.pi * 125, rel=1e-9)
+
+    def test_barely_outside_containment_survives_extreme_degeneracy(self):
+        # sin(a) = 4/4.0000004 -- the exact hull exceeds the big sphere by
+        # a vanishing sliver. Verified empirically that the sewn
+        # construction (not the mesh fallback: warnings are errors here)
+        # still produces a valid solid whose volume matches the closed
+        # form; the self-gate stands behind it if OCCT ever degrades.
+        import warnings as _warnings
+
+        source = _hull_of(
+            _SPHERE.format(r=1), _translated(4.0000004, 0, 0, _SPHERE.format(r=5))
+        )
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error")
+            shape = scad123d.import_csg(source)
+        assert shape.is_valid
+        assert shape.volume == pytest.approx(
+            _pair_hull_volume(1, 5, 4.0000004), rel=1e-6
+        )
+
     def test_overlapping_spheres_still_hull_exactly(self):
         # The support-function argument is independent of overlap: the same
         # tangent cone bounds the hull whether or not the spheres intersect.
@@ -402,6 +431,37 @@ class TestPairHull:
         )
         shape = scad123d.import_csg(source)
         assert shape.volume == pytest.approx(4 * math.pi * 25, rel=1e-9)
+
+    def test_2d_coincident_equal_circles_hull_to_the_circle(self):
+        # d = 0 with equal radii: the containment inequality
+        # (d + r1 <= r2 within relative tolerance) absorbs this before any
+        # division by d or degenerate wire construction can happen --
+        # important because a 2D decline has no mesh fallback to save it.
+        source = (
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\thull() {\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
+            "\t}\n}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4 * math.pi * 25, rel=1e-9)
+
+    def test_2d_micro_stadium_past_the_containment_tolerance(self):
+        # Equal circles separated by d = 1e-4: past the containment
+        # tolerance window, so the real tangent-wire construction runs with
+        # segments of length 1e-4 -- and the result is exactly the stadium,
+        # circle area plus 2*r*d.
+        source = (
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\thull() {\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
+            "\t\tmultmatrix([[1,0,0,0.0001],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
+            "\t\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 5);\n\t\t}\n"
+            "\t}\n}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4 * (math.pi * 25 + 2 * 5 * 1e-4), rel=1e-9)
 
 
 class TestPolyhedralHull:
