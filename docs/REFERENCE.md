@@ -253,12 +253,29 @@ real, hand-written OpenSCAD. A fully collinear point set (any count, so long
 as they lie on one line — the common 2-post capsule/slot) is built directly
 as a capsule rather than through a degenerate hull.
 
-**Deliberately not handled**, and left to fall back to a mesh: a hull of
-equal-radius spheres whose centers are coplanar but not collinear (qhull's 3D
-convex hull raises on degenerate/flat input, so this is a hard fallback, not
-a silent wrong answer); cylinders that don't all share one axial span; hull
-of unequal radii; hull mixing spheres and cylinders; and everything else —
-general Minkowski sums, `projection()`, `surface()`, and mesh `import()`.
+**`hull()` of all-polyhedral children is computed exactly too.** A
+polyhedral solid contributes only its vertices to any convex hull, so the
+hull of children whose faces are all planar is exactly the convex hull of
+their combined vertices — built as a real BRep solid via build123d's
+`ConvexPolyhedron` (scipy qhull for the hull, OCCT for the sewing). This
+covers cubes, `polyhedron()`s, prisms from `linear_extrude` of polygons,
+faceted (below-threshold `$fn`) circles and cylinders, anything transformed
+by a matrix (planarity survives any affine map) — and even children that
+themselves came from the mesh fallback, whose triangles are planar too.
+Verified differentially: for polyhedral inputs the result is the same exact
+polytope OpenSCAD computes, so volumes agree to float precision, not just
+the convergence bound curved shapes get.
+
+**Deliberately not handled**, and left to fall back to a mesh: a hull with
+any *curved* child outside the equal-radius sphere/cylinder cases above — a
+curved surface's hull is not determined by its vertices (a BRep cylinder
+has vertices only on its rims), so unequal-radius spheres, non-parallel or
+unequal cylinders, and sphere/cylinder mixtures all still mesh. Likewise a
+hull of equal-radius spheres whose centers are coplanar but not collinear
+(qhull's 3D convex hull raises on degenerate/flat input, so this is a hard
+fallback, not a silent wrong answer), hulls of 2D children, and everything
+else — general Minkowski sums, `projection()`, `surface()`, and mesh
+`import()`.
 
 **The fallback is *exactly as accurate as OpenSCAD*, since it is OpenSCAD.**
 For any node with no analytic path, scad123d writes just that subtree back out

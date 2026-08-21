@@ -1,4 +1,5 @@
-"""Rung 2: analytic hull() for equal-radius spheres and parallel cylinders.
+"""Analytic hull(): rung 2 (equal-radius spheres / parallel cylinders) and
+rung 3 (all-polyhedral children, exact via ConvexPolyhedron).
 
 hull() of N equal-radius spheres is exactly offset(convex_hull_of_centers, r):
 verified during design against a box of 8 corners and a tetrahedron, matching
@@ -17,12 +18,21 @@ the same reason minkowski.py's ball detection does: real code wraps
 primitives in layers of module-call and attachment bookkeeping that the
 existing walker has already resolved by the time this runs.
 
+hull() of children whose faces are ALL planar (rung 3) is exactly the
+convex hull of their combined vertices -- a polyhedral solid contributes
+only its vertices to any convex hull -- built as real BRep via build123d's
+ConvexPolyhedron. That covers cubes, polyhedron()s, extruded polygons,
+faceted primitives, and matrix-transformed anything-planar, with no
+approximation.
+
 Scope, deliberately: a fully collinear point set (any number of spheres, so
 long as they lie on one line -- the common 2-post capsule/slot idiom) is built
 directly as a capsule rather than via a degenerate hull. A coplanar-but-not-
 collinear sphere arrangement, and cylinders that do not all share one axial
 span, are not handled -- qhull raises on the former and the span check simply
-declines to match the latter. Both fall back to a mesh. See ROADMAP.md.
+declines to match the latter. Both fall back to a mesh, as does any hull
+with a curved child outside rung 2's idioms: a curved surface's hull is not
+determined by its vertices. See ROADMAP.md.
 """
 
 import math
@@ -31,6 +41,7 @@ import numpy as np
 from build123d import (
     Align,
     Circle,
+    ConvexPolyhedron,
     Cylinder,
     Edge,
     Face,
@@ -324,6 +335,40 @@ def _hull_of_cylinders(shapes: list[Shape]) -> Shape | None:
     return result if result is not None and result.is_valid else None
 
 
+def _hull_of_polyhedra(shapes: list[Shape]) -> Shape | None:
+    """Rung 3: hull() of children whose faces are all planar.
+
+    A polyhedral solid is exactly the hull of its own vertices as far as
+    convexity is concerned, so the hull of any collection of them is
+    exactly the convex hull of all their vertices combined -- which is
+    precisely what build123d's ConvexPolyhedron builds, as a real BRep
+    solid (scipy qhull for the hull, OCCT for the sewing, coplanar facets
+    merged by clean()). No approximation anywhere: this covers cubes,
+    polyhedron()s, prisms from linear_extrude, anything transformed by a
+    matrix (planarity survives any affine map), and even children that
+    themselves came from the mesh fallback -- their triangles are planar
+    too, and OpenSCAD's own hull() of such a child hulls the same
+    tessellation.
+
+    Declines (returns None, -> mesh fallback) when any child has a curved
+    face -- a curved surface's hull is not determined by its vertices (a
+    BRep cylinder has vertices only on its rims) -- or when any child is
+    2D: the hull of coplanar children is a 2D operation this rung doesn't
+    model, and qhull rejects a flat point set anyway.
+    """
+    for s in shapes:
+        if not s.solids():
+            return None
+        if any(f.geom_type != GeomType.PLANE for f in s.faces()):
+            return None
+    points = [(v.X, v.Y, v.Z) for s in shapes for v in s.vertices()]
+    try:
+        result = ConvexPolyhedron(points)
+    except Exception:  # noqa: BLE001
+        return None
+    return result if result.is_valid else None
+
+
 def analytic_hull(shapes: list[Shape]) -> Shape | None:
     """Try to evaluate hull() analytically; None means fall back to a mesh."""
     if not shapes:
@@ -333,4 +378,7 @@ def analytic_hull(shapes: list[Shape]) -> Shape | None:
     result = _hull_of_spheres(shapes)
     if result is not None:
         return result
-    return _hull_of_cylinders(shapes)
+    result = _hull_of_cylinders(shapes)
+    if result is not None:
+        return result
+    return _hull_of_polyhedra(shapes)
