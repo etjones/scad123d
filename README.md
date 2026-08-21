@@ -231,16 +231,9 @@ hull() {
 
 <img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_analytic.png" width="450" alt="hull() of 8 equal-radius corner spheres, computed exactly by scad123d">
 
-**We can hull 2, but not 3+.** A hull of exactly *two* spheres — any two
-radii — is computed exactly: the boundary is two spherical caps joined by
-the external tangent cone, and scad123d builds precisely those three
-surfaces as real solid geometry. (The same tangent construction covers a
-hull of two 2D circles — the classic keyhole/slot idiom.) But three or
-more non-collinear spheres of unequal radii have no such closed form —
-their hull needs tangent planes touching three spheres at once, a genuinely
-harder mathematical object — so that still renders through the real
-OpenSCAD program as a mesh, stitched in with a warning. Same model family,
-one sphere apart:
+**We can hull 2 spheres, but not 3+.** A hull of exactly *two* spheres — any two
+radii — is computed exactly. But the hull of 3 or more spheres is computed
+as a mesh.
 
 ```openscad
 hull() {                                   // exact: smooth caps + tangent cone
