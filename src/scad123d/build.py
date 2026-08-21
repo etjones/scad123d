@@ -327,7 +327,10 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         if analytic is not None:
             return analytic
         return _fallback(
-            node, options, "not all children are equal-radius spheres/cylinders"
+            node,
+            options,
+            "children are neither all-polyhedral nor equal-radius "
+            "spheres/cylinders",
         )
 
     if name in ("projection", "surface", "import"):

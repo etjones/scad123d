@@ -5,6 +5,7 @@ from collections import Counter
 
 import pytest
 from build123d import GeomType
+from scipy.spatial import ConvexHull
 
 import scad123d
 from scad123d.solids import apply_matrix
@@ -259,6 +260,96 @@ class TestHull:
     def test_single_child_hull_is_a_no_op(self):
         shape = scad123d.import_csg(_hull_of(_SPHERE.format(r=3)))
         assert shape.volume == pytest.approx((4 / 3) * math.pi * 27, rel=1e-9)
+
+
+class TestPolyhedralHull:
+    """Rung 3: hull() of all-polyhedral children is exactly the convex hull
+    of their combined vertices, built as a real BRep solid via build123d's
+    ConvexPolyhedron -- no mesh fallback, no approximation.
+    """
+
+    def test_two_cubes_with_matching_cross_section_hull_to_a_box(self):
+        # Same YZ extents, separated along X: the hull is exactly a
+        # 40 x 10 x 10 box -- volume checkable by hand.
+        source = _hull_of(
+            "cube(size = [10, 10, 10], center = false);",
+            _translated(30, 0, 0, "cube(size = [10, 10, 10], center = false);"),
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(4000, rel=1e-9)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.PLANE: 6}
+
+    def test_rotated_cube_hull_matches_scipy_exactly(self):
+        # A generic polyhedral hull with no hand-computable volume: check
+        # against scipy's own qhull volume over the same vertex set. Also
+        # proves matrix transforms don't break the rung -- planarity
+        # survives any affine map.
+        c = s = math.sqrt(2) / 2
+        source = _hull_of(
+            "cube(size = [10, 10, 10], center = true);",
+            f"multmatrix([[{c}, {-s}, 0, 30], [{s}, {c}, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) "
+            "{ cube(size = [10, 10, 10], center = true); }",
+        )
+        shape = scad123d.import_csg(source)
+        base = [(x, y, z) for x in (-5, 5) for y in (-5, 5) for z in (-5, 5)]
+        rotated = [(c * x - s * y + 30, s * x + c * y, z) for x, y, z in base]
+        expected = ConvexHull(base + rotated).volume
+        assert shape.volume == pytest.approx(expected, rel=1e-9)
+        assert all(f.geom_type == GeomType.PLANE for f in shape.faces())
+        assert shape.is_valid
+
+    def test_polyhedron_child_qualifies(self):
+        source = _hull_of(
+            "polyhedron(points = [[0,0,0],[10,0,0],[5,10,0],[5,5,12]], "
+            "faces = [[0,2,1],[0,1,3],[1,2,3],[2,0,3]], convexity = 1);",
+            _translated(20, 0, 0, "cube(size = [2, 2, 2], center = false);"),
+        )
+        shape = scad123d.import_csg(source)
+        pts = [(0, 0, 0), (10, 0, 0), (5, 10, 0), (5, 5, 12)]
+        pts += [(x + 20, y, z) for x in (0, 2) for y in (0, 2) for z in (0, 2)]
+        assert shape.volume == pytest.approx(ConvexHull(pts).volume, rel=1e-9)
+
+    def test_faceted_cylinders_now_hull_exactly(self):
+        # Faceted ($fn below threshold) cylinders are polygonal prisms --
+        # polyhedral, so this rung hulls them exactly. These used to be the
+        # test suite's canonical "guaranteed mesh fallback" example.
+        source = _hull_of(
+            "cylinder($fn = 6, $fa = 12, $fs = 2, h = 2, r1 = 3, r2 = 3, center = true);",
+            _translated(
+                14, 0, 0,
+                "cylinder($fn = 6, $fa = 12, $fs = 2, h = 2, r1 = 3, r2 = 3, center = true);",
+            ),
+        )
+        shape = scad123d.import_csg(source)
+        # Expected volume from the vertices of a single imported cylinder
+        # (whose tessellation is pinned by TestFacets), replicated at both
+        # positions -- this checks the hulling, not the hexagon's phase.
+        one = scad123d.import_csg(
+            "cylinder($fn = 6, $fa = 12, $fs = 2, h = 2, r1 = 3, r2 = 3, center = true);"
+        )
+        base = [(v.X, v.Y, v.Z) for v in one.vertices()]
+        pts = base + [(x + 14, y, z) for x, y, z in base]
+        assert shape.volume == pytest.approx(ConvexHull(pts).volume, rel=1e-9)
+        assert all(f.geom_type == GeomType.PLANE for f in shape.faces())
+
+    # Decline paths are checked at the unit level: going through import_csg
+    # would hit the mesh fallback, which invokes OpenSCAD -- not available
+    # in tier 1 (see the comment in TestHull above).
+
+    def test_curved_child_declines(self):
+        from build123d import Box, Sphere
+
+        from scad123d.hull import _hull_of_polyhedra
+
+        assert _hull_of_polyhedra([Box(10, 10, 10), Sphere(5)]) is None
+
+    def test_2d_child_declines(self):
+        from build123d import Box, Rectangle
+
+        from scad123d.hull import _hull_of_polyhedra
+
+        assert _hull_of_polyhedra([Box(10, 10, 10), Rectangle(5, 5)]) is None
 
 
 class TestStructure:

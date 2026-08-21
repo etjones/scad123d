@@ -214,9 +214,12 @@ since rounding a shape is what most people use it for.
 
 ## Incomplete support: `hull()`
 
-`hull()` doesn't have as clean an answer. scad123d computes a few common,
-recognizable patterns exactly — most usefully, the classic "rounded box built
-from spheres at each corner" idiom:
+`hull()` doesn't have as clean an answer, but most real uses are computed
+exactly. Any hull of *polyhedral* children — cubes, `polyhedron()`s,
+extruded polygons, anything flat-faced, in any orientation — is exactly the
+convex hull of their vertices, built as real solid geometry. And the
+classic curved idioms are recognized specifically — most usefully the
+"rounded box built from spheres at each corner":
 
 ```openscad
 hull() {
@@ -228,13 +231,13 @@ hull() {
 
 <img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/hull_analytic.png" width="450" alt="hull() of 8 equal-radius corner spheres, computed exactly by scad123d">
 
-But `hull()` in general — arbitrary shapes, spheres of different sizes,
-whatever else OpenSCAD lets you throw into it — has no equivalent operation
-in build123d's kernel at all. When scad123d can't compute an exact answer, it
-doesn't fail: it asks the real OpenSCAD program to render just that piece as
-a mesh and stitches the result in. Your model still imports and still comes
-out correct — you just lose the "real curved surface" benefits (fillets,
-exact export) for that specific piece:
+What's left is hulls of *curved* shapes outside those idioms — spheres of
+different sizes, mismatched cylinders — where the true hull has curved
+faces no vertex set can capture. There, scad123d doesn't fail: it asks the
+real OpenSCAD program to render just that piece as a mesh and stitches the
+result in. Your model still imports and still comes out correct — you just
+lose the "real curved surface" benefits (fillets, exact export) for that
+specific piece:
 
 ```openscad
 hull() {

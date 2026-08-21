@@ -3,8 +3,10 @@
 v1 shipped **rung 0** (mesh fallback, so nothing ever hard-fails), **rung 1**
 (analytic Minkowski with a ball), **rung 1.5** (Minkowski with a
 polyhedron/polygon ball — see below), and **rung 2** (analytic hull of
-equal-radius spheres and of equal-radius parallel cylinders). The rungs below
-add analytic coverage for cases that still take the mesh path. Each is gated
+equal-radius spheres and of equal-radius parallel cylinders). **Rung 3**
+(exact hull of all-polyhedral children, via build123d's `ConvexPolyhedron`)
+shipped after v1 — see below. The rungs below add analytic coverage for
+cases that still take the mesh path. Each is gated
 the same way: attempt analytic, validate with `is_valid`, fall back to a mesh
 on failure or on a non-matching pattern. No rung may make a previously-working
 model fail.
@@ -102,6 +104,21 @@ there is BOSL2's own choice, not scad123d's. (`cuboid(rounding=r)`, rounding
 *every* edge, is the one that uses `minkowski()` with a polyhedron kernel —
 that is rung 1.5, above.)
 
+### Rung 3 — hull of all-polyhedral children (shipped)
+
+A polyhedral solid contributes only its vertices to any convex hull, so
+`hull()` of children whose faces are all planar is exactly the convex hull
+of their combined vertices — built as real BRep via build123d's
+`ConvexPolyhedron` (v0.11.0+: scipy qhull for the hull, OCCT sewing,
+coplanar facets merged by `clean()`). Covers cubes, `polyhedron()`s,
+extruded polygons, faceted (below-threshold `$fn`) circles/cylinders,
+matrix-transformed anything-planar, and mesh-fallback children (their
+triangles are planar too). This is the "exact and combinatorial for
+polytopes" half of rung 5, done. Verified differentially: same exact
+polytope OpenSCAD computes, volumes agree to float precision. Declines
+(mesh fallback) on any curved child outside rung 2's idioms — a curved
+surface's hull is not determined by its vertices — and on 2D children.
+
 ### Rung 2.5 — coplanar sphere hulls as a thickened 2D offset
 
 A planar (coplanar, non-collinear) arrangement of equal-radius spheres is the
@@ -112,7 +129,7 @@ as the 3D case (a literal zero-thickness solid is degenerate) and not simply
 lens). Likely buildable as: offset the 2D polygon in-plane by `r` for the
 waist, then loft/join hemispherical caps top and bottom. Unexplored.
 
-### Rung 3 — two-child hull as a loft
+### Rung 3.5 — two-child hull as a loft
 
 `hull(){ a; translate(v) b; }` is bounded by parts of `∂a`, parts of `∂b`, and
 the ruled surface of tangent lines between them — which is a `loft` between the

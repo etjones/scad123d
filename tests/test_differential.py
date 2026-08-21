@@ -139,35 +139,44 @@ def test_overrides_change_the_geometry():
 
 
 def test_hull_falls_back_to_a_mesh_rather_than_failing():
-    """Decision: hull() must never hard-fail -- BOSL2 rounding depends on it."""
+    """Decision: hull() must never hard-fail -- BOSL2 rounding depends on it.
+
+    Unequal-radius *curved* spheres: no rung covers this (rung 2 needs equal
+    radii, rung 3 needs all-planar faces), so it genuinely still needs the
+    mesh fallback. This test originally used faceted ($fn=16) cylinders,
+    which rung 3 now hulls exactly -- faceted means polyhedral.
+    """
     source = (
         "hull() {\n"
-        "\tcylinder($fn = 16, $fa = 12, $fs = 2, h = 2, r1 = 3, r2 = 3, center = true);\n"
+        "\tsphere($fn = 0, $fa = 12, $fs = 2, r = 3);\n"
         "\tmultmatrix([[1, 0, 0, 14], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
-        "\t\tcylinder($fn = 16, $fa = 12, $fs = 2, h = 2, r1 = 3, r2 = 3, center = true);\n"
+        "\t\tsphere($fn = 0, $fa = 12, $fs = 2, r = 5);\n"
         "\t}\n"
         "}"
     )
     with pytest.warns(UserWarning, match="no BRep equivalent"):
         shape = scad123d.import_csg(source)
-    assert shape.volume > 0
-    # a 14-long slot of radius 3 and height 2, faceted
-    assert shape.volume == pytest.approx(2 * (14 * 6 + math.pi * 9), rel=0.05)
+    # Sandwich the volume: the hull contains the larger sphere, and fits
+    # inside a radius-5 capsule spanning both centers.
+    assert shape.volume > (4 / 3) * math.pi * 125
+    assert shape.volume < math.pi * 25 * 14 + (4 / 3) * math.pi * 125
 
 
 def test_mesh_scope_hoist_meshes_everything():
-    """A hull() of unequal radii has no analytic path (rung 2 only covers
-    equal-radius spheres/cylinders), so this still genuinely needs the mesh
-    fallback -- unlike a single-child or equal-radius hull, which rung 2 now
-    handles without ever touching OpenSCAD.
+    """A hull() of unequal-radius *curved* cylinders has no analytic path
+    (rung 2 needs equal radii, rung 3 needs all-planar faces), so this still
+    genuinely needs the mesh fallback -- unlike a single-child, equal-radius,
+    or all-polyhedral hull, which the rungs now handle without ever touching
+    OpenSCAD. ($fn = 0 matters: at $fn = 16 these cylinders would be faceted
+    prisms, which rung 3 hulls exactly.)
     """
     source = (
         "difference() {\n"
         "\tcube(size = [30, 30, 4], center = true);\n"
         "\thull() {\n"
-        "\t\tcylinder($fn = 16, $fa = 12, $fs = 2, h = 20, r1 = 3, r2 = 3, center = true);\n"
+        "\t\tcylinder($fn = 0, $fa = 12, $fs = 2, h = 20, r1 = 3, r2 = 3, center = true);\n"
         "\t\tmultmatrix([[1,0,0,10],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
-        "\t\t\tcylinder($fn = 16, $fa = 12, $fs = 2, h = 20, r1 = 5, r2 = 5, center = true);\n"
+        "\t\t\tcylinder($fn = 0, $fa = 12, $fs = 2, h = 20, r1 = 5, r2 = 5, center = true);\n"
         "\t\t}\n"
         "\t}\n"
         "}"
@@ -177,6 +186,56 @@ def test_mesh_scope_hoist_meshes_everything():
     with pytest.warns(UserWarning, match="no BRep equivalent"):
         hoisted = scad123d.import_csg(source, mesh_scope="hoist")
     assert minimal.volume == pytest.approx(hoisted.volume, rel=0.02)
+
+
+def test_polyhedral_hull_matches_openscad_exactly():
+    """Rung 3 differential check: the hull of polyhedral children is the
+    same exact polytope OpenSCAD itself computes, so volumes agree to float
+    precision -- not just the convergence bound curved shapes get.
+    """
+    c = s = math.sqrt(2) / 2
+    source = (
+        "hull() {\n"
+        "\tcube(size = [10, 10, 10], center = true);\n"
+        f"\tmultmatrix([[{c}, {-s}, 0, 30], [{s}, {c}, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) "
+        "{ cube(size = [10, 10, 10], center = true); }\n"
+        "}"
+    )
+    ours = scad123d.import_csg(source).volume
+    mesh = export_mesh(source, suffix=".stl")
+    try:
+        theirs = stl_volume(mesh)
+    finally:
+        import shutil
+
+        shutil.rmtree(mesh.parent, ignore_errors=True)
+    assert ours == pytest.approx(theirs, rel=1e-6)
+
+
+def test_hull_of_a_mesh_fallback_child_is_still_a_polyhedral_hull():
+    """A faceted sphere child takes the mesh path (that's the child's own,
+    unchanged behavior) -- but its triangles are planar, so the *hull*
+    around it qualifies for rung 3 and comes back as clean BRep planes
+    rather than falling back to a second OpenSCAD mesh render.
+    """
+    import warnings as _warnings
+
+    from build123d import GeomType
+
+    source = (
+        "hull() {\n"
+        "\tsphere($fn = 8, $fa = 12, $fs = 2, r = 5);\n"
+        "\tmultmatrix([[1, 0, 0, 20], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+        "\t\tcube(size = [4, 4, 4], center = true);\n\t}\n"
+        "}"
+    )
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        shape = scad123d.import_csg(source)
+    messages = [str(w.message) for w in caught]
+    assert any("faceted sphere" in m for m in messages)
+    assert not any("hull()" in m for m in messages)
+    assert all(f.geom_type == GeomType.PLANE for f in shape.faces())
 
 
 def test_faceted_sphere_takes_the_mesh_path():
