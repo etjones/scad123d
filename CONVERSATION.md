@@ -489,3 +489,70 @@ touches or depends on it. For the record: solid123d's own `minkowski()`
 already got the plain-ball fix in the prior session (2026-08-18 earlier,
 `5ba9785`); its `hull()` still raises `NotImplementedError` unconditionally,
 and the polyhedron-ball extension built here has not been ported upstream.
+
+---
+
+## Session: 2026-08-19 through 2026-08-23 — releases 0.1.0→0.3.0, shared cores, Gridfinity fixes
+
+A long multi-arc session; the durable outcomes, in order:
+
+**Releases and ecosystem.** scad123d 0.1.0/0.2.0/0.3.0 published to PyPI;
+`scad2step` created as a separate thin-CLI package (repo
+~/Dropbox/Projects/scad2step, PyPI 0.1.2, `uvx scad2step file.scad -o
+out.step`); solid123d 0.2.0/0.2.1 published. Publishing uses `just publish`
+in each repo: `.env` holds only a 1Password `op://` reference, resolved at
+publish time via Touch ID -- the token never touches disk.
+
+**import_module() redesign.** Parses .scad declarations (tokenizer in
+scad_declarations.py) for real Python signatures, immediate
+file/module-not-found errors, and required-argument enforcement;
+`import_module(path)` with no name returns a lazily-built ScadLibrary
+namespace; include-vs-use is auto-detected from file content
+(suggest_import_style) with `import_style` as override; declaration scans
+cached on (path, mtime).
+
+**Color arc.** color() survives to STEP: disjoint/touching colored children
+stay separate bodies (Compound) with per-part colors; overlap fuses with
+first child's color; parts labeled (CSS name or hex; file stem for
+import_scad roots, module name for import_module results). Gated on
+authored color so uncolored models are untouched.
+
+**Hull/minkowski rungs.** Rung 3 (all-polyhedral children via
+ConvexPolyhedron, exact to float precision vs OpenSCAD) and rung 4a
+(two-sphere pair via caps sewn to the external tangent cone -- sewn, not
+fused, because OCCT booleans are flakiest at tangent contact; plus the 2D
+two-circle keyhole, which also fixed a hard crash: OpenSCAD cannot mesh 2D
+subtrees). Strictly pairwise; 3+ unequal spheres need tritangent planes
+(ROADMAP rung 4).
+
+**Canonicalization (the big refactor).** All binary-independent geometry
+moved to solid123d 0.2.x as its canonical home: analytic hull/minkowski
+cores, the color-preserving group()/union(), polyhedron() primitive,
+color_label(). scad123d 0.3.0 deleted its local copies (-847 lines) and
+imports them; its differential CI now validates the shared cores against
+OpenSCAD for both packages. The prior "solid123d unaffected" note above is
+obsolete: solid123d now carries everything, plus author-literal color-name
+labels scad123d structurally cannot have (CSG discards names).
+
+**Gridfinity fixes (PR #10, open at session end).** A real
+gridfinity_basic_cup.scad exposed two bugs: (1) degenerate primitives --
+cube([42,42,0]) for disabled features -- crash OCCT where OpenSCAD renders
+nothing; now guarded to contribute nothing. (2) Worse, silent-wrong: hull()
+of a module-call body arrives as ONE group-wrapped pre-fused child, and
+analytic_hull's single-child identity shortcut passed it through -- valid
+only for convex children; the cup lost 90% of its volume. Fixed in
+solid123d 0.2.1: inputs exploded into component solids before
+classification (hulls are decomposition-invariant), shortcut deleted.
+Verified: cup volume agrees with OpenSCAD to 0.03%.
+
+**Open at session end:**
+- scad123d PR #10 (degenerate guards + solid123d>=0.2.1 floor): CI green,
+  awaiting merge. After merge: release 0.3.1 so `uvx scad2step` users get
+  the Gridfinity fixes. Local checkout deliberately left on
+  fix/degenerate-primitives so the editable venv has the fix.
+- User planned a batch sweep of all gridfinity_extended_openscad/*.scad
+  through scad2step -- results may surface new bugs to triage.
+- Outreach to gumyr (build123d author) sent re: listing scad123d/solid123d
+  on the "Transitioning from OpenSCAD" docs page; he asked about seeing
+  generated build123d code -- a codegen backend (emit Python instead of
+  building shapes, sibling of emit.py) is feasible future work.
