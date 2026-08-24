@@ -11,13 +11,15 @@ only so the command also works as plain ``uvx scad2step ...``.
 
 import argparse
 import sys
+import time
+import warnings
 from pathlib import Path
 from typing import Any
 
 from build123d import export_step
 
 from . import import_scad
-from .errors import OpenSCADNotFoundError, Scad123dError
+from .errors import MeshFallbackWarning, OpenSCADNotFoundError, Scad123dError
 from .facets import DEFAULT_FACET_THRESHOLD
 
 
@@ -100,15 +102,32 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
         return 2  # pragma: no cover -- parser.error() itself exits
 
+    print(f"scad2step: converting {args.input} -> {output}", file=sys.stderr)
+    start = time.perf_counter()
     try:
-        part = import_scad(
-            args.input,
-            facet_threshold=args.facet_threshold,
-            mesh_scope=args.mesh_scope,
-            timeout=args.timeout,
-            **overrides,
-        )
-        export_step(part, str(output))
+        # Mesh-fallback notes are routine, so print them as plain one-liners
+        # instead of Python's warning format (whose file:line and source-line
+        # echo reads like a stack trace). catch_warnings() restores the
+        # default presentation on exit; other warning categories keep it.
+        with warnings.catch_warnings():
+            default_show = warnings.showwarning
+
+            def show(message, category, filename, lineno, file=None, line=None):  # type: ignore[no-untyped-def]
+                if issubclass(category, MeshFallbackWarning):
+                    text = str(message).removeprefix("scad123d: ")
+                    print(f"scad2step: note: {text}", file=sys.stderr)
+                else:
+                    default_show(message, category, filename, lineno, file, line)
+
+            warnings.showwarning = show
+            part = import_scad(
+                args.input,
+                facet_threshold=args.facet_threshold,
+                mesh_scope=args.mesh_scope,
+                timeout=args.timeout,
+                **overrides,
+            )
+            export_step(part, str(output))
     except OpenSCADNotFoundError as exc:
         print(
             f"scad2step: {exc}\nscad2step needs the OpenSCAD program installed "
@@ -126,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"scad2step: {exc}", file=sys.stderr)
         return 1
 
-    print(f"wrote {output}")
+    print(f"wrote {output} ({time.perf_counter() - start:.1f}s)")
     return 0
 
 

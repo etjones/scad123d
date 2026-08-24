@@ -260,8 +260,7 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         return _fallback(
             node,
             options,
-            "children are neither all-polyhedral nor equal-radius "
-            "spheres/cylinders",
+            "children fit none of the closed-form hull cases",
         )
 
     if name in ("projection", "surface", "import"):
