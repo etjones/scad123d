@@ -793,3 +793,88 @@ class TestColor:
         assert "product('blue'" in text
         assert "product('colors'" in text
         assert "product('compound'" not in text
+
+
+class TestDegeneratePrimitives:
+    """Primitives with a zero (or negative) critical dimension produce no
+    geometry in OpenSCAD's render, but OCCT raises Standard_Failure on
+    them. Real code hits this constantly -- libraries disable optional
+    features by collapsing a dimension to zero (Gridfinity emits
+    cube([42, 42, 0]) for a disabled lip). Found via a real Gridfinity cup
+    that crashed on exactly that.
+    """
+
+    def test_zero_height_cube_contributes_nothing(self):
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tcube(size = [42, 42, 0], center = false);\n"
+            "}"
+        )
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
+
+    def test_model_of_only_degenerate_geometry_is_empty(self):
+        with pytest.raises(scad123d.UnsupportedNodeError):
+            scad123d.import_csg("cube(size = [42, 42, 0], center = false);")
+
+    def test_zero_height_cylinder_contributes_nothing(self):
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tcylinder($fn = 0, $fa = 12, $fs = 2, h = 0, r1 = 5, r2 = 5, center = false);\n"
+            "}"
+        )
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
+
+    def test_cone_with_one_zero_radius_still_builds(self):
+        # r1 or r2 alone may be zero: that's a cone, not degenerate.
+        shape = scad123d.import_csg(
+            "cylinder($fn = 0, $fa = 12, $fs = 2, h = 9, r1 = 3, r2 = 0, center = false);"
+        )
+        assert shape.volume == pytest.approx(math.pi * 9 * 9 / 3, rel=1e-9)
+
+    def test_zero_radius_circle_contributes_nothing(self):
+        shape = scad123d.import_csg(
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\tunion() {\n"
+            "\t\tsquare(size = [10, 10], center = false);\n"
+            "\t\tcircle($fn = 0, $fa = 12, $fs = 2, r = 0);\n"
+            "\t}\n}"
+        )
+        assert shape.volume == pytest.approx(400, rel=1e-9)
+
+
+class TestHullOfGroupedChildren:
+    """OpenSCAD wraps a module-call body in group(), so `hull()
+    corner_posts();` arrives as hull() with ONE group child -- which the
+    builder pre-fuses into a single compound. solid123d>=0.2.1 explodes
+    that back into component solids before classification, so the classic
+    rounded-box idiom stays exact. A Gridfinity cup silently lost 90% of
+    its volume to this before the fix.
+    """
+
+    def test_hull_of_a_grouped_post_ring_is_the_exact_rounded_box(self):
+        posts = "\n".join(
+            f"\t\tmultmatrix([[1,0,0,{x}],[0,1,0,{y}],[0,0,1,0],[0,0,0,1]]) "
+            "{ cylinder($fn = 0, $fa = 12, $fs = 2, h = 10, r1 = 2, r2 = 2, center = false); }"
+            for x in (0, 20)
+            for y in (0, 20)
+        )
+        shape = scad123d.import_csg(
+            "hull() {\n\tgroup() {\n" + posts + "\n\t}\n}"
+        )
+        expected = (400 + 4 * 2 * 20 + math.pi * 4) * 10
+        assert shape.volume == pytest.approx(expected, rel=1e-9)
+        kinds = {f.geom_type for f in shape.faces()}
+        assert kinds == {GeomType.PLANE, GeomType.CYLINDER}
+
+    def test_hull_of_a_single_nonconvex_group_is_its_true_hull(self):
+        # hull(X) == X only for convex X -- a single L-shaped child must
+        # gain its missing-corner prism, not pass through unchanged.
+        shape = scad123d.import_csg(
+            "hull() {\n\tgroup() {\n"
+            "\t\tcube(size = [20, 10, 10], center = false);\n"
+            "\t\tcube(size = [10, 20, 10], center = false);\n"
+            "\t}\n}"
+        )
+        assert shape.volume == pytest.approx(3500, rel=1e-9)
