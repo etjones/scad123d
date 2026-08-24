@@ -643,3 +643,48 @@ files (3 pre-existing lint errors in untouched test files left alone).
 **Branch bookkeeping:** based on main, so it does NOT include PR #10's
 degenerate guards; CONVERSATION.md here carries both session entries
 (will merge cleanly whichever PR lands first).
+
+---
+
+## Session: 2026-08-23 (cont.) — identical-translates hull rung; everything merged
+
+**Merges (user asked to land all unmerged code first):**
+- scad123d PR #10 (degenerate guards) and PR #11 (mesh memoization) ->
+  main. PR #11 needed one CI fix: mesh-cache tests marked
+  `needs_openscad` so the no-OpenSCAD "fixtures" jobs skip them.
+- solid123d PR #3 (multi-face scaled extrude + 2D polygon hull, 0.2.2)
+  -> main.
+
+**New feature (solid123d PR #4, merged; version 0.3.0):** the
+identical-translates hull rung, from the factorization discussed in
+chat: hull(identical translates of X) == conv(centers) ⊕ conv(X).
+Implemented for X = vertical-axis revolution solid with cylinder/cone
+faces (phase A: no spheres/tori in the profile):
+- `_vertical_revolution_profile`: classify a component, profile = its
+  vertices as (z, radial distance from axis)
+- pool profile points per center (stacked bevels arrive as several
+  solids per corner), `_upper_chain` = concave envelope = silhouette
+  r(z)
+- ruled loft of `_rounded_section` faces (centers' 2D hull offset by r,
+  one deterministic wire so loft sections always match) at envelope
+  breakpoints; circle/stadium sections for degenerate center sets
+- self-check vs closed-form volume: integral of Steiner A(r) = A0 +
+  P0·r + πr² per linear segment; mismatch -> decline
+Declines: apex (r=0) sections, tilted axes, sphere/torus profile faces,
+mismatched per-center profiles. OCCT even reports true GeomType.CONE
+faces from the ruled loft.
+
+**Results on gridfinity_silverware.scad:** mesh fallbacks 120 -> 10
+(remaining: quarter-torus lip hulls + one rotated-frame hull), build
+330s -> 14s (~24x -- meshed pads had been dragging every downstream
+boolean through triangle geometry). Volume vs OpenSCAD render: +0.034%,
+consistent with exact cones circumscribing OpenSCAD's inscribed facets.
+solid123d: 97 tests (8 new); scad123d: 231 pass unchanged against it.
+
+**Open:**
+- Publish solid123d 0.3.0 (`just publish`, needs 1Password Touch ID).
+- Then bump scad123d floor to solid123d>=0.3.0 (or >=0.2.2 minimum) and
+  release 0.3.1 so `uvx scad2step` users get everything.
+- Phase B candidates (unbuilt): arcs in the profile (sphere/torus
+  corner bands), apex sections, z-offset translates (3D center
+  polytopes), scad123d's outdated hull-fallback warning text.
