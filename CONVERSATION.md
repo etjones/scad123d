@@ -743,3 +743,7 @@ have the full analytic coverage; they differ only in failure mode
 **Released:** scad123d 0.3.2 (tagged v0.3.2): CLI feedback + healing.
 solid123d unchanged (0.3.0); scad2step unchanged (0.1.3, floor >=0.3.1
 resolves 0.3.2 automatically).
+
+**Session close:** stale `uvx` environment cache was serving the old
+scad123d; `uvx --refresh scad2step ...` re-resolved to 0.3.2 and worked.
+Done for the night.
