@@ -16,7 +16,7 @@ import warnings
 from build123d import Mesher, Shape
 
 from .emit import emit
-from .errors import MeshFallbackWarning
+from .errors import MeshFallbackWarning, OpenSCADRunError
 from .nodes import CsgNode
 from .openscad import export_mesh
 
@@ -56,7 +56,16 @@ def mesh_subtree(node: CsgNode, timeout: float = 600) -> Shape | None:
 
 
 def _render(source: str, timeout: float) -> Shape | None:
-    path = export_mesh(source, suffix=".3mf", timeout=timeout)
+    try:
+        path = export_mesh(source, suffix=".3mf", timeout=timeout)
+    except OpenSCADRunError as exc:
+        # An empty subtree is legal OpenSCAD (a disabled feature, an
+        # intersection of disjoint parts); rendering it standalone is the
+        # only thing that errors. Empty means "encloses nothing", not
+        # "failed" -- same contract as an empty boolean.
+        if "Current top level object is empty" in str(exc):
+            return None
+        raise
     try:
         shapes = Mesher().read(str(path))
     finally:

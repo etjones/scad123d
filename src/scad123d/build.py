@@ -80,6 +80,27 @@ def _children(node: CsgNode, options: BuildOptions) -> list[Shape]:
     return marked or out
 
 
+def _children_positional(node: CsgNode, options: BuildOptions) -> list[Shape | None]:
+    """Like _children, but keeps an empty child as None in its position.
+
+    Unions can drop empties freely; difference and intersection cannot --
+    their semantics depend on which operand was empty (see the boolean
+    branches in _build).
+    """
+    out: list[Shape | None] = []
+    kept: list[CsgNode] = []
+    for child in node.children:
+        if child.modifier == "%":
+            continue
+        shape = _build(child, options)
+        if shape is not None and shape._wrapped is None:
+            shape = None
+        out.append(shape)
+        kept.append(child)
+    marked = [s for s, c in zip(out, kept) if c.modifier == "!"]
+    return marked if marked else out
+
+
 def _union(shapes: list[Shape]) -> Shape | None:
     """Union children the way an OpenSCAD block does.
 
@@ -174,13 +195,25 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
     if name in ("group", "union", "render"):
         return _union(_children(node, options))
 
+    # difference and intersection care WHERE an empty child sat, so they
+    # cannot use _children's empties-dropped list: an empty first
+    # difference child empties the result (the minuend is gone -- dropping
+    # it would silently promote the first subtrahend to minuend), and any
+    # empty intersection operand annihilates the whole result. OpenSCAD
+    # agrees on both; found via a real model whose disabled feature left
+    # an empty group inside an intersection.
     if name == "difference":
-        shapes = _children(node, options)
-        return reduce(sub, shapes) if shapes else None
+        shapes = _children_positional(node, options)
+        if not shapes or shapes[0] is None:
+            return None
+        rest = [s for s in shapes[1:] if s is not None]
+        return reduce(sub, rest, shapes[0])
 
     if name == "intersection":
-        shapes = _children(node, options)
-        return reduce(and_, shapes) if shapes else None
+        shapes = _children_positional(node, options)
+        if not shapes or any(s is None for s in shapes):
+            return None
+        return reduce(and_, shapes)
 
     # --- transforms -----------------------------------------------------
     if name == "multmatrix":
@@ -247,6 +280,11 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
     # --- no BRep equivalent ---------------------------------------------
     if name == "minkowski":
         built = _children(node, options)
+        # Real code disables features by leaving a subtree empty; OpenSCAD
+        # treats minkowski()/hull() of nothing as nothing, and asking it to
+        # mesh an empty subtree is an error, not a fallback.
+        if not built:
+            return None
         analytic = analytic_minkowski(built)
         if analytic is not None:
             return analytic
@@ -254,6 +292,8 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
 
     if name == "hull":
         built = _children(node, options)
+        if not built:
+            return None
         analytic = analytic_hull(built)
         if analytic is not None:
             return analytic
