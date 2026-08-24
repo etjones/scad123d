@@ -16,6 +16,7 @@ import warnings
 from build123d import Mesher, Shape
 
 from .emit import emit
+from .errors import MeshFallbackWarning
 from .nodes import CsgNode
 from .openscad import export_mesh
 
@@ -74,5 +75,6 @@ def warn_meshed(node_name: str, reason: str) -> None:
         f"scad123d: {node_name}() has no BRep equivalent ({reason}); "
         f"rendered to a mesh via OpenSCAD. Fillets and face selectors will "
         f"not behave analytically on this region.",
+        MeshFallbackWarning,
         stacklevel=3,
     )

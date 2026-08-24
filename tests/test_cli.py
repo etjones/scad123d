@@ -108,3 +108,35 @@ def test_d_override_actually_changes_the_geometry(tmp_path):
     default_volume = import_step(str(default_out)).volume
     override_volume = import_step(str(override_out)).volume
     assert override_volume == pytest.approx(default_volume * 5, rel=1e-9)
+
+
+@pytest.mark.needs_openscad
+def test_progress_and_timing_lines(tmp_path, capsys):
+    scad = tmp_path / "box.scad"
+    scad.write_text("cube([10, 5, 5]);")
+    output = tmp_path / "box.step"
+
+    exit_code = main([str(scad), "-o", str(output)])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert f"converting {scad} -> {output}" in captured.err
+    assert "wrote" in captured.out and "s)" in captured.out
+
+
+@pytest.mark.needs_openscad
+def test_mesh_fallback_warning_prints_as_one_clean_line(tmp_path, capsys):
+    scad = tmp_path / "blob.scad"
+    # three unequal spheres: no analytic hull rung -> mesh fallback
+    scad.write_text(
+        "hull() { sphere(r=2); translate([9,0,0]) sphere(r=3);"
+        " translate([0,9,0]) sphere(r=4); }"
+    )
+    exit_code = main([str(scad), "-o", str(tmp_path / "blob.step")])
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "scad2step: note: hull() has no BRep equivalent" in err
+    # no Python-warning furniture: no file:line echo, no source-line echo
+    assert "UserWarning" not in err
+    assert "return _fallback" not in err

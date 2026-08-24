@@ -29,3 +29,11 @@ class MissingArgumentError(Scad123dError, TypeError):
     to anything that catches TypeError, while giving the OpenSCAD parameter
     name in the message instead of a generic positional-argument count.
     """
+
+
+class MeshFallbackWarning(UserWarning):
+    """Part of the model had no exact BRep form and was meshed via OpenSCAD.
+
+    A category of its own so callers (the scad2step CLI especially) can
+    format or filter these routine notes without touching other warnings.
+    """
