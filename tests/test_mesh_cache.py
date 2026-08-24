@@ -6,6 +6,8 @@ import pytest
 import scad123d
 from scad123d import mesh
 
+pytestmark = pytest.mark.needs_openscad
+
 # hull() of three unequal-radius spheres has no analytic rung -> mesh fallback.
 _FALLBACK_HULL = """\
 hull() {
