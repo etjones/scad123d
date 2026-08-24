@@ -688,3 +688,19 @@ solid123d: 97 tests (8 new); scad123d: 231 pass unchanged against it.
 - Phase B candidates (unbuilt): arcs in the profile (sphere/torus
   corner bands), apex sections, z-offset translates (3D center
   polytopes), scad123d's outdated hull-fallback warning text.
+
+---
+
+## Session: 2026-08-23 (cont.) — releases: solid123d 0.3.0, scad123d 0.3.1, scad2step 0.1.3
+
+All three published to PyPI via `just publish` (1Password/Touch ID),
+with the user authorizing each fingerprint prompt:
+- solid123d 0.3.0 (identical-translates hull rung + 0.2.2 fixes)
+- scad123d 0.3.1: floor bumped to solid123d>=0.3.0, suite re-run green
+  against the PyPI wheel before publishing (231 passed)
+- scad2step 0.1.3: floor scad123d>=0.3.1 (was >=0.2.0)
+
+End-to-end proof from the published stack:
+`uvx scad2step@0.1.3 gridfinity_silverware.scad` -> 51s wall including
+download, one residual mesh warning (torus-lip hulls), STEP output
+7.8MB -- down from 38MB when the base pads were meshed.
