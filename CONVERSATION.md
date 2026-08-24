@@ -796,3 +796,23 @@ scad123d floor-bump PR or scad123d CI breaks when 0.3.1 publishes).
 
 **Awaiting user go:** merge PR #5, publish solid123d 0.3.1, then
 scad123d: floor >=0.3.1 + fix that test + release 0.3.3.
+
+---
+
+## Session: 2026-08-24 (cont.) — released: solid123d 0.3.1, scad123d 0.3.3
+
+User gave the go; executed the full sequence:
+- solid123d PR #5 merged, tagged v0.3.1, published to PyPI.
+- scad123d PR #14: floor solid123d>=0.3.1, version 0.3.3, and the
+  obsolete-limitation test flipped
+  (test_coplanar_noncollinear_sphere_hull_is_analytic, checked against
+  the rounded-slab closed form 2rA0 + (pi r^2/2)P0 + 4/3 pi r^3). Suite
+  235 pass against the PyPI wheel before publishing. Merged, tagged
+  v0.3.3, published.
+- scad2step unchanged (0.1.3 floor >=0.3.1 resolves 0.3.3).
+
+End-to-end from PyPI: `uvx --refresh scad2step gridfinity_silverware`
+-> 10.6s conversion, ONE clean fallback note (the two sideways
+roundedCube channel hulls, deduped by the warning system), STEP 4.3 MB.
+The new CLI output shows: converting line, single-line note, timed
+wrote line.
