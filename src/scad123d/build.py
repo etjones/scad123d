@@ -104,13 +104,25 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
     name = node.name
     a = node.args
 
+    # Degenerate primitives -- a zero (or negative) critical dimension --
+    # produce no geometry in OpenSCAD's render, but OCCT raises
+    # Standard_Failure on them. Real code hits this constantly: a library
+    # that disables an optional feature by collapsing a dimension to zero
+    # (Gridfinity emits cube([42, 42, 0]) for a disabled lip, for example).
+    # Returning None matches OpenSCAD: the node contributes nothing and the
+    # rest of the model builds normally (_children drops Nones).
+
     # --- leaves: 3D -----------------------------------------------------
     if name == "cube":
-        size = a.get("size", [1, 1, 1])
-        return s1.cube(list(size), center=bool(a.get("center", False)))
+        size = [float(v) for v in a.get("size", [1, 1, 1])]
+        if any(v <= 0 for v in size):
+            return None
+        return s1.cube(size, center=bool(a.get("center", False)))
 
     if name == "sphere":
         radius = float(a.get("r", 1))
+        if radius <= 0:
+            return None
         if should_facet(a.get("$fn"), options.facet_threshold):
             # OpenSCAD's sphere tessellation is a ring construction; not worth
             # reproducing for a case this rare, so let OpenSCAD build it.
@@ -120,21 +132,27 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
     if name == "cylinder":
         h = float(a.get("h", 1))
         r1, r2 = float(a.get("r1", 1)), float(a.get("r2", 1))
+        if h <= 0 or (r1 <= 0 and r2 <= 0):
+            return None  # r1 or r2 alone may be 0: that's a cone
         center = bool(a.get("center", False))
         if should_facet(a.get("$fn"), options.facet_threshold):
-            return faceted_cylinder(r1, r2, h, int(a["$fn"]), center)
-        return s1.cylinder(h=h, r1=r1, r2=r2, center=center)
+            return faceted_cylinder(max(r1, 0), max(r2, 0), h, int(a["$fn"]), center)
+        return s1.cylinder(h=h, r1=max(r1, 0), r2=max(r2, 0), center=center)
 
     if name == "polyhedron":
         return polyhedron(a.get("points", []), a.get("faces", []))
 
     # --- leaves: 2D -----------------------------------------------------
     if name == "square":
-        size = a.get("size", [1, 1])
-        return s1.square(list(size), center=bool(a.get("center", False)))
+        size = [float(v) for v in a.get("size", [1, 1])]
+        if any(v <= 0 for v in size[:2]):
+            return None
+        return s1.square(size, center=bool(a.get("center", False)))
 
     if name == "circle":
         radius = float(a.get("r", 1))
+        if radius <= 0:
+            return None
         if should_facet(a.get("$fn"), options.facet_threshold):
             return faceted_circle(radius, int(a["$fn"]))
         return s1.circle(r=radius)

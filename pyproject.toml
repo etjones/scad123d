@@ -17,7 +17,7 @@ classifiers = [
 ]
 dependencies = [
   "build123d>=0.11.1",
-  "solid123d>=0.2.0",
+  "solid123d>=0.2.1",
   "lark>=1.1.9",
 ]
 
