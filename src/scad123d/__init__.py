@@ -23,6 +23,7 @@ from .errors import (
     UnsupportedNodeError,
 )
 from .facets import DEFAULT_FACET_THRESHOLD
+from .heal import heal_small_edges
 from .module_import import ScadLibrary, import_module
 from .nodes import CsgNode
 from .openscad import export_csg, find_openscad, openscad_version
@@ -127,7 +128,7 @@ def import_csg(
     shape = build(node, options)
     if shape is None:
         raise UnsupportedNodeError("the CSG tree produced no geometry")
-    return shape
+    return heal_small_edges(shape)
 
 
 def to_csg(path: str | Path, **overrides: Any) -> str:
