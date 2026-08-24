@@ -28,6 +28,7 @@ Issues = "https://github.com/etjones/scad123d/issues"
 
 [project.scripts]
 scad2step = "scad123d.cli:main"
+scad123d-diff = "scad123d.diff:main"
 
 [dependency-groups]
 dev = [
