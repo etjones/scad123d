@@ -28,7 +28,10 @@ def test_brace_bodied_module():
     assert len(decls) == 1
     assert decls[0].kind == "module"
     assert decls[0].name == "foo"
-    assert [(p.name, p.required) for p in decls[0].parameters] == [("a", True), ("b", False)]
+    assert [(p.name, p.required) for p in decls[0].parameters] == [
+        ("a", True),
+        ("b", False),
+    ]
 
 
 def test_bare_statement_bodied_module():
@@ -46,7 +49,10 @@ def test_if_else_bodied_module_without_braces():
 def test_function_declaration():
     decls = parse_declarations("function bar(x, y=2) = x + y;")
     assert decls[0].kind == "function"
-    assert [(p.name, p.required) for p in decls[0].parameters] == [("x", True), ("y", False)]
+    assert [(p.name, p.required) for p in decls[0].parameters] == [
+        ("x", True),
+        ("y", False),
+    ]
 
 
 def test_default_value_with_nested_brackets_and_commas():
@@ -58,7 +64,10 @@ def test_trailing_comma_in_parameter_list():
     # Real, live example: BOSL2's own strings.scad declares
     # `function _substr_match_recurse(str,sindex,pattern,plen,pindex=0,)`.
     decls = parse_declarations("module foo(a, b=1,) { cube(a); }")
-    assert [(p.name, p.required) for p in decls[0].parameters] == [("a", True), ("b", False)]
+    assert [(p.name, p.required) for p in decls[0].parameters] == [
+        ("a", True),
+        ("b", False),
+    ]
 
 
 class TestSuggestImportStyle:
@@ -89,7 +98,7 @@ class TestSuggestImportStyle:
 
     def test_use_and_include_directives_do_not_trigger_use(self, tmp_path):
         f = tmp_path / "lib.scad"
-        f.write_text('include <BOSL2/std.scad>\nmodule foo(a) cube(a);\n')
+        f.write_text("include <BOSL2/std.scad>\nmodule foo(a) cube(a);\n")
         assert suggest_import_style(f) == "include"
 
     def test_real_bosl2_std_suggests_include(self):
@@ -109,13 +118,15 @@ class TestSuggestImportStyle:
 
 def test_use_and_include_directives_are_skipped_not_misparsed():
     decls = parse_declarations(
-        'use <BOSL2/std.scad>;\ninclude <MCAD/involute_gears.scad>;\nmodule foo() cube(1);'
+        "use <BOSL2/std.scad>;\ninclude <MCAD/involute_gears.scad>;\nmodule foo() cube(1);"
     )
     assert _names(decls) == ["foo"]
 
 
 def test_top_level_assignment_and_call_are_skipped():
-    decls = parse_declarations("x = 5;\ntranslate([1,2,3]) cube(x);\nmodule foo() cube(1);")
+    decls = parse_declarations(
+        "x = 5;\ntranslate([1,2,3]) cube(x);\nmodule foo() cube(1);"
+    )
     assert _names(decls) == ["foo"]
 
 

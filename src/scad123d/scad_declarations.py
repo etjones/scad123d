@@ -117,7 +117,9 @@ class ScadDeclaration:
     parameters: tuple[ScadParameter, ...]
 
 
-def _parse_parameters(tokens: list[str], i: int) -> tuple[tuple[ScadParameter, ...], int]:
+def _parse_parameters(
+    tokens: list[str], i: int
+) -> tuple[tuple[ScadParameter, ...], int]:
     """``tokens[i]`` is the token just after the opening ``(``."""
     params = []
     if tokens[i] == ")":
@@ -190,7 +192,9 @@ def _scan(tokens: list[str]) -> tuple[list[ScadDeclaration], list[str], bool]:
         if tok in ("module", "function") and i + 2 < n and tokens[i + 2] == "(":
             kind, name = tok, tokens[i + 1]
             params, j = _parse_parameters(tokens, i + 3)
-            declarations.append(ScadDeclaration(kind=kind, name=name, parameters=params))
+            declarations.append(
+                ScadDeclaration(kind=kind, name=name, parameters=params)
+            )
             if kind == "module":
                 i = _skip_statement(tokens, j)
             else:
@@ -243,7 +247,9 @@ class ParsedScadFile:
 
 def parse_file(path: str | Path) -> ParsedScadFile:
     resolved = resolve_scad_path(path)
-    declarations, references, has_top_level_geometry = _scan(tokenize(resolved.read_text()))
+    declarations, references, has_top_level_geometry = _scan(
+        tokenize(resolved.read_text())
+    )
     return ParsedScadFile(
         path=resolved,
         declarations=tuple(declarations),

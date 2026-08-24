@@ -176,7 +176,9 @@ declared in (or reachable from) `path`:
 
 ```python
 gears = scad123d.import_module("MCAD/involute_gears.scad")
-part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
+part = gears.gear(
+    number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5
+)
 ```
 
 Each attribute is built the first time you access it, not up front — so
@@ -314,7 +316,7 @@ triangle soup is slow and occasionally fails. Two policies:
 
 ```python
 scad123d.import_scad(p, mesh_scope="minimal")  # default: mesh only the subtree
-scad123d.import_scad(p, mesh_scope="hoist")    # any unsupported node -> mesh whole model
+scad123d.import_scad(p, mesh_scope="hoist")  # any unsupported node -> mesh whole model
 ```
 
 `minimal` keeps the most analytic geometry; `hoist` is more robust because
@@ -459,8 +461,8 @@ identical. scad123d therefore discriminates on magnitude:
 | `>= facet_threshold` (default 20) | exact BRep curves |
 
 ```python
-scad123d.import_scad(p, facet_threshold=20)   # default
-scad123d.import_scad(p, facet_threshold=0)    # always exact curves
+scad123d.import_scad(p, facet_threshold=20)  # default
+scad123d.import_scad(p, facet_threshold=0)  # always exact curves
 scad123d.import_scad(p, facet_threshold=1e9)  # always honor $fn
 ```
 

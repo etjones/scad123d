@@ -19,7 +19,9 @@ part = gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diamete
 
 # Or import a whole library file's modules at once, as a namespace:
 gears = scad123d.import_module("MCAD/involute_gears.scad")
-part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
+part = gears.gear(
+    number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5
+)
 
 # Or bring in a whole file's geometry at once:
 part = scad123d.import_scad("bracket.scad")
@@ -88,6 +90,7 @@ pretending to be one.
 ```python
 import scad123d
 from build123d import export_step, export_stl
+
 # cube_cyl.scad:
 # union() {
 #   cube([10, 10, 5]);
@@ -168,7 +171,9 @@ file as a namespace instead.
 
 ```python
 gears = scad123d.import_module("MCAD/involute_gears.scad")
-part = gears.gear(number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5)
+part = gears.gear(
+    number_of_teeth=12, circular_pitch=8, gear_thickness=6, bore_diameter=5
+)
 ```
 
 ### Importing a complete `.scad` file with `import_scad()`

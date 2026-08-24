@@ -87,8 +87,8 @@ worth importing are *libraries of modules*. Proposed:
 
 ```python
 lib = scad123d.import_scad(path, **overrides)  # -> ScadModule namespace
-nut = lib.hex_nut(size=5)                       # modules as Python callables -> Shape
-part = lib.geometry                             # top-level geometry, implicitly unioned
+nut = lib.hex_nut(size=5)  # modules as Python callables -> Shape
+part = lib.geometry  # top-level geometry, implicitly unioned
 ```
 
 `**overrides` sets top-level variables (Customizer-style) — nearly free once the

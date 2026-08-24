@@ -161,9 +161,18 @@ def apply_matrix(shape: Shape, m: Sequence[Sequence[float]]) -> Shape:
             result = _bd_scale(result, by=scale, about=(0, 0, 0))
         trsf = gp_Trsf()
         trsf.SetValues(
-            rotation[0][0], rotation[0][1], rotation[0][2], rows[0][3],
-            rotation[1][0], rotation[1][1], rotation[1][2], rows[1][3],
-            rotation[2][0], rotation[2][1], rotation[2][2], rows[2][3],
+            rotation[0][0],
+            rotation[0][1],
+            rotation[0][2],
+            rows[0][3],
+            rotation[1][0],
+            rotation[1][1],
+            rotation[1][2],
+            rows[1][3],
+            rotation[2][0],
+            rotation[2][1],
+            rotation[2][2],
+            rows[2][3],
         )
         result = result.moved(Location(trsf))
     else:

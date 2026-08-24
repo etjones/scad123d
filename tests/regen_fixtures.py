@@ -40,7 +40,9 @@ def main() -> int:
         }
         print(f"  {scad.stem}: vol={shape.volume:.4f} faces={len(shape.faces())}")
 
-    (FIXTURES / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
+    (FIXTURES / "metrics.json").write_text(
+        json.dumps(metrics, indent=2, sort_keys=True) + "\n"
+    )
     print(f"wrote {len(metrics) - 1} fixtures")
     return 0
 

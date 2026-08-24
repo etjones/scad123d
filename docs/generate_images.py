@@ -42,7 +42,9 @@ def write(name: str, source: str) -> Path:
     return path
 
 
-def export_gltf_with_edges(shape: Shape, glb_path: str, samples_per_edge: int = 24) -> None:
+def export_gltf_with_edges(
+    shape: Shape, glb_path: str, samples_per_edge: int = 24
+) -> None:
     """Export a shape to glTF, plus a JSON sidecar of its real BRep edges.
 
     viewer.html's edges=1 draws these instead of guessing edges from mesh
