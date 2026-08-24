@@ -82,9 +82,7 @@ def _read_stl_triangles(path) -> list[list[float]]:
     if data[:5] == b"solid" and b"facet" in data[:2000]:
         nums = [
             float(v)
-            for m in re.findall(
-                rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", data
-            )
+            for m in re.findall(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", data)
             for v in m
         ]
         return [nums[i : i + 9] for i in range(0, len(nums), 9)]

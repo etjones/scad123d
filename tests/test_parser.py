@@ -3,7 +3,6 @@
 import pytest
 
 from scad123d.emit import emit
-from scad123d.nodes import CsgNode
 from scad123d.parser import parse_csg
 
 
@@ -75,7 +74,9 @@ def test_nested_vectors_and_polyhedron():
 
 
 def test_unsupported_nodes_are_reported():
-    node = parse_csg("difference() { hull() { sphere(r = 1); } cube(size = [1, 1, 1]); }")
+    node = parse_csg(
+        "difference() { hull() { sphere(r = 1); } cube(size = [1, 1, 1]); }"
+    )
     assert node.unsupported_nodes() == ["hull"]
 
 

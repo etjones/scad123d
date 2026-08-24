@@ -47,7 +47,9 @@ class TestMinkowski:
             "\tsphere($fn = 0, $fa = 12, $fs = 2, r = 3);\n"
             "}"
         )
-        edges = [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        edges = (
+            [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        )
         expected = self.steiner(20 * 15 * 10, 2 * (300 + 200 + 150), edges, 3)
         assert shape.volume == pytest.approx(expected, rel=1e-9)
 
@@ -74,7 +76,9 @@ class TestMinkowski:
             "\tsphere($fn = 0, $fa = 12, $fs = 2, r = 3);\n"
             "}"
         )
-        edges = [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        edges = (
+            [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        )
         exact = self.steiner(3000, 1300, edges, 3)
         assert shape.volume >= exact - 1e-6
 
@@ -201,10 +205,18 @@ class TestHull:
         with the true rounded-box topology (6 planes, 12 cylinders, 8 spheres).
         """
         centers = [
-            (-10, -7.5, -5), (10, -7.5, -5), (-10, 7.5, -5), (10, 7.5, -5),
-            (-10, -7.5, 5), (10, -7.5, 5), (-10, 7.5, 5), (10, 7.5, 5),
+            (-10, -7.5, -5),
+            (10, -7.5, -5),
+            (-10, 7.5, -5),
+            (10, 7.5, -5),
+            (-10, -7.5, 5),
+            (10, -7.5, 5),
+            (-10, 7.5, 5),
+            (10, 7.5, 5),
         ]
-        source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=3)) for x, y, z in centers))
+        source = _hull_of(
+            *(_translated(x, y, z, _SPHERE.format(r=3)) for x, y, z in centers)
+        )
         shape = scad123d.import_csg(source)
         assert shape.volume == pytest.approx(8285.4424, rel=1e-6)
         kinds = Counter(f.geom_type for f in shape.faces())
@@ -212,7 +224,9 @@ class TestHull:
 
     def test_tetrahedron_of_spheres(self):
         centers = [(0, 0, 0), (10, 0, 0), (0, 10, 0), (0, 0, 10)]
-        source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers))
+        source = _hull_of(
+            *(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers)
+        )
         shape = scad123d.import_csg(source)
         assert shape.volume == pytest.approx(953.14152, rel=1e-6)
         kinds = Counter(f.geom_type for f in shape.faces())
@@ -244,7 +258,9 @@ class TestHull:
 
     def test_parallel_cylinders_matches_2d_offset_extruded(self):
         centers = [(-10, -7.5), (10, -7.5), (-10, 7.5), (10, 7.5)]
-        source = _hull_of(*(_translated(x, y, 0, _CYLINDER_CENTERED.format(r=3)) for x, y in centers))
+        source = _hull_of(
+            *(_translated(x, y, 0, _CYLINDER_CENTERED.format(r=3)) for x, y in centers)
+        )
         shape = scad123d.import_csg(source)
         area = 20 * 15 + 2 * (20 + 15) * 3 + math.pi * 9
         assert shape.volume == pytest.approx(area * 20, rel=1e-6)
@@ -460,7 +476,9 @@ class TestPairHull:
             "\t}\n}"
         )
         shape = scad123d.import_csg(source)
-        assert shape.volume == pytest.approx(4 * (math.pi * 25 + 2 * 5 * 1e-4), rel=1e-9)
+        assert shape.volume == pytest.approx(
+            4 * (math.pi * 25 + 2 * 5 * 1e-4), rel=1e-9
+        )
 
 
 class TestPolyhedralHull:
@@ -518,7 +536,9 @@ class TestPolyhedralHull:
         source = _hull_of(
             "cylinder($fn = 6, $fa = 12, $fs = 2, h = 2, r1 = 3, r2 = 3, center = true);",
             _translated(
-                14, 0, 0,
+                14,
+                0,
+                0,
                 "cylinder($fn = 6, $fa = 12, $fs = 2, h = 2, r1 = 3, r2 = 3, center = true);",
             ),
         )
@@ -860,9 +880,7 @@ class TestHullOfGroupedChildren:
             for x in (0, 20)
             for y in (0, 20)
         )
-        shape = scad123d.import_csg(
-            "hull() {\n\tgroup() {\n" + posts + "\n\t}\n}"
-        )
+        shape = scad123d.import_csg("hull() {\n\tgroup() {\n" + posts + "\n\t}\n}")
         expected = (400 + 4 * 2 * 20 + math.pi * 4) * 10
         assert shape.volume == pytest.approx(expected, rel=1e-9)
         kinds = {f.geom_type for f in shape.faces()}

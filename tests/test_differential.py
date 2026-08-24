@@ -103,8 +103,7 @@ def test_volume_agrees_with_openscad(name):
         f"(coarse err {coarse:.5f}, fine err {fine:.5f})"
     )
     assert fine / ours < 0.005, (
-        f"{name}: still {fine / ours:.2%} apart at $fn=128 "
-        f"(scad123d {ours:.4f})"
+        f"{name}: still {fine / ours:.2%} apart at $fn=128 (scad123d {ours:.4f})"
     )
 
 
@@ -163,7 +162,12 @@ def test_hull_falls_back_to_a_mesh_rather_than_failing():
         shape = scad123d.import_csg(source)
     # Loose sandwich: contains the largest sphere; inside the bounding box.
     assert shape.volume > (4 / 3) * math.pi * 125
-    assert shape.volume < shape.bounding_box().size.X * shape.bounding_box().size.Y * shape.bounding_box().size.Z
+    assert (
+        shape.volume
+        < shape.bounding_box().size.X
+        * shape.bounding_box().size.Y
+        * shape.bounding_box().size.Z
+    )
 
 
 def test_mesh_scope_hoist_meshes_everything():
@@ -316,7 +320,12 @@ def test_minkowski_polyhedron_kernel_matches_steiner_formula():
     a, b, c, r = 10.0, 8.0, 6.0, 2.0
     edges = [(a, math.pi / 2)] * 4 + [(b, math.pi / 2)] * 4 + [(c, math.pi / 2)] * 4
     area = 2 * (a * b + b * c + c * a)
-    exact = a * b * c + area * r + r * r / 2 * sum(l * t for l, t in edges) + (4 / 3) * math.pi * r**3
+    exact = (
+        a * b * c
+        + area * r
+        + r * r / 2 * sum(l * t for l, t in edges)
+        + (4 / 3) * math.pi * r**3
+    )
     assert ours == pytest.approx(exact, rel=1e-5)
 
 
@@ -362,12 +371,12 @@ def test_coplanar_noncollinear_sphere_hull_is_analytic():
     """
     r, side = 2.0, 20.0
     centers = [(-10, -10, 0), (10, -10, 0), (10, 10, 0), (-10, 10, 0)]
-    source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers))
+    source = _hull_of(
+        *(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers)
+    )
     shape = scad123d.import_csg(source)
     expected = (
-        2 * r * side * side
-        + math.pi * r * r / 2 * 4 * side
-        + 4 / 3 * math.pi * r**3
+        2 * r * side * side + math.pi * r * r / 2 * 4 * side + 4 / 3 * math.pi * r**3
     )
     assert shape.volume == pytest.approx(expected, rel=1e-6)
 
@@ -379,7 +388,9 @@ def test_differing_cylinder_spans_fall_back_to_mesh():
     source = _hull_of(
         _translated(-10, 0, 0, _CYLINDER_CENTERED.format(r=3)),
         _translated(
-            10, 0, 0,
+            10,
+            0,
+            0,
             "multmatrix([[1,0,0,0],[0,1,0,0],[0,0,1,-5],[0,0,0,1]]) "
             "{ cylinder($fn = 0, $fa = 12, $fs = 2, h = 10, r1 = 3, r2 = 3, center = false); }",
         ),

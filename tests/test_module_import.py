@@ -38,7 +38,9 @@ class TestImportStyleAutoDetection:
         # for -- wrong volume, no error. Auto-detection should pick "use"
         # here and avoid that.
         lib = tmp_path / "lib.scad"
-        lib.write_text("module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n")
+        lib.write_text(
+            "module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n"
+        )
 
         a_box = scad123d.import_module(lib, "a_box")
         box = a_box(size=5)
@@ -49,7 +51,9 @@ class TestImportStyleAutoDetection:
         # on the same file now *does* pull in the demo call, polluting the
         # result -- the opposite of the test above.
         lib = tmp_path / "lib.scad"
-        lib.write_text("module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n")
+        lib.write_text(
+            "module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n"
+        )
 
         a_box = scad123d.import_module(lib, "a_box", import_style="include")
         box = a_box(size=5)
@@ -57,7 +61,9 @@ class TestImportStyleAutoDetection:
 
     def test_scad_library_uses_the_same_auto_detected_style(self, tmp_path):
         lib = tmp_path / "lib.scad"
-        lib.write_text("module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n")
+        lib.write_text(
+            "module a_box(size) cube(size);\ntranslate([200, 0, 0]) a_box(100);\n"
+        )
 
         library = scad123d.import_module(lib)
         box = library.a_box(size=5)
