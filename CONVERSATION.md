@@ -857,3 +857,12 @@ result doesn't; saves culprit CSG next to the input. Empty-render error
 smoke test; openGrid now reports "agreement within 2% everywhere".
 Merged to main; ships with the next release (unpublished so far).
 Saved to Claude's memory as the go-to for silent-wrong suspicions.
+
+---
+
+## Session: 2026-08-24 (cont.) — repo-wide ruff pass
+
+Both repos now pass `ruff check` and `ruff format --check` on every
+file. solid123d PR #6 (format-only, 7 files); scad123d PR #17 (2
+auto-fixes -- unused import, useless return None -- plus 14 files
+reformatted). Suites green (104 / 242). Both merged; no release.
