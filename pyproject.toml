@@ -1,6 +1,6 @@
 [project]
 name = "scad123d"
-version = "0.3.1"
+version = "0.3.2"
 description = "Import OpenSCAD files as native build123d BRep geometry, via OpenSCAD's flattened CSG export"
 readme = "README.md"
 license = "MIT"
