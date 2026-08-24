@@ -747,3 +747,52 @@ resolves 0.3.2 automatically).
 **Session close:** stale `uvx` environment cache was serving the old
 scad123d; `uvx --refresh scad2step ...` re-resolved to 0.3.2 and worked.
 Done for the night.
+
+---
+
+## Session: 2026-08-24 — Phase B: arc profiles + any shared axis (solid123d PR #5)
+
+Prefaced by investigation/demo work: mapped every hull() pattern in
+gridfinity_extended_openscad (the quarter-torus lives in roundedDisk,
+modules/utility/module_utility.scad:530; roundedCylinder:500 hulls two
+of them; cup cavity = hull cornercopy roundedCylinder at
+module_gridfinity_cup.scad:1341), built ~/Desktop/hull_shapes_demo.scad
+visualizing the seven idioms, and discussed the theory: support
+functions + normal fans (hull of union = max of supports; Minkowski =
+sum; boundary of polytope (+) K = one face family per fan cell). User
+pushed on generality; phase B was restructured around the theory.
+
+**Implemented (feature/hull-arc-profiles, PR #5, CI green, 0.3.1
+unreleased):**
+- Profile = typed elements (points from vertices; circles from
+  sphere/torus faces w/ trimmed spans). Envelope = support-function
+  sweep: pairwise switch angles + trim-endpoint kinks as candidates,
+  argmax per interval. Honest trimmed support (outside spans a circle
+  yields -inf; endpoints stand in as points) means the envelope can
+  never use boundary the child lacks -- turned the "missing boundary"
+  decline class EMPTY (flat-top caps now succeed correctly).
+- Any shared axis via conjugation (rotate to +Z, solve, rotate back);
+  sphere/torus V-convention flips with axis sign (bug found via
+  -Z-landing rotation).
+- Arc construction = normal-fan face emitter: piece x edge -> prism
+  face (lines->planes, arcs->horizontal cylinders); piece x vertex
+  wedge -> revolve face (lines->cones, arcs->sphere/torus bands); caps;
+  BRepBuilderAPI_Sewing(1e-5) + ShapeFix_Solid. Line-only profiles keep
+  the loft. Tangency float noise handled: candidate clustering (1e-9),
+  connector threshold 1e-6, chain-piece merge.
+- Volume check: closed-form arc integrals (_arc_f_r/_arc_f_r2).
+
+**Results:** solid123d 104 tests (8 new: sphere-capped posts, 4 tori,
+single torus, tilted-axis conjugation, cavity idiom, truncated-sphere,
+mixed-axes decline; obsolete tilted/missing-boundary declines flipped
+to successes). Silverware: 10 -> 2 fallbacks (only the sideways
+pre-fused roundedCube channels remain), build 14s -> 9s, STEP 7.8 ->
+4.3 MB, 0 micro sliver edges pre-heal (analytic/mesh seams gone),
+volume -0.008% vs OpenSCAD render (tighter than phase A's +0.034%).
+scad123d suite: 234 pass + 1 obsolete-limitation failure
+(test_coplanar_noncollinear_sphere_hull_falls_back_to_mesh -- coplanar
+equal-sphere hulls now analytic; MUST flip to a success test in the
+scad123d floor-bump PR or scad123d CI breaks when 0.3.1 publishes).
+
+**Awaiting user go:** merge PR #5, publish solid123d 0.3.1, then
+scad123d: floor >=0.3.1 + fix that test + release 0.3.3.
