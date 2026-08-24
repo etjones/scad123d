@@ -603,3 +603,43 @@ radii, correct fallback).
 - Push solid123d fix/multiface-scaled-extrude, PR, merge, publish 0.2.2.
 - Then bump scad123d's solid123d floor to >=0.2.2 (PR #10 pins >=0.2.1)
   and release 0.3.1.
+
+---
+
+## Session: 2026-08-23 (cont.) — in-memory mesh-fallback memoization
+
+**User:** in-memory memoization is a win; persistent is "a footgun and a
+half" -- skip it. (Analytic cone-hull rung deferred; user suspects the
+pattern is Gridfinity-specific and is mulling whether it's worth it.)
+
+**Context recap:** all 120 mesh fallbacks in gridfinity_silverware.scad
+come from `pad_oversize` (module_gridfinity.scad:179) -- three stacked
+`hull() cornercopy(...)` calls per grid cell: 4 cones (r1≠r2), and
+stepped unequal-radius cylinder pairs. 36 cells stamp identical
+subtrees; only ~7 distinct.
+
+**Implemented (branch feature/mesh-memoization off main, 1f31160):**
+`mesh_subtree` memoizes on the emitted CSG source -- a complete key,
+since emit() bakes transforms into multmatrix rows and $fn/$fa/$fs into
+primitive calls. Module-level dict + `clear_cache()`. Every return
+(including the first) is a `copy.copy` (fresh wrapped TopoDS), so
+downstream in-place move()/locate()/recolor can't corrupt the cached
+original. Deliberately NOT persistent: that would need OpenSCAD version
++ content of path-referenced inputs (import(), surface(), text() fonts)
+in the key.
+
+**Measured on gridfinity_silverware.scad** (temp merge with PR #10's
+guards + solid123d 0.2.2 fixes, since this branch is off main): 120 ->
+8 OpenSCAD renders, build 383s -> 330s (~14%; OCCT booleans dominate,
+~0.4s/render saved). Also 15x less exposure to the flaky OpenSCAD
+startup segfault seen earlier.
+
+4 new tests (tests/test_mesh_cache.py): render-once for identical
+subtrees, independent placement of copies, distinct subtrees render
+separately, cache survives across import_csg calls, clear_cache forces
+re-render. Full suite 224+2 passes on the branch; ruff clean on changed
+files (3 pre-existing lint errors in untouched test files left alone).
+
+**Branch bookkeeping:** based on main, so it does NOT include PR #10's
+degenerate guards; CONVERSATION.md here carries both session entries
+(will merge cleanly whichever PR lands first).
