@@ -816,3 +816,30 @@ End-to-end from PyPI: `uvx --refresh scad2step gridfinity_silverware`
 roundedCube channel hulls, deduped by the warning system), STEP 4.3 MB.
 The new CLI output shows: converting line, single-line note, timed
 wrote line.
+
+---
+
+## Session: 2026-08-24 (cont.) — openGrid empty-subtree bugs; scad123d 0.3.4
+
+User reported QuackWorks openGrid/opengrid.scad erroring ("Current top
+level object is empty") where OpenSCAD is fine. Investigation found TWO
+bugs, one crashing, one silent-wrong:
+
+1. hull()/minkowski() of only-empty children (disabled features leave
+   empty groups) hit the mesh fallback; OpenSCAD errors rendering an
+   empty subtree standalone. Fixed: walker short-circuits empty children
+   to None; mesh_subtree treats the empty-render error as "encloses
+   nothing" (safety net).
+2. Silent 63% volume error found by differential subtree bisection
+   (recursive ours-vs-OpenSCAD volume compare, treating the empty error
+   as 0): _children drops empty results, correct for unions but wrong
+   for positional booleans. Empty intersection operand must annihilate
+   (we returned the other operand: 1600mm^3 phantom); empty FIRST
+   difference child must empty the result (we promoted the first
+   subtrahend to minuend). New _children_positional keeps empties as
+   None in position; both ops fixed, OpenSCAD semantics confirmed
+   differentially.
+
+openGrid: errors -> converts in 3s, volume delta 0.038%. 5 new tests
+(240 total). PR #15 merged, tagged v0.3.4, published. Verified via
+`uvx --refresh scad2step` from PyPI.
