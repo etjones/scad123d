@@ -56,6 +56,7 @@ def import_scad(
     facet_threshold: int = DEFAULT_FACET_THRESHOLD,
     mesh_scope: str = "minimal",
     timeout: float = 600,
+    heal: bool = True,
     **overrides: Any,
 ) -> Shape:
     """Import an OpenSCAD file as a build123d Shape.
@@ -70,6 +71,10 @@ def import_scad(
             ``"hoist"`` meshes the whole model if any such node is present,
             which is more robust but keeps no analytic geometry.
         timeout: seconds allowed for each OpenSCAD invocation.
+        heal: drop post-boolean micro sliver edges (see heal.py) before
+            returning. Costs milliseconds to check; only shapes that
+            actually carry slivers pay the repair. Disable to see raw
+            boolean output.
         **overrides: top-level variable overrides, as OpenSCAD's ``-D``.
 
     Raises:
@@ -86,6 +91,7 @@ def import_scad(
         facet_threshold=facet_threshold,
         mesh_scope=mesh_scope,
         timeout=timeout,
+        heal=heal,
     )
     # Name the result after its source file, so the top-level object shows
     # up in STEP viewers/slicers as e.g. "bracket" rather than OCCT's
@@ -102,6 +108,7 @@ def import_csg(
     facet_threshold: int = DEFAULT_FACET_THRESHOLD,
     mesh_scope: str = "minimal",
     timeout: float = 600,
+    heal: bool = True,
 ) -> Shape:
     """Build geometry from an already-exported CSG tree, source text, or path.
 
@@ -128,7 +135,7 @@ def import_csg(
     shape = build(node, options)
     if shape is None:
         raise UnsupportedNodeError("the CSG tree produced no geometry")
-    return heal_small_edges(shape)
+    return heal_small_edges(shape) if heal else shape
 
 
 def to_csg(path: str | Path, **overrides: Any) -> str:

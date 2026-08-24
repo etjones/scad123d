@@ -54,12 +54,20 @@ def _heal_one(shape: Shape) -> Shape:
 def heal_small_edges(shape: Shape) -> Shape:
     """Drop boolean sliver edges shorter than 1e-4; a no-op on clean shapes.
 
+    Cost model (measured on a 2.5k-face Gridfinity tray, 14s build): the
+    detection scan every import pays is tens of milliseconds -- edge count
+    is small even for models whose *tessellations* run to 100k triangles,
+    because BRep edges are analytic. The ShapeFix passes only run when the
+    scan finds a sub-1e-4 edge, and cost seconds (~5s on that tray, mostly
+    inside OCCT); that price is paid exactly by the shapes that would
+    otherwise fail in a slicer, once per import.
+
     Recurses into a Compound's children instead of healing it whole so an
     authored-color assembly keeps its structure (ShapeFix would rebuild the
     tree and orphan each child's color and label). If healing ever leaves a
-    shape invalid, the original is returned unchanged -- slivers render fine
-    everywhere except mesh diagnostics, so keeping them beats corrupting
-    geometry.
+    shape invalid or moves its volume, the original is returned unchanged --
+    slivers render fine everywhere except mesh diagnostics, so keeping them
+    beats corrupting geometry.
     """
     if not any(e.length < _SMALL_EDGE for e in shape.edges()):
         return shape
