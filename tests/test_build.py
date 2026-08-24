@@ -878,3 +878,79 @@ class TestHullOfGroupedChildren:
             "\t}\n}"
         )
         assert shape.volume == pytest.approx(3500, rel=1e-9)
+
+
+class TestEmptySubtrees:
+    """Subtrees that enclose nothing are legal OpenSCAD (disabled features
+    leave empty groups); they must vanish, not error."""
+
+    def test_hull_of_nothing_builds_nothing(self):
+        source = (
+            "union() {\n"
+            "  cube(size = [10, 10, 10], center = false);\n"
+            "  hull() { group() { group(); } group(); }\n"
+            "}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
+
+    def test_minkowski_of_nothing_builds_nothing(self):
+        source = (
+            "union() {\n"
+            "  cube(size = [10, 10, 10], center = false);\n"
+            "  minkowski() { group(); }\n"
+            "}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
+
+    @pytest.mark.needs_openscad
+    def test_mesh_fallback_of_empty_render_is_none(self):
+        """The safety net below the walker: if a fallback subtree renders
+        empty in OpenSCAD, that means 'encloses nothing', not 'failed'."""
+        from scad123d.mesh import clear_cache, mesh_subtree
+        from scad123d.parser import parse_csg
+
+        clear_cache()
+        node = parse_csg("hull() { group(); }")
+        assert mesh_subtree(node) is None
+
+    def test_intersection_with_empty_operand_is_empty(self):
+        """An empty intersection operand annihilates the result -- dropping
+        it would silently return the other operand (found in a real model:
+        a disabled feature left an empty group inside an intersection)."""
+        empty = (
+            "intersection() {\n"
+            "  cube(size = [1, 1, 1], center = false);\n"
+            "  multmatrix([[1,0,0,50],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) "
+            "{ cube(size = [1, 1, 1], center = false); }\n"
+            "}"
+        )
+        source = (
+            "union() {\n"
+            "  cube(size = [10, 10, 10], center = false);\n"
+            "  multmatrix([[1,0,0,20],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) {\n"
+            "    intersection() {\n"
+            "      cube(size = [5, 5, 5], center = false);\n"
+            f"      {empty}\n"
+            "    }\n"
+            "  }\n"
+            "}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
+
+    def test_difference_with_empty_minuend_is_empty(self):
+        """If the FIRST difference child is empty the result is empty;
+        dropping it would promote the first subtrahend to minuend."""
+        source = (
+            "union() {\n"
+            "  cube(size = [10, 10, 10], center = false);\n"
+            "  difference() {\n"
+            "    group();\n"
+            "    cube(size = [5, 5, 5], center = false);\n"
+            "  }\n"
+            "}"
+        )
+        shape = scad123d.import_csg(source)
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
