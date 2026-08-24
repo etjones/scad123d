@@ -843,3 +843,17 @@ bugs, one crashing, one silent-wrong:
 openGrid: errors -> converts in 3s, volume delta 0.038%. 5 new tests
 (240 total). PR #15 merged, tagged v0.3.4, published. Verified via
 `uvx --refresh scad2step` from PyPI.
+
+---
+
+## Session: 2026-08-24 (cont.) — scad123d-diff productized (PR #16)
+
+The differential bisector from the openGrid debugging is now a real
+tool: `scad123d-diff file.scad` (src/scad123d/diff.py, console script).
+Compares our volume vs OpenSCAD's render per subtree, descends into
+divergence, bottoms out on operations whose children agree but whose
+result doesn't; saves culprit CSG next to the input. Empty-render error
+= volume 0. Default 2% tolerance. Mocked bisection-logic test + real
+smoke test; openGrid now reports "agreement within 2% everywhere".
+Merged to main; ships with the next release (unpublished so far).
+Saved to Claude's memory as the go-to for silent-wrong suspicions.
