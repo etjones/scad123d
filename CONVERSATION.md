@@ -704,3 +704,42 @@ End-to-end proof from the published stack:
 `uvx scad2step@0.1.3 gridfinity_silverware.scad` -> 51s wall including
 download, one residual mesh warning (torus-lip hulls), STEP output
 7.8MB -- down from 38MB when the base pads were meshed.
+
+---
+
+## Session: 2026-08-23 (cont.) — CLI feedback, sliver healing; scad123d 0.3.2
+
+**CLI polish (PR #12).** New MeshFallbackWarning category; scad2step
+prints fallback notes as one clean line (no file:line / `return
+_fallback(` source echo), shows `converting X -> Y` up front and elapsed
+seconds on the `wrote` line. Stale hull-fallback reason text updated.
+
+**Sliver healing (PR #13, its own branch after a process stumble: PR #12
+got merged mid-push, stranding the heal commit on a deleted branch --
+recovered via reflog).** PrusaSlicer reported open edges on a watertight
+BRep: 80 micro sliver edges (6.3e-5 mm, one pair per facet chord, all at
+z=39.39) born where the analytic cone-hull fuses against a meshed
+neighbor sharing a plane -- exact arc crosses inscribed polygon once per
+chord. Invisible pre-analytic-rungs (both sides were identically
+tessellated meshes). Fix: heal_small_edges() once per import_csg --
+small-FACE fix then small-edge drop (edge fix alone leaves one
+micro-edge per sliver face), gated by BRepCheck + volume preservation
+(ShapeFix over-application once returned volume -5e98; the gates are
+load-bearing). Per-child healing preserves colored assemblies. `heal=`
+kwarg opts out. Cost: <=55ms detection always; ~5s repair only on
+defective shapes. Result: 80 -> 0 micro-edges, watertight tessellation,
+volume delta 6e-6 rel. Deterministic no-OpenSCAD regression test
+(cylinder + coplanar 60-gon poking 2e-6 out).
+
+**Architecture decisions (discussed, deferred):** heal mechanism
+arguably belongs in solid123d (canonical geometry home) with scad123d
+keeping only the auto-apply policy -- deferred, shipped in scad123d
+as-is. Tessellate-and-hull fallback for solid123d's hull() totality
+(OpenSCAD-parity via OCCT meshing + qhull) judged feature creep for
+now. All hull *rungs* already live in solid123d, so SolidPython users
+have the full analytic coverage; they differ only in failure mode
+(raise vs scad123d's mesh fallback).
+
+**Released:** scad123d 0.3.2 (tagged v0.3.2): CLI feedback + healing.
+solid123d unchanged (0.3.0); scad2step unchanged (0.1.3, floor >=0.3.1
+resolves 0.3.2 automatically).
