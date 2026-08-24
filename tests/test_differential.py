@@ -353,17 +353,23 @@ def test_mixed_sphere_and_cylinder_hull_falls_back_to_mesh():
     assert shape.is_valid
 
 
-def test_coplanar_noncollinear_sphere_hull_falls_back_to_mesh():
-    """A real limitation, not a bug: qhull's 3D ConvexHull raises on
-    degenerate (flat) input, so a hull of spheres with coplanar centers takes
-    the mesh path rather than crashing. See ROADMAP.md.
+def test_coplanar_noncollinear_sphere_hull_is_analytic():
+    """Formerly a documented limitation (qhull's 3D ConvexHull raises on
+    flat point sets, so this meshed): solid123d 0.3.1's identical-
+    translates rung handles coplanar centers analytically -- a ball is a
+    revolution solid, so this is conv(centers square) (+) ball, a rounded
+    slab: V = 2r*A0 + (pi r^2/2)*P0 + 4/3 pi r^3.
     """
+    r, side = 2.0, 20.0
     centers = [(-10, -10, 0), (10, -10, 0), (10, 10, 0), (-10, 10, 0)]
     source = _hull_of(*(_translated(x, y, z, _SPHERE.format(r=2)) for x, y, z in centers))
-    with pytest.warns(UserWarning, match="no BRep equivalent"):
-        shape = scad123d.import_csg(source)
-    assert shape.is_valid
-    assert shape.volume > 0
+    shape = scad123d.import_csg(source)
+    expected = (
+        2 * r * side * side
+        + math.pi * r * r / 2 * 4 * side
+        + 4 / 3 * math.pi * r**3
+    )
+    assert shape.volume == pytest.approx(expected, rel=1e-6)
 
 
 def test_differing_cylinder_spans_fall_back_to_mesh():
