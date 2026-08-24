@@ -1,6 +1,5 @@
 """scad123d-diff: differential bisection localizes the faulty operation."""
 
-
 import pytest
 
 from scad123d import diff as D
