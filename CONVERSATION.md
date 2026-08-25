@@ -907,3 +907,14 @@ two-tone example; STL discards color) and a customizer bullet
 main directly (doc-only). Color-semantics question answered in chat:
 feasible; recommended the body-partition approach over face-color
 history tracking, not yet implemented.
+
+**User**: scad2step crashed with "Color out" (OCP Standard_Failure) on
+~/Desktop/cube_sphere_colored.scad.
+
+**Assistant**: Root cause: the file says `color(red)` -- bare unquoted
+`red` is an undefined OpenSCAD variable, and OpenSCAD encodes
+color(undef) in CSG as the sentinel [-1, -1, -1, -1] ("no color
+change"), which we fed into build123d Color -> OCCT range error. Fix in
+build.py: any negative component means the sentinel -- children pass
+through uncolored, matching OpenSCAD, with a warning suggesting
+color("red"). Regression test added; 251 pass.

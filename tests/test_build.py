@@ -646,6 +646,21 @@ class TestColor:
         # Geometrically unaffected -- same total volume as a real fuse would give.
         assert shape.volume == pytest.approx(1000 + (4 / 3) * math.pi * 125, rel=1e-6)
 
+    def test_undef_color_sentinel_applies_no_color(self):
+        # OpenSCAD encodes color(undef) -- e.g. color(red), an unquoted
+        # undefined variable -- as [-1, -1, -1, -1]: "no color change".
+        # Must not crash Color(); children pass through uncolored.
+        with pytest.warns(UserWarning, match="undefined"):
+            shape = scad123d.import_csg(
+                "union() {\n"
+                "\tcolor([-1, -1, -1, -1]) {\n"
+                "\t\tsphere($fn = 0, $fa = 12, $fs = 2, r = 5);\n\t}\n"
+                "\tcube(size = [8, 8, 8], center = true);\n}"
+            )
+        assert shape._color is None
+        assert not shape.children
+        assert shape.volume > 500
+
     def test_overlapping_colored_children_fall_back_to_a_real_fuse(self):
         # Same shapes as the disjoint case, but overlapping -- a real fuse
         # must still happen (unaffected by this feature), and the exact
