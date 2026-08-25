@@ -131,6 +131,20 @@ approximation of one.
 
 <img src="https://raw.githubusercontent.com/etjones/scad123d/main/docs/images/bosl2_tube_filleted.png" width="500" alt="A BOSL2 tube, imported via scad123d and filleted, with a smooth rounded rim and its real edges highlighted">
 
+**`color()` survives into STEP.** STL has no notion of color, so OpenSCAD
+exports throw it away. STEP files support colored, named bodies, and
+scad123d keeps them: each `color()`ed part comes through as its own body
+with its color and a recognizable label, so multi-material models open in
+slicers and CAD viewers ready to assign.
+
+```python
+# two_tone.scad:
+# color("SteelBlue") cube([20, 20, 3]);
+# color("Orange") translate([5, 5, 3]) cylinder(h=8, r=4);
+part = scad123d.import_scad("two_tone.scad")
+export_step(part, "two_tone.step")  # two bodies: "steelblue" and "orange"
+```
+
 **No lost precision.** Nothing gets tessellated until you ask for a mesh
 (e.g. exporting an STL for printing). Curves stay curves through as many
 operations as you throw at them.
@@ -291,6 +305,11 @@ know exactly where a particular model will land.
 - **Just want a STEP file, no Python?** `uvx scad2step yourfile.scad -o
   out.step` does exactly that from the command line — see
   [scad2step](https://github.com/etjones/scad2step).
+- **Customizer parameter sets apply automatically.** If a saved OpenSCAD
+  customizer file sits next to your input (`model.scad` + `model.json`),
+  `scad2step model.scad` applies it — `-P name` picks a set, `-D name=value`
+  overrides single variables, `--no-customizer` ignores the file. Same
+  selection rules as OpenSCAD's own `-p`/`-P` flags.
 
 ## Development
 

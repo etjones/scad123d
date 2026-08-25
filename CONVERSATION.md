@@ -895,3 +895,15 @@ v0.4.0 + GitHub release with artifacts. scad123d: PR #18 merged (CI
 green incl. windows), tagged v0.4.0 (no GH release, matching repo
 convention), locked against PyPI solid123d 0.4.0 — editable install
 replaced; 250 tests pass against the published dependency.
+
+**User**: Add succinct README mentions of color() and customizer support
+(no publish). Also opened a design discussion: could union() of a
+colored and an uncolored object keep color on the non-overlapping part
+of the colored one, unlike OpenSCAD?
+
+**Assistant**: README: added a "color() survives into STEP" block (with
+two-tone example; STL discards color) and a customizer bullet
+(-P/-D/--no-customizer) under "A few other things to know". Pushed to
+main directly (doc-only). Color-semantics question answered in chat:
+feasible; recommended the body-partition approach over face-color
+history tracking, not yet implemented.
