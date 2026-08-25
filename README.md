@@ -135,7 +135,10 @@ approximation of one.
 exports throw it away. STEP files support colored, named bodies, and
 scad123d keeps them: each `color()`ed part comes through as its own body
 with its color and a recognizable label, so multi-material models open in
-slicers and CAD viewers ready to assign.
+slicers and CAD viewers ready to assign. This holds even when parts
+overlap in a `union()` — later children claim the contested volume, and
+each `color()` region keeps its color on everything not claimed by a
+later sibling.
 
 ```python
 # two_tone.scad:

@@ -918,3 +918,13 @@ change"), which we fed into build123d Color -> OCCT range error. Fix in
 build.py: any negative component means the sentinel -- children pass
 through uncolored, matching OpenSCAD, with a warning suggesting
 color("red"). Regression test added; 251 pass.
+
+**User**: Run the 0.5.0 release train and update scad123d's tests.
+
+**Assistant**: solid123d 0.5.0 published (seam guard + color-partition
+union; tagged, GH release with artifacts). scad123d 0.5.0: floor
+solid123d>=0.5.0; rewrote the three overlap tests to partition
+semantics (partition into labeled bodies, contested volume to the later
+child) and updated the TestColor docstring + README color block.
+251 tests pass against the published wheel (editable install replaced
+by PyPI 0.5.0 via uv sync — the local-editable workaround is retired).
