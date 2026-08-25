@@ -140,3 +140,109 @@ def test_mesh_fallback_warning_prints_as_one_clean_line(tmp_path, capsys):
     # no Python-warning furniture: no file:line echo, no source-line echo
     assert "UserWarning" not in err
     assert "return _fallback" not in err
+
+
+def _param_json(tmp_path, sets):
+    import json
+
+    path = tmp_path / "box.json"
+    path.write_text(json.dumps({"fileFormatVersion": "1", "parameterSets": sets}))
+    return path
+
+
+def test_customizer_flags_parse():
+    parser = _build_parser()
+    args = parser.parse_args(["design.scad", "-P", "big", "--no-customizer"])
+    assert args.parameter_set == "big"
+    assert args.no_customizer is True
+    assert args.parameter_file is None
+
+
+def test_named_parameter_file_must_exist(tmp_path, capsys):
+    scad = tmp_path / "box.scad"
+    scad.write_text("cube(1);")
+    exit_code = main([str(scad), "-p", str(tmp_path / "absent.json")])
+    assert exit_code == 1
+    assert "no such parameter file" in capsys.readouterr().err
+
+
+def test_parameter_set_without_file_is_an_error(tmp_path, capsys):
+    scad = tmp_path / "box.scad"
+    scad.write_text("cube(1);")
+    exit_code = main([str(scad), "-P", "big"])
+    assert exit_code == 1
+    assert "no parameter file found" in capsys.readouterr().err
+
+
+def test_two_sets_without_default_need_a_choice(tmp_path, capsys):
+    scad = tmp_path / "box.scad"
+    scad.write_text("width = 10; cube(width);")
+    _param_json(tmp_path, {"a": {"width": "20"}, "b": {"width": "30"}})
+    exit_code = main([str(scad)])
+    assert exit_code == 1
+    assert "-P NAME" in capsys.readouterr().err
+
+
+@pytest.mark.needs_openscad
+def test_sibling_json_applies_automatically(tmp_path, capsys):
+    from build123d import import_step
+
+    scad = tmp_path / "box.scad"
+    scad.write_text("width = 10;\ncube([width, 5, 5]);")
+    _param_json(tmp_path, {"wide": {"width": "40"}})  # only set -> chosen
+
+    exit_code = main([str(scad), "-o", str(tmp_path / "box.step")])
+
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    assert "applying customizer parameter set 'wide'" in err
+    assert "--no-customizer" in err
+    part = import_step(str(tmp_path / "box.step"))
+    assert part.bounding_box().size.X == pytest.approx(40)
+
+
+@pytest.mark.needs_openscad
+def test_no_customizer_ignores_sibling_json(tmp_path, capsys):
+    from build123d import import_step
+
+    scad = tmp_path / "box.scad"
+    scad.write_text("width = 10;\ncube([width, 5, 5]);")
+    _param_json(tmp_path, {"wide": {"width": "40"}})
+
+    exit_code = main([str(scad), "--no-customizer", "-o", str(tmp_path / "box.step")])
+
+    assert exit_code == 0
+    assert "applying customizer" not in capsys.readouterr().err
+    part = import_step(str(tmp_path / "box.step"))
+    assert part.bounding_box().size.X == pytest.approx(10)
+
+
+@pytest.mark.needs_openscad
+def test_dash_d_beats_the_parameter_file(tmp_path):
+    from build123d import import_step
+
+    scad = tmp_path / "box.scad"
+    scad.write_text("width = 10;\ncube([width, 5, 5]);")
+    _param_json(tmp_path, {"wide": {"width": "40"}})
+
+    exit_code = main([str(scad), "-D", "width=25", "-o", str(tmp_path / "box.step")])
+
+    assert exit_code == 0
+    part = import_step(str(tmp_path / "box.step"))
+    assert part.bounding_box().size.X == pytest.approx(25)
+
+
+@pytest.mark.needs_openscad
+def test_dash_p_selects_a_set(tmp_path, capsys):
+    from build123d import import_step
+
+    scad = tmp_path / "box.scad"
+    scad.write_text("width = 10;\ncube([width, 5, 5]);")
+    _param_json(tmp_path, {"a": {"width": "20"}, "default": {"width": "30"}})
+
+    exit_code = main([str(scad), "-P", "a", "-o", str(tmp_path / "box.step")])
+
+    assert exit_code == 0
+    assert "parameter set 'a'" in capsys.readouterr().err
+    part = import_step(str(tmp_path / "box.step"))
+    assert part.bounding_box().size.X == pytest.approx(20)
