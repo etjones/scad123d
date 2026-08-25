@@ -866,3 +866,25 @@ Both repos now pass `ruff check` and `ruff format --check` on every
 file. solid123d PR #6 (format-only, 7 files); scad123d PR #17 (2
 auto-fixes -- unused import, useless return None -- plus 14 files
 reformatted). Suites green (104 / 242). Both merged; no release.
+
+## 2026-08-25
+
+**User**: scad2step didn't apply the customizer parameter-set JSON
+sitting next to an input .scad (battery organizer from Downloads).
+
+**Assistant**: scad2step had no customizer support. Now: a sibling
+<input>.json applies automatically (announced on stderr), selection is
+-P NAME > set named "default" > only set > error naming candidates;
+-p/--parameter-file points elsewhere, --no-customizer opts out. Values
+flow to OpenSCAD as -D literals; explicit -D flags beat the file.
+Selection/loading shared with solid123d via its new
+customizer.resolve_param_set (unreleased — bump the solid123d floor
+from >=0.3.1 when it ships). 8 new tests; 250 pass. On branch
+feature/customizer-param-sets, uncommitted.
+
+**User**: Keep scad2step's customizer behavior as-is; release. Restore
+the dependency on PyPI solid123d (was a local editable install).
+
+**Assistant**: Bumped to 0.4.0, floor solid123d>=0.4.0 (provides
+resolve_param_set). Lock/sync deferred until solid123d 0.4.0 is on
+PyPI (published manually by user).

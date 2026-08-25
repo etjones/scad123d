@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from build123d import export_step
+from solid123d.customizer import resolve_param_set
 
 from . import import_scad
 from .errors import MeshFallbackWarning, OpenSCADNotFoundError, Scad123dError
@@ -71,6 +72,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="override a top-level variable, same as OpenSCAD's -D (repeatable)",
     )
     parser.add_argument(
+        "-P",
+        "--parameter-set",
+        default=None,
+        help="customizer parameter set to apply, same as OpenSCAD's -P",
+    )
+    parser.add_argument(
+        "-p",
+        "--parameter-file",
+        type=Path,
+        default=None,
+        help="customizer parameter file (default: input file with a .json extension)",
+    )
+    parser.add_argument(
+        "--no-customizer",
+        action="store_true",
+        help="ignore any customizer parameter file next to the input",
+    )
+    parser.add_argument(
         "--facet-threshold",
         type=int,
         default=DEFAULT_FACET_THRESHOLD,
@@ -91,6 +110,41 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _customizer_params(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Load the customizer parameter set to apply, honoring the CLI flags.
+
+    Returns {} when there is nothing to apply, or None for a reportable
+    error (already printed). A parameter file the user named must exist;
+    the default sibling .json is optional.
+    """
+    if args.no_customizer:
+        return {}
+    param_file = args.parameter_file or args.input.with_suffix(".json")
+    if not param_file.is_file():
+        if args.parameter_file is not None:
+            print(f"scad2step: no such parameter file: {param_file}", file=sys.stderr)
+            return None
+        if args.parameter_set is not None:
+            print(
+                f"scad2step: -P {args.parameter_set} given but no parameter "
+                f"file found at {param_file}",
+                file=sys.stderr,
+            )
+            return None
+        return {}
+    try:
+        chosen, params = resolve_param_set(param_file, args.parameter_set)
+    except (KeyError, ValueError) as exc:
+        print(f"scad2step: {exc.args[0]}", file=sys.stderr)
+        return None
+    print(
+        f"scad2step: applying customizer parameter set {chosen!r} from "
+        f"{param_file} (use --no-customizer to ignore it)",
+        file=sys.stderr,
+    )
+    return params
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -101,6 +155,12 @@ def main(argv: list[str] | None = None) -> int:
     except argparse.ArgumentTypeError as exc:
         parser.error(str(exc))
         return 2  # pragma: no cover -- parser.error() itself exits
+
+    params = _customizer_params(args)
+    if params is None:
+        return 1
+    # -D beats the parameter file, matching OpenSCAD's own precedence
+    overrides = params | overrides
 
     print(f"scad2step: converting {args.input} -> {output}", file=sys.stderr)
     start = time.perf_counter()
