@@ -888,3 +888,10 @@ the dependency on PyPI solid123d (was a local editable install).
 **Assistant**: Bumped to 0.4.0, floor solid123d>=0.4.0 (provides
 resolve_param_set). Lock/sync deferred until solid123d 0.4.0 is on
 PyPI (published manually by user).
+
+**Assistant** (release): solid123d 0.4.0 and scad123d 0.4.0 published to
+PyPI via `just publish` (op/Touch ID). solid123d: PR #7 merged, tagged
+v0.4.0 + GitHub release with artifacts. scad123d: PR #18 merged (CI
+green incl. windows), tagged v0.4.0 (no GH release, matching repo
+convention), locked against PyPI solid123d 0.4.0 — editable install
+replaced; 250 tests pass against the published dependency.
