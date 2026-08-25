@@ -226,6 +226,18 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
     if name == "color":
         shape = _union(_children(node, options))
         rgba = a.get("_0") or a.get("c")
+        # OpenSCAD encodes color(undef) -- e.g. color(red), a bare
+        # unquoted name that is an undefined variable -- as the sentinel
+        # [-1, -1, -1, -1], meaning "no color change". Match OpenSCAD:
+        # pass the children through uncolored.
+        if rgba and any(float(v) < 0 for v in rgba):
+            warnings.warn(
+                "scad123d: color() with an undefined value (did you mean "
+                'a quoted name, e.g. color("red")?) applies no color, '
+                "matching OpenSCAD",
+                stacklevel=2,
+            )
+            rgba = None
         if shape is not None and rgba:
             # s1.color() also labels the shape (CSS name or hex) when it
             # has no label yet -- no separate labeling step needed here.
