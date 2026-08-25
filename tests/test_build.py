@@ -624,9 +624,10 @@ class TestColor:
       each child keeping its own color. Colors are evidence the author
       means distinct parts, so touching parts deliberately stay separate
       bodies rather than getting OpenSCAD's merged-solid union.
-    - Overlapping: a real fuse. A bare fuse of colored shapes carries no
-      color at all (confirmed directly), so scad123d applies the first
-      child's color rather than leaving it uncolored.
+    - Overlapping (solid123d >= 0.5.0): partitioned into touching bodies.
+      Later children claim contested volume; each earlier color() region
+      keeps its color on whatever nothing later covers. Total volume
+      matches the plain fuse exactly.
     """
 
     _RED = (1.0, 0.0, 0.0, 1.0)
@@ -661,16 +662,11 @@ class TestColor:
         assert not shape.children
         assert shape.volume > 500
 
-    def test_overlapping_colored_children_fall_back_to_a_real_fuse(self):
-        # Same shapes as the disjoint case, but overlapping -- a real fuse
-        # must still happen (unaffected by this feature), and the exact
-        # pre-existing overlap-corrected volume is preserved. Which color
-        # "wins" the merged region is genuinely undefined, but a real fuse
-        # doesn't even keep the first child's color on its own -- confirmed
-        # directly -- so this checks that scad123d applies one anyway
-        # (first child with a color) rather than leaving it uncolored,
-        # which is what a real, reported .scad file (cube+cylinder both
-        # near the origin, genuinely overlapping) hit in practice.
+    def test_overlapping_colored_children_partition_into_bodies(self):
+        # Same shapes as the disjoint case, but overlapping. solid123d
+        # 0.5.0 partitions: the later (blue) child survives whole, the red
+        # child keeps its color on the volume blue doesn't claim, and the
+        # total is exactly the fuse's overlap-corrected volume.
         shape = scad123d.import_csg(
             "union() {\n"
             "\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
@@ -678,14 +674,16 @@ class TestColor:
             "\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 5], [0, 0, 1, 5], [0, 0, 0, 1]]) {\n"
             "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
         )
-        assert len(shape.solids()) == 1
+        red, blue = shape.children
         assert shape.volume == pytest.approx(1000 + 1000 - 125, rel=1e-9)
-        assert tuple(shape.color) == pytest.approx(self._RED)
+        assert red.volume == pytest.approx(1000 - 125, rel=1e-9)
+        assert blue.volume == pytest.approx(1000, rel=1e-9)
+        assert tuple(red.color) == pytest.approx(self._RED)
+        assert tuple(blue.color) == pytest.approx(self._BLUE)
 
-    def test_overlap_fallback_color_is_not_hardcoded_to_the_first_child(self):
-        # Same overlap shape, but only the *second* child has a color --
-        # proves the fallback searches for the first child that has one,
-        # rather than always reading shapes[0].
+    def test_overlap_contested_volume_goes_to_the_later_child(self):
+        # Only the *second* child has a color: the uncolored base is
+        # clipped by the later blue child, which survives whole.
         shape = scad123d.import_csg(
             "union() {\n"
             "\tcube(size = [10, 10, 10], center = false);\n"
@@ -693,8 +691,11 @@ class TestColor:
             "\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 5], [0, 0, 1, 5], [0, 0, 0, 1]]) {\n"
             "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
         )
-        assert len(shape.solids()) == 1
-        assert tuple(shape.color) == pytest.approx(self._BLUE)
+        base, blue = shape.children
+        assert base._color is None
+        assert base.volume == pytest.approx(1000 - 125, rel=1e-9)
+        assert tuple(blue.color) == pytest.approx(self._BLUE)
+        assert blue.volume == pytest.approx(1000, rel=1e-9)
 
     def test_touching_colored_children_stay_separate_bodies(self):
         # Zero shared volume, real shared surface: a part designed to sit
@@ -788,7 +789,7 @@ class TestColor:
         )
         assert shape.label == "#334c66"
 
-    def test_overlap_fused_result_is_labeled_with_its_color(self):
+    def test_overlap_partitioned_bodies_are_labeled_with_their_colors(self):
         shape = scad123d.import_csg(
             "union() {\n"
             "\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
@@ -796,7 +797,7 @@ class TestColor:
             "\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 5], [0, 0, 1, 5], [0, 0, 0, 1]]) {\n"
             "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
         )
-        assert shape.label == "red"
+        assert [child.label for child in shape.children] == ["red", "blue"]
 
     @pytest.mark.needs_openscad
     def test_colors_survive_into_a_real_step_file(self, tmp_path):
