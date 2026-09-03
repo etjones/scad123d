@@ -879,6 +879,48 @@ class TestDegeneratePrimitives:
         )
         assert shape.volume == pytest.approx(400, rel=1e-9)
 
+    def test_empty_polygon_contributes_nothing(self):
+        # OpenSCAD's flattened CSG output can legitimately contain
+        # polygon(points = []) -- e.g. BOSL2 modules that render nothing
+        # for a given branch. It must be dropped like any other degenerate
+        # leaf, not passed through to build123d's Wire.make_polygon, which
+        # indexes vectors[0] on an empty list and raises IndexError.
+        shape = scad123d.import_csg(
+            "linear_extrude(height = 4, center = false, convexity = 1) {\n"
+            "\tunion() {\n"
+            "\t\tsquare(size = [10, 10], center = false);\n"
+            "\t\tpolygon(points = [], paths = undef, convexity = 1);\n"
+            "\t}\n}"
+        )
+        assert shape.volume == pytest.approx(400, rel=1e-9)
+
+    def test_empty_polyhedron_contributes_nothing(self):
+        # Same family as the empty-polygon case above: OpenSCAD's flattened
+        # output can contain polyhedron(points = [], faces = []) for a
+        # branch that renders nothing. solid123d's polyhedron() raises
+        # ValueError when there's no face to build, so the empty case must
+        # be dropped before it gets there.
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tpolyhedron(points = [], faces = [], convexity = 1);\n"
+            "}"
+        )
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
+
+    def test_zero_height_linear_extrude_contributes_nothing(self):
+        # OpenSCAD renders linear_extrude(height=0) as empty geometry;
+        # build123d's sweep constructor raises Standard_Failure on a
+        # zero-height prism, so this must be dropped before it gets there.
+        shape = scad123d.import_csg(
+            "union() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tlinear_extrude(height = 0, $fn = 0, $fa = 12, $fs = 2) {\n"
+            "\t\tsquare(size = [5, 5], center = false);\n"
+            "\t}\n}"
+        )
+        assert shape.volume == pytest.approx(1000, rel=1e-9)
+
 
 class TestHullOfGroupedChildren:
     """OpenSCAD wraps a module-call body in group(), so `hull()

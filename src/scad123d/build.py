@@ -161,7 +161,10 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         return s1.cylinder(h=h, r1=max(r1, 0), r2=max(r2, 0), center=center)
 
     if name == "polyhedron":
-        return polyhedron(a.get("points", []), a.get("faces", []))
+        points, faces = a.get("points", []), a.get("faces", [])
+        if not points or not faces:
+            return None
+        return polyhedron(points, faces)
 
     # --- leaves: 2D -----------------------------------------------------
     if name == "square":
@@ -179,7 +182,10 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         return s1.circle(r=radius)
 
     if name == "polygon":
-        return s1.polygon(a.get("points", []), paths=a.get("paths"))
+        points = a.get("points", [])
+        if len(points) < 3:
+            return None
+        return s1.polygon(points, paths=a.get("paths"))
 
     if name == "text":
         return s1.text(
@@ -271,6 +277,9 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
 
     # --- 2D -> 3D -------------------------------------------------------
     if name == "linear_extrude":
+        height = float(a.get("height", 100))
+        if height == 0:
+            return None
         if float(a.get("twist", 0) or 0):
             return _fallback(node, options, "linear_extrude(twist=...)")
         shape = _union(_children(node, options))
@@ -278,7 +287,7 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
             return None
         scale = a.get("scale", 1)
         return s1.linear_extrude(
-            height=float(a.get("height", 100)),
+            height=height,
             center=bool(a.get("center", False)),
             scale=tuple(scale) if isinstance(scale, list) else float(scale),
         )(shape)
