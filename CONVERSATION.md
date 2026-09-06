@@ -1107,3 +1107,21 @@ mismatch, ChessBoard "0 vs 1.69M", was a verify artifact: build123d's
 Compound.volume sums only direct Solid children and the color-partitioned
 union nests Compounds -- the STEP had all 384 solids. --verify now sums
 leaves (measure()); half the >20% mismatches used color().
+
+**User**: Explain the union behavior -- is it the quadratic pairwise
+union? I thought that was fixed. Then fix the plausibility bounds to sum
+solids; then do the N-ary union change.
+
+**Assistant**: It was never fixed -- diagnosed, then two correctness fixes
+landed on that path and the loop stayed. Measured with overlapping
+cylinders: pairwise 0.40/1.53/5.21/19.5 s for N=25/50/100/200, N-ary
+0.16/0.28/0.58/1.13 s. Bounds fix (solid123d PR #12, merged): leaf-solid
+sums (signed) for bounds and the clean guard. N-ary (solid123d PR #13):
+group() -> one fuse, difference() -> one cut; intersection stays pairwise.
+That exposed a scad123d bug: apply_matrix made reflected solids by
+Reversed() on the solid (REVERSED flag, faces inward); OCCT's N-ary fuse
+silently drops such a solid where it overlaps another (cube: 1600 vs
+2200; the servo horn lost its mirrored halves: 173.9 vs 206.8). Fixed by
+reversing faces and rebuilding FORWARD solids shell by shell. scad123d's
+difference now also cuts all subtrahends in one op. Windows fixes for
+the process-group kill test on PR #22 (merged).

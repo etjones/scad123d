@@ -13,8 +13,10 @@ from build123d import (
     Solid,
 )
 from build123d import scale as _bd_scale
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid
 from OCP.gp import gp_Trsf
 from OCP.TopAbs import TopAbs_ShapeEnum
+from OCP.TopoDS import TopoDS
 
 # OpenSCAD writes CSG matrix entries at 6 significant figures, so a rotation
 # arrives only orthonormal to ~3e-7 (cos 45 deg is emitted as 0.707107). The
@@ -181,5 +183,40 @@ def apply_matrix(shape: Shape, m: Sequence[Sequence[float]]) -> Shape:
     # A reflection (negative determinant, e.g. OpenSCAD mirror()) inverts face
     # orientation, leaving a solid that encloses negative volume.
     if _determinant(rows) < 0:
-        result = _rewrap(result.wrapped.Reversed())
+        result = _reoriented(result)
+    return result
+
+
+def _reoriented(shape: Shape) -> Shape:
+    """Turn a reflected (inside-out) shape right side out.
+
+    Not ``Reversed()`` on the solid: that yields a REVERSED-flagged solid
+    whose faces still point inward. Pairwise booleans tolerate it, but
+    OCCT's multi-argument fuse silently drops such a solid wherever it
+    overlaps another (a mirrored cube overlapping two others fused to 1600
+    instead of 2200; a servo horn's 26 mirrored tooth pairs came out as
+    the 26 unmirrored halves). Reversing every *face* and rebuilding a
+    FORWARD solid, shell by shell so cavities survive, is what OCCT's own
+    BRepBuilderAPI_Transform does for a negative transform.
+    """
+    solids = shape.solids()
+    if not solids:  # 2D: a reversed face is a fine face
+        return _rewrap(shape.wrapped.Reversed())
+    rebuilt = [_right_side_out(s) for s in solids]
+    return rebuilt[0] if len(rebuilt) == 1 else Compound(rebuilt)
+
+
+def _right_side_out(solid: Solid) -> Solid:
+    shells = [
+        Shell([Face(TopoDS.Face_s(f.wrapped.Reversed())) for f in sh.faces()])
+        for sh in solid.shells()
+    ]
+    outer = max(shells, key=lambda s: math.prod(s.bounding_box().size))
+    maker = BRepBuilderAPI_MakeSolid(outer.wrapped)
+    for inner in shells:
+        if inner is not outer:
+            maker.Add(inner.wrapped)
+    result = Solid(maker.Solid())
+    if result.volume < 0:  # should not happen; keep the old behavior if it does
+        return Solid(solid.wrapped.Reversed())
     return result

@@ -12,7 +12,7 @@ mesh fallback.
 import warnings
 from dataclasses import dataclass, field
 from functools import reduce
-from operator import and_, sub
+from operator import and_
 
 import solid123d as s1
 from build123d import Shape
@@ -213,7 +213,9 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         if not shapes or shapes[0] is None:
             return None
         rest = [s for s in shapes[1:] if s is not None]
-        return reduce(sub, rest, shapes[0])
+        # every subtrahend in one OCCT cut (A - (B u C) == (A - B) - C),
+        # rather than a pairwise reduce that re-cuts the result each time
+        return shapes[0].cut(*rest) if rest else shapes[0]
 
     if name == "intersection":
         shapes = _children_positional(node, options)
