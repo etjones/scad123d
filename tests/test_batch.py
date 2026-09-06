@@ -372,3 +372,21 @@ def test_killing_a_hung_worker_also_kills_its_child_process(fake_batch):
     if alive:  # zombie or genuinely running? a running sleep answers signal 0
         os.kill(child, signal.SIGKILL)
     assert not alive, "the worker's child survived the worker's kill"
+
+
+def test_include_overlay_reaches_the_worker_as_openscadpath(fake_batch, tmp_path):
+    echo = tmp_path / "echo.py"
+    echo.write_text(
+        "import json, os, sys\n"
+        "for line in sys.stdin:\n"
+        "    t = json.loads(line); os.makedirs(os.path.dirname(t['output']), exist_ok=True)\n"
+        "    open(t['output'], 'w').write('x')\n"
+        "    print(json.dumps({'status': 'ok', 'message': json.dumps(t)})); sys.stdout.flush()\n"
+    )
+    batch = fake_batch(["0100_0/body.scad"], include_overlay=tmp_path / "overlay")
+    batch.worker_command = [sys.executable, str(echo)]
+    batch.run(batch.plan(), dashboard=None)
+    (message,) = batch.ledger.query("SELECT message FROM files")[0]
+    assert json.loads(message)["openscadpath"] == str(
+        (tmp_path / "overlay" / "0100_0").resolve()
+    )

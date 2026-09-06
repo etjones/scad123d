@@ -47,6 +47,7 @@ from .cli import (
     CLASS_OK,
     CLASS_TIMEOUT,
 )
+from .includes import overlay_dir
 
 CLASS_CRASH = "crash"
 STATUS_PENDING = "pending"
@@ -362,9 +363,11 @@ class Batch:
         mesh_scope: str = "minimal",
         facet_threshold: int | None = None,
         verify: bool = False,
+        include_overlay: Path | None = None,
         worker_command: list[str] | None = None,
     ) -> None:
         self.verify = verify
+        self.include_overlay = include_overlay.resolve() if include_overlay else None
         self.source = source.resolve()
         self.out_dir = out_dir.resolve()
         self.jobs = jobs
@@ -510,6 +513,11 @@ class Batch:
                 "output": str(task.output),
                 "csg": str(task.csg) if task.csg else None,
                 "verify": self.verify,
+                "openscadpath": (
+                    str(overlay_dir(self.include_overlay, self.source, Path(task.path)))
+                    if self.include_overlay
+                    else None
+                ),
             }
             state.current = task
             state.started = time.time()
@@ -959,6 +967,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also render each model with OpenSCAD and flag a >2%% volume "
         "disagreement as 'mismatch' (catches silently wrong output)",
     )
+    parser.add_argument(
+        "--include-overlay",
+        type=Path,
+        metavar="DIR",
+        help="overlay tree of supplied includes (from scad123d-includes resolve/fetch); "
+        "each model's mirror folder goes on OPENSCADPATH for that model",
+    )
     parser.add_argument("--dry-run", action="store_true", help="scan and plan only")
     parser.add_argument("--no-dashboard", action="store_true", help="plain log lines")
     parser.add_argument(
@@ -1004,6 +1019,7 @@ def main(argv: list[str] | None = None) -> int:
         mesh_scope=args.mesh_scope,
         facet_threshold=args.facet_threshold,
         verify=args.verify,
+        include_overlay=args.include_overlay,
     )
     print(f"scad123d-batch: scanning {batch.source} ...", file=sys.stderr)
     seen = batch.scan()

@@ -22,6 +22,7 @@ import argparse
 import faulthandler
 import gc
 import json
+import os
 import platform
 import re
 import shutil
@@ -482,6 +483,14 @@ def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str,
         mesh_scope=str(task.get("mesh_scope", defaults.mesh_scope)),
         timeout=float(task.get("timeout", defaults.timeout)),
     )
+    # A per-task include overlay (scad123d-batch --include-overlay): the
+    # folder holding this model's missing includes goes first on OpenSCAD's
+    # search path for the duration of this task only.
+    previous_path = os.environ.get("OPENSCADPATH")
+    if task.get("openscadpath"):
+        os.environ["OPENSCADPATH"] = os.pathsep.join(
+            p for p in (task["openscadpath"], previous_path) if p
+        )
     stage = "export"
     try:
         csg_text = conversion.export()
@@ -510,6 +519,10 @@ def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str,
         # for the life of the worker; nothing from one model helps the next.
         clear_cache()
         gc.collect()
+        if previous_path is None:
+            os.environ.pop("OPENSCADPATH", None)
+        else:
+            os.environ["OPENSCADPATH"] = previous_path
     result["seconds"] = round(time.perf_counter() - start, 3)
     result["meshed"] = conversion.meshed
     result["openscad_warnings"] = conversion.openscad_warnings[:50]
