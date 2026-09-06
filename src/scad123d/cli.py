@@ -394,6 +394,20 @@ def _openscad_volume(csg_text: str, timeout: float, two_d: bool = False) -> floa
         shutil.rmtree(path.parent, ignore_errors=True)
 
 
+def measure(part: Shape, two_d: bool = False) -> float:
+    """Total volume (or area) of a built part, counted solid by solid.
+
+    Not ``part.volume``: build123d's Compound.volume sums only the
+    compound's *direct* Solid children, and a color-partitioned union
+    (solid123d) is a Compound of per-color Compounds -- a 64-square
+    chessboard reported 0.0 against OpenSCAD's 1.69e6 while its STEP held
+    all 384 solids. Summing the leaves is right for any nesting.
+    """
+    if two_d:
+        return sum(abs(f.area) for f in part.faces())
+    return sum(abs(s.volume) for s in part.solids())
+
+
 def _relative_error(ours: float, theirs: float) -> float:
     scale = max(ours, theirs)
     return abs(ours - theirs) / scale if scale > 1e-9 else 0.0
@@ -405,7 +419,7 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
     # A purely 2D model has no volume to compare; its area is the same
     # check, and OpenSCAD's render of a 1 mm extrusion measures it.
     two_d = not conversion.part.solids()
-    ours = abs(conversion.part.area if two_d else conversion.part.volume)
+    ours = measure(conversion.part, two_d)
     fine = _openscad_volume(refine_tessellation(csg_text), conversion.timeout, two_d)
     result["volume"] = round(ours, 6)
     result["scad_volume"] = round(fine, 6)

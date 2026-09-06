@@ -314,8 +314,12 @@ scad123d-batch ~/models -o ~/models-step -j 12 --timeout 120
   from beside it (`--no-csg` to skip), so a wrong result can be bisected with
   `scad123d-diff` without running OpenSCAD again.
 - **A live dashboard** shows each worker's current file, elapsed time, and
-  memory, plus throughput and ETA (`--no-dashboard` for plain log lines, the
-  default when stderr isn't a terminal).
+  memory, plus throughput and an ETA for *this run*; when the run doesn't
+  cover the whole tree (`--limit`, or a partial re-run) it adds, labeled
+  separately, how long the rest would take at the run's average rate — so a
+  `--limit 500` trial tells you both when it finishes and whether the full
+  corpus is feasible (`--no-dashboard` for plain log lines, the default when
+  stderr isn't a terminal).
 - **Built for finding scad123d's own bugs.** Every failure keeps its Python
   traceback and OpenSCAD's warnings in the ledger; `--report` groups
   failures by the scad123d source line they died on, `--list OUT_DIR CLASS`

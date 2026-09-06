@@ -229,6 +229,24 @@ class Ledger:
             return self._db.execute(sql, params).fetchall()
 
 
+def _kill_group(proc: subprocess.Popen[str]) -> None:
+    """Kill a worker and everything it spawned (its OpenSCAD renders)."""
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    elif sys.platform == "win32":
+        # No process groups to signal; taskkill /T walks the process tree.
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+    proc.kill()
+
+
 # --- discovery --------------------------------------------------------------
 
 
@@ -288,9 +306,16 @@ class WorkerState:
 
 
 class Stats:
-    def __init__(self, initial: Counter[str]) -> None:
+    """Counts for the ledger as a whole (``counts``) and for this run alone
+    (``run_counts``, ``run_done`` of ``run_total``). The two differ under
+    --limit, or when re-running with most of the corpus already done, and
+    the dashboard reports them separately."""
+
+    def __init__(self, initial: Counter[str], run_total: int = 0) -> None:
         self.lock = threading.Lock()
         self.counts = Counter(initial)
+        self.run_counts: Counter[str] = Counter()
+        self.run_total = run_total
         self.run_done = 0
         self.run_started = time.time()
         self.recent: list[float] = []  # completion timestamps, for the rate
@@ -299,6 +324,7 @@ class Stats:
         with self.lock:
             self.counts[STATUS_PENDING] -= 1
             self.counts[status] += 1
+            self.run_counts[status] += 1
             self.run_done += 1
             now = time.time()
             self.recent.append(now)
@@ -307,13 +333,19 @@ class Stats:
                 self.recent.pop(0)
 
     def rate(self) -> float:
-        """Files per second over the last two minutes."""
+        """Files per second over the last two minutes: what the ETA for the
+        files still queued in this run should be based on."""
         with self.lock:
             if len(self.recent) < 2:
-                elapsed = time.time() - self.run_started
-                return self.run_done / elapsed if elapsed > 0 else 0.0
+                return self.average_rate()
             span = self.recent[-1] - self.recent[0]
             return (len(self.recent) - 1) / span if span > 0 else 0.0
+
+    def average_rate(self) -> float:
+        """Files per second over the whole run: steadier than the trailing
+        window, so the right basis for projecting the rest of the corpus."""
+        elapsed = time.time() - self.run_started
+        return self.run_done / elapsed if elapsed > 0 else 0.0
 
 
 class Batch:
@@ -421,6 +453,10 @@ class Batch:
             command += ["--facet-threshold", str(self.facet_threshold)]
         # The child inherits the log descriptor; the parent's copy can close
         # right away, or a long run with recycling leaks one per spawn.
+        # Each worker leads its own process group (start_new_session), so
+        # killing it kills the OpenSCAD it may be running: a worker killed
+        # on timeout mid-render otherwise leaves that render orphaned,
+        # burning three cores until it finishes for nobody.
         with open(self.out_dir / "logs" / f"worker-{state.index}.log", "a") as log:
             state.proc = subprocess.Popen(
                 command,
@@ -429,6 +465,7 @@ class Batch:
                 stderr=log,
                 text=True,
                 bufsize=1,
+                start_new_session=True,
             )
         state.done = 0
         state.rss_mb = 0.0
@@ -445,7 +482,7 @@ class Batch:
                 proc.stdin.close()
             proc.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
-            proc.kill()
+            _kill_group(proc)
             proc.wait()
 
     def _next_task(self) -> Task | None:
@@ -572,7 +609,7 @@ class Batch:
                             pass
                         continue
                 if time.time() - state.dump_at >= 2:
-                    proc.kill()
+                    _kill_group(proc)
                 continue
             if psutil is not None:
                 try:
@@ -588,13 +625,15 @@ class Batch:
         for state in self.workers:
             if state.proc is not None and state.proc.poll() is None:
                 state.kill_reason = reason
-                state.proc.kill()
+                _kill_group(state.proc)
 
     # -- run
 
     def run(self, tasks: list[Task], dashboard: "Dashboard | None") -> Counter[str]:
         self.queue = list(reversed(tasks))  # pop() from the end
-        self.stats = Stats(self.ledger.counts())
+        # In files, not tasks: a task's duplicate siblings are recorded too.
+        run_total = sum(1 + len(t.siblings) for t in tasks)
+        self.stats = Stats(self.ledger.counts(), run_total)
         threads = [
             threading.Thread(target=self._worker_loop, args=(w,), daemon=True)
             for w in self.workers
@@ -665,19 +704,28 @@ class Dashboard:
         self.notes.append(text)
 
     def _summary(self, batch: Batch) -> str:
-        counts = batch.stats.counts
-        done = sum(v for k, v in counts.items() if k != STATUS_PENDING)
-        remaining = counts.get(STATUS_PENDING, 0)
-        rate = batch.stats.rate()
-        eta = _fmt_duration(remaining / rate) if rate > 0 else "--:--:--"
-        elapsed = _fmt_duration(time.time() - batch.stats.run_started)
-        failed = sum(
-            v for k, v in counts.items() if k not in (STATUS_PENDING, CLASS_OK)
+        """Progress and ETA for *this run*, then -- only when the run does
+        not cover the whole ledger (--limit, or a partial re-run) -- how
+        long the rest of the corpus would take at this run's average rate.
+        An ETA answers "when is my terminal free"; the projection answers
+        "is a full run feasible", and the two are labeled apart."""
+        stats = batch.stats
+        rate = stats.rate()
+        left = max(stats.run_total - stats.run_done, 0)
+        eta = _fmt_duration(left / rate) if rate > 0 else "--:--:--"
+        elapsed = _fmt_duration(time.time() - stats.run_started)
+        failed = sum(v for k, v in stats.run_counts.items() if k != CLASS_OK)
+        text = (
+            f"this run {stats.run_done}/{stats.run_total}  "
+            f"ok {stats.run_counts.get(CLASS_OK, 0)}  failed {failed}  |  "
+            f"{rate * 60:.1f}/min  ETA {eta}  elapsed {elapsed}"
         )
-        return (
-            f"done {done}/{done + remaining}  ok {counts.get(CLASS_OK, 0)}  "
-            f"failed {failed}  |  {rate * 60:.1f}/min  ETA {eta}  elapsed {elapsed}"
-        )
+        beyond = stats.counts.get(STATUS_PENDING, 0) - left
+        if beyond > 0:
+            average = stats.average_rate()
+            projection = _fmt_duration(beyond / average) if average > 0 else "?"
+            text += f"  |  corpus: {beyond} more pending, ~{projection} at this rate"
+        return text
 
     def refresh(self, batch: Batch) -> None:
         if self.live is None:
@@ -714,9 +762,9 @@ class Dashboard:
                 str(w.done),
                 f"{w.rss_mb:.0f} MB" if w.rss_mb else "",
             )
-        counts = batch.stats.counts
-        breakdown = "  ".join(
-            f"{k} {v}" for k, v in sorted(counts.items()) if k != STATUS_PENDING and v
+        counts = batch.stats.run_counts
+        breakdown = "this run:  " + "  ".join(
+            f"{k} {v}" for k, v in sorted(counts.items()) if v
         )
         table.caption = breakdown + (
             "\n" + "\n".join(self.notes[-3:]) if self.notes else ""
@@ -981,10 +1029,12 @@ def main(argv: list[str] | None = None) -> int:
         final = batch.run(tasks, dashboard)
     finally:
         batch.ledger.close()
-    failed = sum(v for k, v in final.items() if k not in (CLASS_OK, STATUS_PENDING))
+    run = batch.stats.run_counts
+    failed = sum(v for k, v in run.items() if k != CLASS_OK)
     print(
-        f"scad123d-batch: ok {final.get(CLASS_OK, 0)}  failed {failed}  "
-        f"pending {final.get(STATUS_PENDING, 0)}  (ledger: {batch.ledger.path})",
+        f"scad123d-batch: this run ok {run.get(CLASS_OK, 0)}  failed {failed}  "
+        f"(of {batch.stats.run_total}); ledger: {final.get(CLASS_OK, 0)} ok, "
+        f"{final.get(STATUS_PENDING, 0)} pending  ({batch.ledger.path})",
         file=sys.stderr,
     )
     return 0

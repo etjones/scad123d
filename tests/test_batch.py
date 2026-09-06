@@ -36,6 +36,16 @@ FAKE_WORKER = textwrap.dedent(
         if name.startswith("crash"):
             os._exit(3)
         if name.startswith("slow"):
+            # like a worker mid-render: a child that would outlive us
+            import subprocess
+            # stdio detached, as a real OpenSCAD child's is (subprocess.run
+            # gives it its own pipes): otherwise the child would keep the
+            # worker's stdout pipe open after the worker is killed, and the
+            # harness's readline would wait on it.
+            child = subprocess.Popen(
+                ["sleep", "300"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            print(f"child pid {child.pid}", file=sys.stderr, flush=True)
             time.sleep(30)
         if name.startswith("bad"):
             print(json.dumps({
@@ -258,7 +268,8 @@ def test_dashboard_renders_worker_rows_and_totals(fake_batch):
     counts = batch.run(batch.plan(), dashboard)
     assert counts == {CLASS_OK: 1}
     text = buffer.getvalue()
-    assert "done 1/1" in text and "ok 1" in text
+    assert "this run 1/1" in text and "ok 1" in text
+    assert "corpus:" not in text  # the run covers the whole ledger
     assert "idle" in text  # workers shown even when between files
     assert "hello from the test" in text
 
@@ -325,3 +336,39 @@ def test_verify_flag_reaches_the_worker(fake_batch, tmp_path):
     batch.run(batch.plan(), dashboard=None)
     (message,) = batch.ledger.query("SELECT message FROM files")[0]
     assert json.loads(message)["verify"] is True
+
+
+def test_summary_is_scoped_to_the_run_with_a_corpus_projection(fake_batch):
+    from scad123d.batch import Dashboard
+
+    batch = fake_batch([f"f{i}.scad" for i in range(4)])
+    for i in range(4):
+        (batch.source / f"f{i}.scad").write_text(f"cube({i});")  # distinct
+    batch.scan()
+    tasks = batch.plan(order="name", limit=1)
+    batch.run(tasks, dashboard=None)
+    text = Dashboard(1, live=False)._summary(batch)
+    assert text.startswith("this run 1/1  ok 1  failed 0")
+    assert "corpus: 3 more pending" in text and "at this rate" in text
+    assert "1/4" not in text  # the ledger total is never presented as the run
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+def test_killing_a_hung_worker_also_kills_its_child_process(fake_batch):
+    import re
+    import signal
+
+    batch = fake_batch(["slow.scad"])
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {CLASS_TIMEOUT: 1}
+    log = (batch.out_dir / "logs" / "worker-1.log").read_text()
+    child = int(re.search(r"child pid (\d+)", log).group(1))
+    time.sleep(0.5)
+    alive = True
+    try:
+        os.kill(child, 0)
+    except ProcessLookupError:
+        alive = False
+    if alive:  # zombie or genuinely running? a running sleep answers signal 0
+        os.kill(child, signal.SIGKILL)
+    assert not alive, "the worker's child survived the worker's kill"
