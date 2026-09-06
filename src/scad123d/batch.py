@@ -439,7 +439,7 @@ class Batch:
         recycle: int = 200,
         max_rss_gb: float | None = None,
         memory_budget_gb: float | None = None,
-        min_free_gb: float = 3.0,
+        min_free_gb: float | None = None,
         mesh_scope: str = "minimal",
         facet_threshold: int | None = None,
         verify: bool = False,
@@ -468,7 +468,13 @@ class Batch:
         self.memory_budget = (
             (memory_budget_gb * 1024) if memory_budget_gb else 0.6 * total
         )
-        self.min_free = min_free_gb * 1024
+        # Floor: 3 GB, or a tenth of RAM on a small machine (a 7 GB CI runner
+        # sits under 3 GB free before any worker starts).
+        self.min_free = (
+            (min_free_gb * 1024)
+            if min_free_gb is not None
+            else min(3072.0, 0.1 * total)
+        )
         self.mem_total_mb = 0.0  # all worker trees, updated by _watch
         self.mem_available_mb = 0.0  # system-wide, updated by _watch
         self.mesh_scope = mesh_scope
@@ -1114,9 +1120,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-free-gb",
         type=float,
-        default=3.0,
+        default=None,
         help="kill the largest worker when the machine has less than this free "
-        "(default: 3)",
+        "(default: 3, or a tenth of RAM if smaller)",
     )
     parser.add_argument("--mesh-scope", choices=["minimal", "hoist"], default="minimal")
     parser.add_argument("--facet-threshold", type=int, default=None)

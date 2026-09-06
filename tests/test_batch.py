@@ -87,6 +87,12 @@ def fake_batch(tmp_path):
     def make(names: list[str], **kwargs) -> Batch:  # type: ignore[no-untyped-def]
         src = tmp_path / "src"
         _tree(src, names)
+        # Supervision tests must not depend on the host's free RAM (a CI
+        # runner can sit under the default floor): no memory limits unless
+        # a test sets them.
+        kwargs.setdefault("min_free_gb", 0.0)
+        kwargs.setdefault("memory_budget_gb", 1024.0)
+        kwargs.setdefault("max_rss_gb", 1024.0)
         batch = Batch(
             src,
             tmp_path / "out",
@@ -483,7 +489,7 @@ def test_memory_defaults_derive_from_ram_and_jobs(tmp_path):
     total = _total_memory_mb()
     assert b.max_rss == pytest.approx(max(2048, 0.6 * total / 4))
     assert b.memory_budget == pytest.approx(0.6 * total)
-    assert b.min_free == 3 * 1024
+    assert b.min_free == pytest.approx(min(3072, 0.1 * total))
 
 
 def test_requeued_files_come_before_never_seen_ones(fake_batch):
