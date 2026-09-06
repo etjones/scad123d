@@ -284,6 +284,65 @@ fall back to a mesh instead of staying exact. See
 for the full, precise list of what's covered and what isn't, if you want to
 know exactly where a particular model will land.
 
+## Converting a whole directory: `scad123d-batch`
+
+For more than a handful of files, don't loop over `scad2step` — importing
+build123d costs about two seconds per process, and a typical model converts
+in a fraction of that. `scad123d-batch` keeps a pool of long-lived worker
+processes busy instead, and looks after everything a big run needs:
+
+```bash
+pip install 'scad123d[batch]'          # adds rich (dashboard) and psutil
+
+scad123d-batch ~/models -o ~/models-step -j 12 --timeout 120
+```
+
+- **Resumable.** A SQLite ledger in the output directory records every
+  file's result. Ctrl-C, then re-run the same command, and it carries on
+  where it stopped; files added to the tree since (say, a download still in
+  progress) are picked up on each scan, edited files are redone.
+- **Failures are classified, not fatal.** Each file ends up `ok`,
+  `empty` (a library file with no top-level geometry), `openscad-error`,
+  `unsupported`, `occt-error`, `mesh-error`, `timeout`, or `crash`. A
+  worker that hangs is killed and replaced; one that crashes takes only its
+  current file with it. `scad123d-batch --report OUT_DIR` summarizes by
+  class with the most common messages, and `--retry timeout,crash --timeout
+  900` re-queues just those for a second, more patient pass.
+- **Duplicates are converted once.** Byte-identical inputs (common in a
+  scraped corpus) share one conversion; the others get a hard link to it.
+- **Replayable.** Each STEP gets the OpenSCAD `.csg` export it was built
+  from beside it (`--no-csg` to skip), so a wrong result can be bisected with
+  `scad123d-diff` without running OpenSCAD again.
+- **A live dashboard** shows each worker's current file, elapsed time, and
+  memory, plus throughput and ETA (`--no-dashboard` for plain log lines, the
+  default when stderr isn't a terminal).
+- **Built for finding scad123d's own bugs.** Every failure keeps its Python
+  traceback and OpenSCAD's warnings in the ledger; `--report` groups
+  failures by the scad123d source line they died on, `--list OUT_DIR CLASS`
+  prints the inputs in a class, and `--show OUT_DIR PATH` prints one file's
+  full trace. Workers run with `faulthandler`, so a segfault inside OCCT —
+  or a hang, which the harness asks the worker to dump before killing it —
+  leaves the Python stack in `logs/worker-N.log` under a `converting <file>`
+  marker. `--verify` goes further and catches *silently wrong* output:
+  each built part's volume is checked against OpenSCAD's own render of the
+  same CSG, tessellated finely so the comparison is sharp (fast with the
+  Manifold backend); a disagreement over 1% is classed `mismatch`, with
+  the magnitude bucketed in the message so `--report` groups them. One
+  deliberate divergence lands in the 1–2% bucket: a `minkowski()` whose
+  ball is a faceted polyhedron (what BOSL2's `cuboid(rounding=)` emits) is
+  built as an exact sphere, slightly larger than OpenSCAD's inscribed
+  facets. Anything beyond that is worth `scad123d-diff` on the saved `.csg`.
+
+Two things to arrange before a large run: install the libraries your corpus
+`include`s (BOSL2, MCAD, ...) where OpenSCAD finds them (`OPENSCADPATH`), or
+those files will all fail as `openscad-error`; and write the output outside
+any cloud-synced folder — STEP files are large, and a sync client indexing
+tens of thousands of them will compete for the CPU.
+
+The worker half is exposed too: `scad2step --batch` reads JSON tasks
+(`{"input": ..., "output": ...}`) one per line on stdin and writes one JSON
+result per line, if you'd rather drive it from your own tooling.
+
 ## A few other things to know
 
 - **Cylinders and circles you deliberately made low-poly** (a hexagon nut, a

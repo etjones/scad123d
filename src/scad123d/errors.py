@@ -17,6 +17,15 @@ class UnsupportedNodeError(Scad123dError):
     """A CSG node has no build123d mapping and no mesh fallback is available."""
 
 
+class MeshImportError(Scad123dError):
+    """A mesh OpenSCAD rendered could not be turned into a valid solid.
+
+    Raised rather than returning a shape whose volume disagrees with the
+    triangles it was built from: a silently wrong fallback region is worse
+    than a failed conversion.
+    """
+
+
 class UndeclaredModuleError(Scad123dError):
     """The requested module was not declared (as a ``module``) in the file."""
 

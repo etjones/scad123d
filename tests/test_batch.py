@@ -1,0 +1,327 @@
+"""scad123d-batch: the ledger, discovery, dedup, and worker supervision.
+
+Worker supervision (crash, timeout, recycling) is tested with a fake worker
+script so it runs in milliseconds and without OpenSCAD; one needs_openscad
+test runs the real thing over the fixture directory and resumes it.
+"""
+
+import json
+import os
+import sys
+import textwrap
+import time
+from pathlib import Path
+
+import pytest
+
+from scad123d.batch import (
+    CLASS_CRASH,
+    CLASS_OK,
+    CLASS_TIMEOUT,
+    STATUS_PENDING,
+    Batch,
+    Ledger,
+    discover,
+    main,
+)
+
+FAKE_WORKER = textwrap.dedent(
+    """
+    import faulthandler, json, os, signal, sys, time
+    if hasattr(signal, "SIGUSR1"):  # not on Windows
+        faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
+    for line in sys.stdin:
+        task = json.loads(line)
+        name = os.path.basename(task["input"])
+        if name.startswith("crash"):
+            os._exit(3)
+        if name.startswith("slow"):
+            time.sleep(30)
+        if name.startswith("bad"):
+            print(json.dumps({
+                "status": "openscad-error", "message": "nope", "seconds": 0.01,
+                "stage": "export",
+                "openscad_warnings": ["WARNING: Ignoring unknown module 'foo'"],
+                "traceback": (
+                    'Traceback (most recent call last):\\n'
+                    '  File "/x/scad123d/cli.py", line 10, in export\\n'
+                    '  File "/x/scad123d/openscad.py", line 99, in _run\\n'
+                    "OpenSCADRunError: nope\\n"
+                ),
+            }))
+        else:
+            open(task["output"], "w").write("step")
+            print(json.dumps({"status": "ok", "seconds": 0.01, "meshed": []}))
+        sys.stdout.flush()
+    """
+)
+
+
+def _tree(root: Path, names: list[str], content: str = "cube(1);") -> None:
+    for name in names:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+
+@pytest.fixture
+def fake_batch(tmp_path):
+    script = tmp_path / "worker.py"
+    script.write_text(FAKE_WORKER)
+
+    def make(names: list[str], **kwargs) -> Batch:  # type: ignore[no-untyped-def]
+        src = tmp_path / "src"
+        _tree(src, names)
+        batch = Batch(
+            src,
+            tmp_path / "out",
+            jobs=kwargs.pop("jobs", 2),
+            timeout=kwargs.pop("timeout", 0.5),
+            worker_command=[sys.executable, str(script)],
+            **kwargs,
+        )
+        batch.kill_grace = 0.2
+        batch.scan()
+        return batch
+
+    return make
+
+
+# --- ledger and discovery ----------------------------------------------------
+
+
+def test_discover_skips_hidden_dirs_empty_files_and_other_suffixes(tmp_path):
+    _tree(tmp_path, ["a.scad", "sub/b.SCAD", ".git/c.scad", "d.txt"])
+    (tmp_path / "empty.scad").write_text("")
+    found = sorted(p.name for p, _ in discover(tmp_path))
+    assert found == ["a.scad", "b.SCAD"]
+
+
+def test_ledger_tracks_status_and_reverts_changed_files(tmp_path):
+    ledger = Ledger(tmp_path / "l.sqlite")
+    ledger.discover("/x/a.scad", 10, 1.0, "sha-a")
+    assert ledger.pending() == [("/x/a.scad", "sha-a")]
+    ledger.record("/x/a.scad", CLASS_OK, seconds=0.5)
+    assert ledger.pending() == []
+    assert ledger.counts() == {CLASS_OK: 1}
+    # unchanged: stays done
+    ledger.discover("/x/a.scad", 10, 1.0, "sha-a")
+    assert ledger.pending() == []
+    # edited: back to pending
+    ledger.discover("/x/a.scad", 12, 2.0, "sha-a2")
+    assert ledger.pending() == [("/x/a.scad", "sha-a2")]
+
+
+def test_ledger_reset_requeues_only_the_named_classes(tmp_path):
+    ledger = Ledger(tmp_path / "l.sqlite")
+    for i, status in enumerate([CLASS_OK, CLASS_TIMEOUT, CLASS_CRASH]):
+        ledger.discover(f"/x/{i}.scad", 1, 1.0, f"sha{i}")
+        ledger.record(f"/x/{i}.scad", status)
+    assert ledger.reset({CLASS_TIMEOUT}) == 1
+    assert ledger.counts() == {CLASS_OK: 1, STATUS_PENDING: 1, CLASS_CRASH: 1}
+
+
+# --- planning ----------------------------------------------------------------
+
+
+def test_plan_queues_one_task_per_distinct_content(fake_batch):
+    batch = fake_batch(["a.scad", "b.scad", "sub/c.scad"])
+    tasks = batch.plan(order="name")
+    assert len(tasks) == 1  # all three files are byte-identical
+    assert sorted(tasks[0].siblings) == sorted(
+        str(batch.source / n) for n in ("b.scad", "sub/c.scad")
+    )
+    assert tasks[0].output == batch.out_dir / "a.step"
+    assert tasks[0].csg == batch.out_dir / "a.csg"
+
+
+def test_plan_links_duplicates_of_already_converted_files(fake_batch):
+    batch = fake_batch(["a.scad"])
+    batch.run(batch.plan(), dashboard=None)
+    assert (batch.out_dir / "a.step").exists()
+    _tree(batch.source, ["later.scad"])
+    batch.scan()
+    assert batch.plan() == []  # nothing to convert: same bytes as a.scad
+    assert (batch.out_dir / "later.step").read_text() == "step"
+    assert batch.ledger.query(
+        "SELECT status, duplicate_of FROM files WHERE path LIKE '%later.scad'"
+    ) == [(CLASS_OK, str(batch.source / "a.scad"))]
+
+
+# --- supervision -------------------------------------------------------------
+
+
+def test_results_land_in_the_ledger_and_siblings_share_them(fake_batch):
+    batch = fake_batch(["a.scad", "b.scad"])
+    _tree(batch.source, ["bad.scad"], content="nonsense")
+    batch.scan()
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {CLASS_OK: 2, "openscad-error": 1}
+    assert (batch.out_dir / "b.step").exists()  # linked from a's output
+
+
+def test_crashed_worker_is_recorded_and_replaced(fake_batch):
+    batch = fake_batch(["crash.scad"])
+    _tree(batch.source, ["fine.scad"], content="sphere(2);")
+    batch.scan()
+    counts = batch.run(batch.plan(order="name"), dashboard=None)
+    assert counts == {CLASS_CRASH: 1, CLASS_OK: 1}
+    (message,) = batch.ledger.query(
+        "SELECT message FROM files WHERE status=?", (CLASS_CRASH,)
+    )[0]
+    assert "exit 3" in message
+
+
+def test_hung_worker_is_killed_on_timeout(fake_batch):
+    batch = fake_batch(["slow.scad"])
+    start = time.time()
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {CLASS_TIMEOUT: 1}
+    assert time.time() - start < 10  # not the fake worker's 30s sleep
+
+
+def test_workers_are_recycled_after_n_files(fake_batch):
+    batch = fake_batch([f"f{i}.scad" for i in range(6)], jobs=1, recycle=2)
+    for i in range(6):
+        (batch.source / f"f{i}.scad").write_text(f"cube({i});")
+    batch.scan()
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {CLASS_OK: 6}
+    # a recycled worker's done-count restarts, so it never exceeds `recycle`
+    assert batch.workers[0].done <= 2
+
+
+# --- CLI ---------------------------------------------------------------------
+
+
+def test_report_summarizes_a_ledger(tmp_path, capsys):
+    out = tmp_path / "out"
+    out.mkdir()
+    ledger = Ledger(out / "ledger.sqlite")
+    ledger.discover("/x/a.scad", 1, 1.0, "a")
+    ledger.record("/x/a.scad", CLASS_OK, seconds=1.5)
+    ledger.discover("/x/b.scad", 1, 1.0, "b")
+    ledger.record("/x/b.scad", CLASS_TIMEOUT, message="killed after 120s")
+    ledger.close()
+    assert main(["--report", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "2 files" in text
+    assert "timeout" in text and "killed after 120s" in text
+
+
+@pytest.mark.needs_openscad
+def test_real_run_over_fixtures_then_resume(tmp_path):
+    fixtures = Path(__file__).parent / "fixtures" / "scad"
+    out = tmp_path / "out"
+    assert (
+        main(
+            [str(fixtures), "-o", str(out), "-j", "2", "--no-dashboard", "--limit", "3"]
+        )
+        == 0
+    )
+    ledger = Ledger(out / "ledger.sqlite")
+    counts = ledger.counts()
+    assert counts[CLASS_OK] == 3
+    remaining = counts[STATUS_PENDING]
+    ledger.close()
+    assert remaining == len(list(fixtures.glob("*.scad"))) - 3
+    steps = list(out.glob("*.step"))
+    assert len(steps) == 3 and all(s.stat().st_size > 0 for s in steps)
+    assert len(list(out.glob("*.csg"))) == 3
+    # Resume: only the remainder is converted.
+    assert main([str(fixtures), "-o", str(out), "-j", "2", "--no-dashboard"]) == 0
+    ledger = Ledger(out / "ledger.sqlite")
+    assert ledger.counts() == {CLASS_OK: remaining + 3}
+    ledger.close()
+
+
+def test_dry_run_plans_without_converting(tmp_path, capsys):
+    _tree(tmp_path / "src", ["a.scad"])
+    assert main([str(tmp_path / "src"), "-o", str(tmp_path / "out"), "--dry-run"]) == 0
+    assert "1 to convert" in capsys.readouterr().err
+    assert not list((tmp_path / "out").glob("*.step"))
+    assert json.loads(json.dumps(os.listdir(tmp_path / "out")))  # ledger + logs exist
+
+
+def test_dashboard_renders_worker_rows_and_totals(fake_batch):
+    import io
+
+    from rich.console import Console
+
+    from scad123d.batch import Dashboard
+
+    batch = fake_batch(["a.scad"])
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=True, width=120)
+    dashboard = Dashboard(1, live=True, console=console)
+    dashboard.note("hello from the test")
+    counts = batch.run(batch.plan(), dashboard)
+    assert counts == {CLASS_OK: 1}
+    text = buffer.getvalue()
+    assert "done 1/1" in text and "ok 1" in text
+    assert "idle" in text  # workers shown even when between files
+    assert "hello from the test" in text
+
+
+# --- diagnostics -------------------------------------------------------------
+
+
+def test_failure_details_are_kept_and_shown(fake_batch, capsys):
+    batch = fake_batch(["bad.scad"])
+    batch.run(batch.plan(), dashboard=None)
+    row = batch.ledger.lookup("bad.scad")
+    assert row is not None
+    _path, status, stage, message, *_rest, warnings, _v, _sv, trace = row
+    assert (status, stage, message) == ("openscad-error", "export", "nope")
+    assert json.loads(warnings) == ["WARNING: Ignoring unknown module 'foo'"]
+    assert "openscad.py" in trace
+
+    assert main(["--show", str(batch.out_dir), "bad.scad"]) == 0
+    text = capsys.readouterr().out
+    assert "status: openscad-error (in export)" in text
+    assert "unknown module 'foo'" in text and 'File "/x/scad123d/openscad.py"' in text
+
+    assert main(["--list", str(batch.out_dir), "openscad-error"]) == 0
+    line = capsys.readouterr().out.strip()
+    assert line.endswith("bad.scad\tnope")
+    assert main(["--list", str(batch.out_dir), "timeout"]) == 1  # nothing in it
+
+
+def test_report_groups_failures_by_innermost_frame(fake_batch, capsys):
+    batch = fake_batch(["bad.scad"])
+    _tree(batch.source, ["bad2.scad"], content="also bad")
+    batch.scan()
+    batch.run(batch.plan(), dashboard=None)
+    assert main(["--report", str(batch.out_dir)]) == 0
+    text = capsys.readouterr().out
+    assert "where they fail" in text
+    assert "2  openscad-error openscad.py:99 _run" in text
+
+
+@pytest.mark.skipif(
+    not hasattr(__import__("signal"), "SIGUSR1"), reason="no SIGUSR1 on Windows"
+)
+def test_timeout_asks_the_worker_for_a_stack_dump_before_killing(fake_batch):
+    batch = fake_batch(["slow.scad"])
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {CLASS_TIMEOUT: 1}
+    (message,) = batch.ledger.query("SELECT message FROM files")[0]
+    assert "worker-1.log" in message
+    log = (batch.out_dir / "logs" / "worker-1.log").read_text()
+    # faulthandler's dump names the sleeping frame
+    assert "Current thread" in log and "worker.py" in log
+
+
+def test_verify_flag_reaches_the_worker(fake_batch, tmp_path):
+    echo = tmp_path / "echo.py"
+    echo.write_text(
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    t = json.loads(line); open(t['output'], 'w').write('x')\n"
+        "    print(json.dumps({'status': 'ok', 'message': json.dumps(t)})); sys.stdout.flush()\n"
+    )
+    batch = fake_batch(["a.scad"], verify=True)
+    batch.worker_command = [sys.executable, str(echo)]
+    batch.run(batch.plan(), dashboard=None)
+    (message,) = batch.ledger.query("SELECT message FROM files")[0]
+    assert json.loads(message)["verify"] is True

@@ -928,3 +928,144 @@ semantics (partition into labeled bodies, contested volume to the later
 child) and updated the TestColor docstring + README color block.
 251 tests pass against the published wheel (editable install replaced
 by PyPI 0.5.0 via uv sync — the local-editable workaround is retired).
+
+**User**: scad2step crashed with a deep "recursive" traceback on
+~/Downloads/ultimate+parametric+junction+box+cover.scad (BOSL2 model).
+
+**Assistant**: The recursion was just CSG nesting depth; the real error
+was `polygon(points = [])` (BOSL2 emits it for a branch that renders
+nothing) reaching build123d's `Wire.make_polygon`. Guarded polygon,
+then on request audited every leaf: `polyhedron(points=[], faces=[])`
+and `linear_extrude(height=0)` had the same gap (OpenSCAD renders both
+as nothing); `text("")`, `rotate_extrude(angle=0)` (OpenSCAD's own
+falsy-defaults-to-360 quirk), transforms and booleans were fine.
+Released scad123d 0.5.1.
+
+**User**: The STEP differs from OpenSCAD's STL: the spring clip's body
+sits with its top at z=0, but its rounded corners and threaded hole
+don't.
+
+**Assistant**: Root cause in solid123d: `linear_extrude` called
+build123d `extrude()` without `dir`, which sweeps each face along its
+own winding-derived normal. BOSL2's `stroke()` ribbon face wound
+clockwise while its `round_corners()` joint fragments wound CCW, so the
+body extruded to -Z and the joints to +Z (and, meeting only at a knife
+edge, never fused: 51 solids instead of 2). Fix: pin `dir=(0, 0, 1)` --
+OpenSCAD ignores winding. Released solid123d 0.5.2 and scad123d 0.5.2
+(versions kept in step per user); STEP now matches the STL bbox exactly.
+
+**User**: Design a fast pipeline to convert the ~80k-model CodeCAD corpus
+(still downloading into ~/Dropbox/Projects/codecad): parallel batch
+mode, progress, failure handling, resume. Does OCCT use the GPU?
+
+**Assistant**: Measured: build123d import is 1.85s vs 0.1-0.2s of work
+per typical file, so batch mode is the big win; OCCT and OpenSCAD's
+export path are CPU-only (no GPU contention); OCCT uses ~1.5 cores per
+conversion. Decisions (user): outputs outside Dropbox; Manifold as the
+default mesh-fallback backend; harness ships in scad123d.
+Built on feature/batch-conversion:
+- `openscad.py`: `--backend=Manifold` when the binary supports it
+  (140x faster on the junction box's hull fallback; whole test suite
+  73s -> 12s), `$SCAD123D_BACKEND` overrides.
+- `mesh_import.py`: Manifold's 3MF exposed that build123d's
+  sewing-based `Mesher.read` can return an invalid, wrong-volume solid
+  (3143.6 vs 3071.9 on a slab with a through-hole; the triangles
+  themselves were right). Replaced with a sewing-free topological build
+  (shared vertices/edges, components -> shells, largest = outer, rest =
+  voids) verified against the divergence-theorem volume; disagreement
+  raises `MeshImportError` instead of returning wrong geometry.
+- `scad2step --batch`: long-lived worker, JSON task/result lines, stdout
+  reserved for results, failures classified (empty / openscad-error /
+  unsupported / occt-error / mesh-error / export-error / timeout /
+  missing / error), per-file mesh-cache clear, optional .csg save.
+- `scad123d-batch`: discovery (skips cloud placeholders), SQLite ledger
+  (resume, --retry CLASS, --force, changed-file detection), sha256 dedup
+  with hard-linked outputs, worker pool with kill-on-timeout + respawn,
+  crash isolation, recycling by count/RSS, rich dashboard, --report.
+  `batch` extra adds rich + psutil.
+277 tests pass; README section added.
+
+**User**: Some of the 80k files will surface scad123d bugs -- do we have
+logging / a way to trace where errors occur and gather stack traces?
+
+**Assistant**: Partially before, fully now. Gaps closed on the branch:
+tracebacks were only kept for the generic `error` class and the harness
+dropped them (no ledger column); crashes and timeouts left nothing;
+worker logs had no per-file markers; nothing caught silently-wrong
+output; --report couldn't say *where* failures occur. Now: every
+failure's traceback, stage and OpenSCAD warnings go in the ledger
+(schema migrates older ledgers); workers run `faulthandler` and register
+SIGUSR1, and the harness sends SIGUSR1 then kills on timeout, so hangs
+and segfaults leave the Python stack in logs/worker-N.log under a
+`converting <file>` marker; `--verify` renders each model with OpenSCAD
+(Manifold, cheap) and classes a >2% volume disagreement as `mismatch`;
+`--report` groups failures by innermost scad123d/solid123d frame;
+`--list OUT CLASS` and `--show OUT PATH` for triage. Found a real bug
+while testing: an empty top-level model's CSG export is "\n", which
+import_csg's str heuristic treated as a *path* -> every library file
+would have been classed `missing`; the worker now parses explicitly.
+
+**Assistant** (follow-up, same branch): --verify's first run over the
+fixtures found three things, all mine or tessellation, none OpenSCAD's:
+(1) the mesh importer treated every non-largest shell as a *void* of the
+largest, so any multi-body render came back as an invalid solid
+(exact volume, is_valid False, both backends) -- voids are now decided by
+containment (BRepClass3d classifier, smallest enclosing shell, even
+depth = body / odd = cavity) after normalizing each component's winding,
+because a user polyhedron listed inside-out passes through Manifold
+inside-out (polyhedron.scad: 800 vs 1200) while CGAL repairs it;
+(2) comparing against OpenSCAD's default tessellation is not a fair
+check (an r=3 circle is a 9-gon, 8% under) -- the verify render now
+rewrites $fa/$fs to 1/0.2 (explicit $fn still wins), which brought
+agreement to <=0.11% on every fixture, so the bar is 1% (5% against the
+coarse render when our side has mesh-fallback regions); the check is
+BRep-free (mesh_volume) so a fine sphere render costs ms, not 10s;
+(3) minkowski_polyhedron.scad at 1.7% is the documented rung-1 choice
+(faceted polyhedron ball -> exact sphere), reported as a bucketed
+"1-2%" mismatch and explained in the README. 289 tests pass.
+
+**User**: 500-file corpus run: 112 failures. Analyze the patterns (no
+fixes), then: fix the verify false alarms (row 5) and dig into the
+"ours << OpenSCAD" drop bug.
+
+**Assistant**: Analysis by root cause: 2D geometry reaching the mesh
+fallback (21; OpenSCAD can't write 2D to 3MF), missing include files (13
+empty + >=7 errors; the dataset keeps one .scad per folder), OCCT union
+performance (9 of 12 timeouts, all in group()'s pairwise fuse),
+scad123d silently dropping most of a model (>=6 of the worst mismatches),
+--verify false alarms (bbox-based cavity rule), and 7 small gaps
+(non-planar polyhedron faces, offset(), stacked modifiers, unescaped
+quotes in text(), empty-compound intersection).
+Row 5: mesh_volume now takes body/cavity from winding, bbox only rescues
+an un-enclosable inside-out body; Fidget and extending_tube become exact
+matches, ball_bearings becomes a real 34% mismatch.
+Drop bug, two layers, both in solid123d's occt_workarounds (branch
+fix/clean-guard-tolerance): (1) the seam-bug clean guard's 1e-9 volume
+tolerance rejected 20 of 21 cleans as integration noise (~1e-7), so
+faces fragmented 26 -> 822 until OCCT's fuse returned an inverted 8-face
+shape; now 1e-5 (seam bug loses 17%, guard intact per user's note);
+(2) OCCT's exact fuse silently returns a valid-looking sliver when an
+operand nearly coincides with the result (for(i=[0:n]) duplicate at
+360 deg) -- now every boolean is bounded by its inputs and an implausible
+result is retried with fuzzy tolerance 1e-5, warned if still wrong.
+servo_arm_base 1.9 -> 454.2 (OpenSCAD 452.8), MCP_knobs exact. Also
+fixed scad123d-diff, which reported "agreement" whenever a side failed
+(its OpenSCAD side used the sewing importer, which raised); it now uses
+mesh_volume and reports uncomparable subtrees. Remaining: dps-600,
+polychannel, cube_picture, 196915 (negative volume), ball_bearings are
+other bugs; polychannel's run-to-run flip suggests OCCT RunParallel
+nondeterminism.
+
+**User**: Remember the open corpus bugs for later (saved to memory:
+corpus-open-bugs); work on the 2D fallback gap.
+
+**Assistant**: mesh._render now catches OpenSCAD's "not a 3D object",
+re-renders the subtree as a 1 mm linear_extrude, and takes the top faces
+(z = 1, +Z normal), merges the import's triangles with clean() into one
+face per island (holes kept) and moves them to z = 0 -- so a 2D hull
+beyond solid123d's closed forms (three circles, circle + square, circle
++ polygon/text), projection(), and 2D import() all work; volumes match
+OpenSCAD's own render of the extrusion to 1e-6. --verify compares area
+for a purely 2D model (`measure: area`) via the same unit extrusion.
+Probing showed two circles / two squares / faceted circles were already
+analytic, which is why the first tests "did not warn".

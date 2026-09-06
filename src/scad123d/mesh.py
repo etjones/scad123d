@@ -13,10 +13,11 @@ import copy
 import shutil
 import warnings
 
-from build123d import Mesher, Shape
+from build123d import Shape
 
 from .emit import emit
 from .errors import MeshFallbackWarning, OpenSCADRunError
+from .mesh_import import profile_from_unit_extrusion, read_mesh_file, unit_extrusion
 from .nodes import CsgNode
 from .openscad import export_mesh
 
@@ -40,8 +41,9 @@ def clear_cache() -> None:
 def mesh_subtree(node: CsgNode, timeout: float = 600) -> Shape | None:
     """Render one CSG subtree via OpenSCAD and import it as a build123d Shape.
 
-    3MF is used rather than STL: it carries manifold information, so the
-    imported solid needs less repair.
+    3MF is used rather than STL: it carries indexed (shared-vertex)
+    triangles, which mesh_import.py turns into exact BRep topology without
+    any sewing heuristics.
 
     Results are memoized on the emitted source. Every return -- including
     the first -- is a copy, so no caller ever holds the cached original:
@@ -65,9 +67,15 @@ def _render(source: str, timeout: float) -> Shape | None:
         # "failed" -- same contract as an empty boolean.
         if "Current top level object is empty" in str(exc):
             return None
+        # OpenSCAD only exports 3D to 3MF. A 2D subtree -- hull() of
+        # circles inside a linear_extrude is the everyday case -- is
+        # rendered as a 1 mm extrusion instead, and its top face is the
+        # profile. (15 of the first 500 corpus models needed this.)
+        if "not a 3D object" in str(exc):
+            return _render_2d(source, timeout)
         raise
     try:
-        shapes = Mesher().read(str(path))
+        shapes = read_mesh_file(path)
     finally:
         shutil.rmtree(path.parent, ignore_errors=True)
 
@@ -77,6 +85,15 @@ def _render(source: str, timeout: float) -> Shape | None:
     for extra in shapes[1:]:
         result = result + extra
     return result
+
+
+def _render_2d(source: str, timeout: float) -> Shape | None:
+    path = export_mesh(unit_extrusion(source), suffix=".3mf", timeout=timeout)
+    try:
+        shapes = read_mesh_file(path)
+    finally:
+        shutil.rmtree(path.parent, ignore_errors=True)
+    return profile_from_unit_extrusion(shapes) if shapes else None
 
 
 def warn_meshed(node_name: str, reason: str) -> None:

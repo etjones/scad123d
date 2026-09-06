@@ -32,6 +32,7 @@ from build123d import Shape
 from .build import BuildOptions, build
 from .emit import emit
 from .errors import OpenSCADRunError
+from .mesh_import import mesh_volume
 from .nodes import CsgNode
 from .openscad import export_csg, export_mesh
 from .parser import parse_csg
@@ -42,8 +43,6 @@ def _scad_volume(source: str, timeout: float) -> float | None:
     subtrees, None where OpenSCAD cannot mesh it (2D, or a real error)."""
     import shutil
 
-    from build123d import Mesher
-
     try:
         path = export_mesh(source, suffix=".3mf", timeout=timeout)
     except OpenSCADRunError as exc:
@@ -51,12 +50,15 @@ def _scad_volume(source: str, timeout: float) -> float | None:
             return 0.0
         return None
     try:
-        shapes = Mesher().read(str(path))
+        # Straight from the triangles: no BRep, so no sewing to fail on a
+        # big or awkward mesh (build123d's Mesher.read raised "BRep_API:
+        # command not done" on a 50-segment servo horn, which used to read
+        # as agreement).
+        return mesh_volume(path)
     except Exception:  # noqa: BLE001
         return None
     finally:
         shutil.rmtree(path.parent, ignore_errors=True)
-    return sum(s.volume for s in shapes)
 
 
 def _our_volume(node: CsgNode, options: BuildOptions) -> float | None:
@@ -82,25 +84,35 @@ class _Differ:
         self.out_dir = out_dir
         self.options = BuildOptions(timeout=timeout)
         self.culprits: list[tuple[str, CsgNode, float, float]] = []
+        self.unverifiable: list[tuple[str, str]] = []
         self.checked = 0
 
-    def _diverges(self, node: CsgNode) -> tuple[float, float] | None:
+    def _diverges(self, node: CsgNode, path: str = "?") -> tuple[float, float] | None:
+        """(ours, OpenSCAD) when they disagree; None when they agree -- or
+        when one side could not be computed, which is recorded rather than
+        silently counted as agreement."""
         ours = _our_volume(node, self.options)
         ref = _scad_volume(emit(node), self.timeout)
         self.checked += 1
         if ours is None or ref is None:
+            why = (
+                "scad123d failed to build it"
+                if ours is None
+                else "OpenSCAD could not mesh it"
+            )
+            self.unverifiable.append((f"{path} [{node.name}]", why))
             return None
         if abs(ours - ref) > self.tolerance * max(abs(ref), 1.0):
             return ours, ref
         return None
 
     def descend(self, node: CsgNode, path: str) -> None:
-        top = self._diverges(node)
+        top = self._diverges(node, path)
         if top is None:
             return
         divergent_children = []
         for i, child in enumerate(node.children):
-            if self._diverges(child) is not None:
+            if self._diverges(child, f"{path}.{i}") is not None:
                 divergent_children.append((i, child))
         if not divergent_children:
             self.culprits.append((path, node, *top))
@@ -136,10 +148,20 @@ def main(argv: list[str] | None = None) -> int:
     print(f"scad123d-diff: bisecting {args.input} ...", file=sys.stderr)
     differ.descend(tree, "root")
 
+    for where, why in differ.unverifiable:
+        print(f"could not compare {where}: {why}", file=sys.stderr)
     if not differ.culprits:
+        compared = differ.checked - len(differ.unverifiable)
+        if differ.unverifiable and differ.unverifiable[0][0].startswith("root "):
+            print("no comparison possible at the root; nothing verified")
+            return 2
         print(
-            f"agreement within {args.tolerance:.0%} everywhere "
-            f"({differ.checked} subtrees checked)"
+            f"agreement within {args.tolerance:.0%} on {compared} subtrees"
+            + (
+                f" ({len(differ.unverifiable)} could not be compared)"
+                if differ.unverifiable
+                else ""
+            )
         )
         return 0
 

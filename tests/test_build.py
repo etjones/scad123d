@@ -1030,3 +1030,26 @@ class TestEmptySubtrees:
         )
         shape = scad123d.import_csg(source)
         assert shape.volume == pytest.approx(1000, rel=1e-9)
+
+
+class TestSilentBooleanFailure:
+    """A servo-horn gear from the CodeCAD corpus (tests/fixtures/servo_teeth.csg):
+    ``for (i = [0 : teeth])`` with 25 teeth lays a 26th wedge pair exactly on
+    the first, off by rotation-matrix noise. OCCT's exact fuse of that last
+    operand returned a *valid* 17 mm^3 shape for a 207 mm^3 union -- and,
+    once solid123d's clean guard had rejected every clean as noise (its
+    tolerance was 1e-9 against ~1e-7 of integration noise), an inverted
+    8-face shape. The whole model then came out as 1.9 mm^3. Both layers
+    are fixed in solid123d's occt_workarounds; this pins the end result.
+    """
+
+    def test_near_coincident_duplicate_operand_fuses_correctly(self):
+        from solid123d import occt_workarounds
+
+        if not hasattr(occt_workarounds, "BOOLEAN_RETRY_FUZZ"):
+            pytest.skip("needs solid123d with the boolean plausibility retry")
+        node = scad123d.parse_csg_file(FIXTURES / "servo_teeth.csg")
+        shape = scad123d.import_csg(node)
+        assert shape.is_valid
+        # OpenSCAD's own render of the same subtree: 206.7995
+        assert shape.volume == pytest.approx(206.80, rel=1e-3)

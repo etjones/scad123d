@@ -5,10 +5,21 @@ Tier 2 (needs_openscad): actually converting a file, via main() end to end.
 """
 
 import argparse
+import io
+import json
+import subprocess
 
 import pytest
 
-from scad123d.cli import _build_parser, _override, _parse_value, main
+from scad123d.cli import (
+    _build_parser,
+    _override,
+    _parse_value,
+    classify,
+    main,
+    run_batch,
+)
+from scad123d.errors import MeshImportError, OpenSCADRunError, UnsupportedNodeError
 
 
 def test_parse_value_recognizes_booleans():
@@ -246,3 +257,112 @@ def test_dash_p_selects_a_set(tmp_path, capsys):
     assert "parameter set 'a'" in capsys.readouterr().err
     part = import_step(str(tmp_path / "box.step"))
     assert part.bounding_box().size.X == pytest.approx(20)
+
+
+# --- batch (worker) mode -------------------------------------------------------
+
+
+def test_classify_maps_exceptions_to_ledger_classes():
+    assert classify(OpenSCADRunError("x"))[0] == "openscad-error"
+    assert (
+        classify(UnsupportedNodeError("the CSG tree produced no geometry"))[0]
+        == "empty"
+    )
+    assert classify(UnsupportedNodeError("weird node"))[0] == "unsupported"
+    assert classify(MeshImportError("x"))[0] == "mesh-error"
+    assert classify(FileNotFoundError("x"))[0] == "missing"
+    assert classify(subprocess.TimeoutExpired("openscad", 5))[0] == "timeout"
+    assert classify(ValueError("x"))[0] == "error"
+
+    class Standard_Failure(Exception):
+        pass
+
+    assert classify(Standard_Failure("boom"))[0] == "occt-error"
+
+
+def test_batch_rejects_a_positional_input():
+    with pytest.raises(SystemExit):
+        main(["--batch", "x.scad"])
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_converts_and_classifies_per_line(tmp_path):
+    scad = tmp_path / "box.scad"
+    scad.write_text("cube([10, 10, 10]);")
+    tasks = io.StringIO(
+        json.dumps(
+            {
+                "input": str(scad),
+                "output": str(tmp_path / "box.step"),
+                "csg": str(tmp_path / "box.csg"),
+            }
+        )
+        + "\n"
+        + json.dumps({"input": str(tmp_path / "missing.scad")})
+        + "\n"
+        + "not json\n"
+    )
+    results = io.StringIO()
+    defaults = _build_parser().parse_args(["--batch"])
+    assert run_batch(tasks, results, defaults) == 0
+    lines = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert [r["status"] for r in lines] == ["ok", "missing", "error"]
+    assert (tmp_path / "box.step").stat().st_size > 0
+    assert "cube(size = [10, 10, 10]" in (tmp_path / "box.csg").read_text()
+    assert lines[0]["seconds"] > 0 and lines[0]["peak_rss_mb"] > 0
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_verify_cross_checks_volume_against_openscad(tmp_path):
+    scad = tmp_path / "box.scad"
+    scad.write_text("cube([10, 10, 10]);")
+    tasks = io.StringIO(
+        json.dumps(
+            {"input": str(scad), "output": str(tmp_path / "box.step"), "verify": True}
+        )
+        + "\n"
+    )
+    results = io.StringIO()
+    assert run_batch(tasks, results, _build_parser().parse_args(["--batch"])) == 0
+    (result,) = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert result["status"] == "ok"
+    assert result["volume"] == pytest.approx(1000)
+    assert result["scad_volume"] == pytest.approx(1000)
+    assert result["openscad_warnings"] == []
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_keeps_openscad_warnings_and_tracebacks(tmp_path):
+    scad = tmp_path / "lib.scad"
+    scad.write_text("module unused() { cube(1); }\nnot_a_module();\n")
+    tasks = io.StringIO(
+        json.dumps({"input": str(scad), "output": str(tmp_path / "o.step")}) + "\n"
+    )
+    results = io.StringIO()
+    run_batch(tasks, results, _build_parser().parse_args(["--batch"]))
+    (result,) = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert result["status"] == "empty"
+    assert any("not_a_module" in w for w in result["openscad_warnings"])
+    assert "UnsupportedNodeError" in result["traceback"]
+    assert result["stage"] == "build"
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_verify_compares_area_for_a_2d_model(tmp_path):
+    scad = tmp_path / "flat.scad"
+    scad.write_text(
+        "difference() { square(10); translate([5, 5]) circle(2, $fn = 16); }"
+    )
+    tasks = io.StringIO(
+        json.dumps(
+            {"input": str(scad), "output": str(tmp_path / "flat.step"), "verify": True}
+        )
+        + "\n"
+    )
+    results = io.StringIO()
+    assert run_batch(tasks, results, _build_parser().parse_args(["--batch"])) == 0
+    (result,) = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert result["status"] == "ok", result.get("message")
+    assert result["measure"] == "area"
+    assert result["volume"] == pytest.approx(result["scad_volume"], rel=1e-6)
+    assert 87 < result["volume"] < 88  # 100 - 16-gon of r=2 (~12.2)
