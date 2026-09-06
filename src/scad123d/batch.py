@@ -217,6 +217,17 @@ class Ledger:
             ).fetchall()
         return rows[0] if len(rows) == 1 else None
 
+    def counts(self) -> Counter[str]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT status, COUNT(*) FROM files GROUP BY status"
+            ).fetchall()
+        return Counter(dict(rows))
+
+    def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
+        with self._lock:
+            return self._db.execute(sql, params).fetchall()
+
 
 # --- discovery --------------------------------------------------------------
 
