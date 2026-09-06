@@ -38,7 +38,13 @@ FAKE_WORKER = textwrap.dedent(
         if name.startswith("slow"):
             # like a worker mid-render: a child that would outlive us
             import subprocess
-            child = subprocess.Popen(["sleep", "300"])
+            # stdio detached, as a real OpenSCAD child's is (subprocess.run
+            # gives it its own pipes): otherwise the child would keep the
+            # worker's stdout pipe open after the worker is killed, and the
+            # harness's readline would wait on it.
+            child = subprocess.Popen(
+                ["sleep", "300"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             print(f"child pid {child.pid}", file=sys.stderr, flush=True)
             time.sleep(30)
         if name.startswith("bad"):

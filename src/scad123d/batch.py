@@ -230,13 +230,20 @@ class Ledger:
 
 
 def _kill_group(proc: subprocess.Popen[str]) -> None:
-    """SIGKILL a worker and everything it spawned (its OpenSCAD renders)."""
+    """Kill a worker and everything it spawned (its OpenSCAD renders)."""
     if hasattr(os, "killpg"):
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             return
         except (ProcessLookupError, PermissionError, OSError):
             pass
+    elif sys.platform == "win32":
+        # No process groups to signal; taskkill /T walks the process tree.
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
     proc.kill()
 
 
