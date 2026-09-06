@@ -1193,3 +1193,17 @@ kill past the per-worker limit (class `memory`), aggregate budget and
 free-memory floor kill the largest worker, defaults from RAM and -j
 (60% of RAM shared, >=2 GB each), leak recycling at half the limit,
 dashboard totals. Tests allocate for real. Unreleased (weekly cadence).
+
+**User**: Merge #24, #25, #26 into main; add the Liberation font.
+
+**Assistant**: Installed font-liberation (12 faces; OCCT now finds
+OpenSCAD's default font for text()). Merged #24; merged main into #25
+(conflicts in batch.py/test_batch.py: kept retry-first + --limit 0 +
+exclude()), CI green, merged. #26 was auto-closed when its base branch was
+deleted -- GitHub closes stacked PRs rather than retargeting -- so its
+branch was re-opened as #27 against main; its earlier CI failures were
+(a) macOS runners under the fixed 3 GB free-memory floor, now 3 GB or a
+tenth of RAM and the fake-worker fixture disables limits by default, and
+(b) an uncommitted `scad123d-artifacts` work-in-progress that my
+`git add -A` had swept into the branch and whose Windows test fails;
+lifted back out and left in the working tree as it was. #27 merged.
