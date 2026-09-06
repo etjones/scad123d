@@ -1055,3 +1055,17 @@ mesh_volume and reports uncomparable subtrees. Remaining: dps-600,
 polychannel, cube_picture, 196915 (negative volume), ball_bearings are
 other bugs; polychannel's run-to-run flip suggests OCCT RunParallel
 nondeterminism.
+
+**User**: Remember the open corpus bugs for later (saved to memory:
+corpus-open-bugs); work on the 2D fallback gap.
+
+**Assistant**: mesh._render now catches OpenSCAD's "not a 3D object",
+re-renders the subtree as a 1 mm linear_extrude, and takes the top faces
+(z = 1, +Z normal), merges the import's triangles with clean() into one
+face per island (holes kept) and moves them to z = 0 -- so a 2D hull
+beyond solid123d's closed forms (three circles, circle + square, circle
++ polygon/text), projection(), and 2D import() all work; volumes match
+OpenSCAD's own render of the extrusion to 1e-6. --verify compares area
+for a purely 2D model (`measure: area`) via the same unit extrusion.
+Probing showed two circles / two squares / faceted circles were already
+analytic, which is why the first tests "did not warn".

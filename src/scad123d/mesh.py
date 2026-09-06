@@ -17,7 +17,7 @@ from build123d import Shape
 
 from .emit import emit
 from .errors import MeshFallbackWarning, OpenSCADRunError
-from .mesh_import import read_mesh_file
+from .mesh_import import profile_from_unit_extrusion, read_mesh_file, unit_extrusion
 from .nodes import CsgNode
 from .openscad import export_mesh
 
@@ -67,6 +67,12 @@ def _render(source: str, timeout: float) -> Shape | None:
         # "failed" -- same contract as an empty boolean.
         if "Current top level object is empty" in str(exc):
             return None
+        # OpenSCAD only exports 3D to 3MF. A 2D subtree -- hull() of
+        # circles inside a linear_extrude is the everyday case -- is
+        # rendered as a 1 mm extrusion instead, and its top face is the
+        # profile. (15 of the first 500 corpus models needed this.)
+        if "not a 3D object" in str(exc):
+            return _render_2d(source, timeout)
         raise
     try:
         shapes = read_mesh_file(path)
@@ -79,6 +85,15 @@ def _render(source: str, timeout: float) -> Shape | None:
     for extra in shapes[1:]:
         result = result + extra
     return result
+
+
+def _render_2d(source: str, timeout: float) -> Shape | None:
+    path = export_mesh(unit_extrusion(source), suffix=".3mf", timeout=timeout)
+    try:
+        shapes = read_mesh_file(path)
+    finally:
+        shutil.rmtree(path.parent, ignore_errors=True)
+    return profile_from_unit_extrusion(shapes) if shapes else None
 
 
 def warn_meshed(node_name: str, reason: str) -> None:

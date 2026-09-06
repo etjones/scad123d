@@ -345,3 +345,24 @@ def test_run_batch_keeps_openscad_warnings_and_tracebacks(tmp_path):
     assert any("not_a_module" in w for w in result["openscad_warnings"])
     assert "UnsupportedNodeError" in result["traceback"]
     assert result["stage"] == "build"
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_verify_compares_area_for_a_2d_model(tmp_path):
+    scad = tmp_path / "flat.scad"
+    scad.write_text(
+        "difference() { square(10); translate([5, 5]) circle(2, $fn = 16); }"
+    )
+    tasks = io.StringIO(
+        json.dumps(
+            {"input": str(scad), "output": str(tmp_path / "flat.step"), "verify": True}
+        )
+        + "\n"
+    )
+    results = io.StringIO()
+    assert run_batch(tasks, results, _build_parser().parse_args(["--batch"])) == 0
+    (result,) = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert result["status"] == "ok", result.get("message")
+    assert result["measure"] == "area"
+    assert result["volume"] == pytest.approx(result["scad_volume"], rel=1e-6)
+    assert 87 < result["volume"] < 88  # 100 - 16-gon of r=2 (~12.2)

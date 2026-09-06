@@ -84,6 +84,14 @@ the largest as the outer boundary and the rest as voids — and checks the
 result's volume against the triangles' own. A disagreement raises
 `MeshImportError` rather than returning a wrong shape.
 
+OpenSCAD only exports 3D to 3MF, so a **2D** subtree taking the fallback —
+a `hull()` beyond the closed forms (three circles, a circle and a square),
+`projection()`, a 2D `import()` — is rendered as a 1 mm `linear_extrude`
+instead, and its top face, merged back from the render's triangles into
+one face per island with holes intact, is the profile: at z = 0, facing
++Z, like every other 2D shape in the pipeline. The same trick lets
+`scad123d-batch --verify` check a purely 2D model by area.
+
 ## Calling a module, or a whole file's worth of them
 
 There is no OpenSCAD-level operation for "just run this one module" — a

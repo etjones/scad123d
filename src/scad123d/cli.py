@@ -49,7 +49,7 @@ from .errors import (
 )
 from .facets import DEFAULT_FACET_THRESHOLD
 from .mesh import clear_cache
-from .mesh_import import mesh_volume
+from .mesh_import import mesh_volume, unit_extrusion
 from .openscad import export_csg_with_warnings, export_mesh
 from .parser import parse_csg
 
@@ -371,8 +371,11 @@ def refine_tessellation(csg_text: str) -> str:
     return _TESSELLATION.sub("$fa = 1, $fs = 0.2", csg_text)
 
 
-def _openscad_volume(csg_text: str, timeout: float) -> float:
-    """Volume of OpenSCAD's own full render of the model (0 if empty)."""
+def _openscad_volume(csg_text: str, timeout: float, two_d: bool = False) -> float:
+    """Volume of OpenSCAD's own full render of the model (0 if empty); for
+    a 2D model, its area, via a 1 mm extrusion."""
+    if two_d:
+        csg_text = unit_extrusion(csg_text)
     try:
         path = export_mesh(csg_text, suffix=".3mf", timeout=timeout)
     except OpenSCADRunError as exc:
@@ -393,10 +396,15 @@ def _relative_error(ours: float, theirs: float) -> float:
 def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> None:
     """Cross-check the built part against OpenSCAD's render; sets status."""
     assert conversion.part is not None
-    ours = abs(conversion.part.volume)
-    fine = _openscad_volume(refine_tessellation(csg_text), conversion.timeout)
+    # A purely 2D model has no volume to compare; its area is the same
+    # check, and OpenSCAD's render of a 1 mm extrusion measures it.
+    two_d = not conversion.part.solids()
+    ours = abs(conversion.part.area if two_d else conversion.part.volume)
+    fine = _openscad_volume(refine_tessellation(csg_text), conversion.timeout, two_d)
     result["volume"] = round(ours, 6)
     result["scad_volume"] = round(fine, 6)
+    if two_d:
+        result["measure"] = "area"
     error = _relative_error(ours, fine)
     if error <= VERIFY_TOLERANCE:
         return
@@ -404,7 +412,7 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
         # Our meshed regions were rendered at the model's own coarse
         # tessellation, so compare against that render too; a real bug
         # disagrees with both.
-        coarse = _openscad_volume(csg_text, conversion.timeout)
+        coarse = _openscad_volume(csg_text, conversion.timeout, two_d)
         coarse_error = _relative_error(ours, coarse)
         if coarse_error <= VERIFY_TOLERANCE_COARSE:
             result["message"] = (

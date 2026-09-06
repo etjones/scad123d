@@ -26,7 +26,7 @@ instead of returning a wrong shape.
 import math
 from pathlib import Path
 
-from build123d import Compound, Mesher, Shape, Shell, Solid
+from build123d import Compound, Mesher, Pos, Shape, Shell, Solid
 from OCP.BRep import BRep_Builder
 from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
@@ -356,3 +356,26 @@ def mesh_volume(path: str | Path) -> float:
             )
             total += volume if enclosable else -volume
     return total
+
+
+def unit_extrusion(csg_source: str) -> str:
+    """The CSG source wrapped in a 1 mm ``linear_extrude`` -- the way to get
+    OpenSCAD to render 2D geometry, which it will not export to 3MF."""
+    return f"linear_extrude(height = 1, center = false, convexity = 10) {{\n{csg_source}\n}}"
+
+
+def profile_from_unit_extrusion(shapes: list[Shape]) -> Shape | None:
+    """Recover the 2D region a unit extrusion was made from: its top faces,
+    merged from the import's triangles into one face per island (holes
+    kept), and moved back to z = 0 with +Z normals, matching how every
+    other 2D shape in the pipeline is built."""
+    faces = [
+        f
+        for s in shapes
+        for f in s.faces()
+        if abs(f.center().Z - 1.0) < 1e-6 and f.normal_at().Z > 0.5
+    ]
+    if not faces:
+        return None
+    merged = Compound(faces).clean()
+    return Pos(0, 0, -1) * merged
