@@ -1053,3 +1053,44 @@ class TestSilentBooleanFailure:
         assert shape.is_valid
         # OpenSCAD's own render of the same subtree: 206.7995
         assert shape.volume == pytest.approx(206.80, rel=1e-3)
+
+
+_MIRROR_X_AT_12 = [[-1, 0, 0, 12], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+
+
+class TestReflectionOrientation:
+    """A reflected solid must be right side out (FORWARD, faces outward):
+    a REVERSED-flagged solid is silently dropped by OCCT's multi-argument
+    fuse wherever it overlaps another operand, which is how a mirrored
+    servo horn lost half its teeth once unions became N-ary."""
+
+    def test_mirrored_solid_is_forward_oriented(self):
+        from OCP.TopAbs import TopAbs_Orientation
+
+        cube = scad123d.import_csg("cube(size = [10, 10, 10], center = false);")
+        mirrored = apply_matrix(cube, _MIRROR_X_AT_12)
+        assert mirrored.wrapped.Orientation() == TopAbs_Orientation.TopAbs_FORWARD
+        assert mirrored.volume == pytest.approx(1000)
+        assert mirrored.is_valid
+
+    def test_mirrored_solid_survives_an_nary_fuse(self):
+        from build123d import Box, Pos
+
+        cube = scad123d.import_csg("cube(size = [10, 10, 10], center = false);")
+        mirrored = apply_matrix(cube, _MIRROR_X_AT_12)  # spans x in [2, 12]
+        a, b = Box(10, 10, 10).moved(Pos(5, 5, 5)), Pos(11, 5, 5) * Box(10, 10, 10)
+        pairwise = ((a + b) + mirrored).volume
+        nary = a.fuse(b, mirrored).volume
+        assert nary == pytest.approx(pairwise, rel=1e-9)
+        assert nary == pytest.approx(16 * 10 * 10)  # spans x in [0, 16] as one bar
+
+    def test_mirrored_hollow_solid_keeps_its_cavity(self):
+        hollow = scad123d.import_csg(
+            "difference() {\n"
+            "\tcube(size = [10, 10, 10], center = true);\n"
+            "\tcube(size = [4, 4, 4], center = true);\n}"
+        )
+        mirrored = apply_matrix(hollow, _MIRROR_X_AT_12)
+        assert mirrored.is_valid
+        assert len(mirrored.shells()) == 2
+        assert mirrored.volume == pytest.approx(1000 - 64)
