@@ -75,7 +75,7 @@ KNOWN_LIBRARIES: list[tuple[str, str, str]] = [
     (
         r"(^|/)[Ww]rite\.scad$",
         "Write.scad",
-        "https://github.com/HarlanDMii/Write.scad (install as write/Write.scad with its fonts)",
+        "https://github.com/rohieb/Write.scad (mirror; install as write/Write.scad with its .dxf fonts)",
     ),
     (
         r"(^|/)threads\.scad$",
@@ -185,8 +185,13 @@ def thing_of(path: Path) -> str | None:
     return head if sep and tail.isdigit() and head else None
 
 
-def scan(root: Path, dirs: list[Path] | None = None) -> Report:
-    """Find every include that would not resolve, and classify it."""
+def scan(
+    root: Path, dirs: list[Path] | None = None, overlay: Path | None = None
+) -> Report:
+    """Find every include that would not resolve, and classify it.
+
+    ``overlay`` is a tree written by ``resolve``/``fetch``: each model's
+    mirror folder in it counts as resolvable for that model."""
     dirs = library_dirs() if dirs is None else dirs
     report = Report()
     by_thing: dict[str, dict[str, Path]] = defaultdict(
@@ -204,7 +209,8 @@ def scan(root: Path, dirs: list[Path] | None = None) -> Report:
             wanted = includes_of(path.read_text(errors="replace"))
         except OSError:
             continue
-        unresolved = [inc for inc in wanted if not resolves(inc, path.parent, dirs)]
+        search = ([overlay_dir(overlay, root, path)] if overlay else []) + dirs
+        unresolved = [inc for inc in wanted if not resolves(inc, path.parent, search)]
         if not unresolved:
             continue
         report.with_missing += 1
@@ -389,9 +395,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     dirs = library_dirs(args.library_dir)
-    if args.command in ("resolve", "fetch"):
-        dirs = [overlay_dir(args.overlay, args.root, args.root / "x.scad")] + dirs
-    report = scan(args.root, dirs)
+    overlay = args.overlay if args.command in ("resolve", "fetch") else None
+    report = scan(args.root, dirs, overlay=overlay)
     if args.command == "scan":
         _print_summary(report)
         if args.json:

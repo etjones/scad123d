@@ -44,7 +44,7 @@ def test_thing_of_parses_scraped_folder_names(tmp_path):
 def _corpus(root: Path) -> None:
     (root / "0100_0").mkdir(parents=True)
     (root / "0100_0" / "body.scad").write_text(
-        "use <helpers.scad>\ninclude <config.scad>\nuse <write/Write.scad>\ncube(1);\n"
+        "use <helpers.scad>\ninclude <config.scad>\nuse <nutsnbolts/never_there.scad>\ncube(1);\n"
     )
     (root / "0100_1").mkdir()
     (root / "0100_1" / "helpers.scad").write_text("module h() cube(2);\n")
@@ -64,10 +64,10 @@ def test_scan_classifies_library_sibling_and_absent(tmp_path):
     assert kinds == {
         ("helpers.scad", "sibling"),
         ("config.scad", "absent"),  # another thing's config.scad must not be used
-        ("write/Write.scad", "library"),
+        ("nutsnbolts/never_there.scad", "library"),
     }
     lib = next(m for m in report.missing if m.kind == "library")
-    assert lib.library == "Write.scad" and "HarlanDMii" in lib.source
+    assert lib.library == "nutsnbolts" and "JohK" in lib.source
     sib = next(m for m in report.missing if m.kind == "sibling")
     assert sib.sibling == tmp_path / "0100_1" / "helpers.scad"
 
@@ -75,10 +75,10 @@ def test_scan_classifies_library_sibling_and_absent(tmp_path):
 def test_library_dir_makes_an_include_resolvable(tmp_path):
     _corpus(tmp_path)
     libs = tmp_path / "libs"
-    (libs / "write").mkdir(parents=True)
-    (libs / "write" / "Write.scad").write_text("")
+    (libs / "nutsnbolts").mkdir(parents=True)
+    (libs / "nutsnbolts" / "never_there.scad").write_text("")
     report = scan(tmp_path, dirs=[libs])
-    assert "write/Write.scad" not in {m.include for m in report.missing}
+    assert "nutsnbolts/never_there.scad" not in {m.include for m in report.missing}
 
 
 def test_resolve_siblings_writes_the_overlay_only_when_applied(tmp_path):
@@ -174,7 +174,7 @@ def test_cli_scan_prints_a_summary_and_json(tmp_path, capsys):
         == 0
     )
     text = capsys.readouterr().out
-    assert "known libraries to install" in text and "Write.scad" in text
+    assert "known libraries to install" in text and "nutsnbolts" in text
     assert "absent files" in text and "config.scad" in text
     kinds = {(e["include"], e["kind"]) for e in json.loads(out.read_text())}
     assert ("helpers.scad", "sibling") in kinds

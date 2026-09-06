@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import includes
 from .cli import (
     CLASS_ERROR,
     CLASS_OK,
@@ -51,6 +52,7 @@ from .includes import overlay_dir
 
 CLASS_CRASH = "crash"
 STATUS_PENDING = "pending"
+STATUS_EXCLUDED = "excluded"  # deliberately out of the run (unresolved includes)
 
 # Seconds past the worker's own OpenSCAD timeout before the harness kills
 # it: covers a build that hangs inside OCCT, which no timeout inside the
@@ -144,6 +146,19 @@ class Ledger:
             self._db.commit()
             return cur.rowcount
 
+    def exclude(self, reasons: dict[str, str]) -> int:
+        """Take files out of the run: status ``excluded`` with the reason,
+        whatever their status was (a hollow "ok" included). ``--retry
+        excluded`` brings them back."""
+        with self._lock:
+            for path, reason in reasons.items():
+                self._db.execute(
+                    "UPDATE files SET status=?, message=?, updated=? WHERE path=?",
+                    (STATUS_EXCLUDED, reason, time.time(), path),
+                )
+            self._db.commit()
+        return len(reasons)
+
     def pending(self) -> list[tuple[str, str]]:
         """(path, sha256) of every file still to convert."""
         with self._lock:
@@ -228,6 +243,24 @@ class Ledger:
     def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
         with self._lock:
             return self._db.execute(sql, params).fetchall()
+
+
+def exclude_unresolved(batch: "Batch", apply: bool = True) -> int:
+    """Mark every model with an unresolvable include as excluded.
+
+    Uses the static scanner (no OpenSCAD run), honoring the include overlay
+    if one is configured. A model that converted earlier but has a missing
+    include is excluded too: its result was a hollow render.
+    """
+    report = includes.scan(batch.source, overlay=batch.include_overlay)
+    missing: dict[str, list[str]] = {}
+    for m in report.missing:
+        missing.setdefault(str(m.file), []).append(m.include)
+    reasons = {
+        path: "unresolved include: " + ", ".join(sorted(set(incs)))
+        for path, incs in missing.items()
+    }
+    return batch.ledger.exclude(reasons) if apply else len(reasons)
 
 
 def _kill_group(proc: subprocess.Popen[str]) -> None:
@@ -426,7 +459,7 @@ class Batch:
             tasks.sort(key=lambda t: Path(t.path).stat().st_size, reverse=True)
         else:
             tasks.sort(key=lambda t: t.path)
-        return tasks[:limit] if limit else tasks
+        return tasks[:limit] if limit is not None else tasks
 
     def _finish_duplicate(self, path: str, canonical: str) -> None:
         src = self.output_for(canonical)
@@ -974,6 +1007,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="overlay tree of supplied includes (from scad123d-includes resolve/fetch); "
         "each model's mirror folder goes on OPENSCADPATH for that model",
     )
+    parser.add_argument(
+        "--skip-unresolved-includes",
+        action="store_true",
+        help="exclude models with an include/use that does not resolve (OpenSCAD "
+        "would render them hollow with only a warning); they get status 'excluded'",
+    )
     parser.add_argument("--dry-run", action="store_true", help="scan and plan only")
     parser.add_argument("--no-dashboard", action="store_true", help="plain log lines")
     parser.add_argument(
@@ -1028,6 +1067,13 @@ def main(argv: list[str] | None = None) -> int:
     elif args.retry:
         n = batch.ledger.reset({c.strip() for c in args.retry.split(",") if c.strip()})
         print(f"scad123d-batch: re-queued {n} files", file=sys.stderr)
+    if args.skip_unresolved_includes:
+        n = exclude_unresolved(batch, apply=not args.dry_run)
+        print(
+            f"scad123d-batch: {'would exclude' if args.dry_run else 'excluded'} {n} models whose includes do not resolve "
+            "(scad123d-includes scan shows why; --retry excluded to reconsider)",
+            file=sys.stderr,
+        )
     tasks = batch.plan(limit=args.limit, order=args.order)
     counts = batch.ledger.counts()
     print(

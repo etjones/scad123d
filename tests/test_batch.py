@@ -390,3 +390,52 @@ def test_include_overlay_reaches_the_worker_as_openscadpath(fake_batch, tmp_path
     assert json.loads(message)["openscadpath"] == str(
         (tmp_path / "overlay" / "0100_0").resolve()
     )
+
+
+def test_skip_unresolved_includes_excludes_and_retry_restores(tmp_path, capsys):
+    from scad123d.batch import STATUS_EXCLUDED
+
+    src = tmp_path / "src"
+    _tree(src, ["0100_0/whole.scad"], content="cube(1);")
+    _tree(src, ["0200_0/hollow.scad"], content="use <gone.scad>\ncube(1);")
+    out = tmp_path / "out"
+    assert (
+        main([str(src), "-o", str(out), "--skip-unresolved-includes", "--dry-run"]) == 0
+    )
+    err = capsys.readouterr().err
+    assert "would exclude 1 models" in err and "2 to convert" in err  # dry run: nothing written
+    assert (
+        main([str(src), "-o", str(out), "--skip-unresolved-includes", "--limit", "0"])
+        == 0
+    )
+    capsys.readouterr()
+    ledger = Ledger(out / "ledger.sqlite")
+    rows = dict(ledger.query("SELECT path, status FROM files"))
+    assert rows[str(src / "0200_0" / "hollow.scad")] == STATUS_EXCLUDED
+    assert rows[str(src / "0100_0" / "whole.scad")] == STATUS_PENDING
+    (message,) = ledger.query(
+        "SELECT message FROM files WHERE status=?", (STATUS_EXCLUDED,)
+    )[0]
+    assert message == "unresolved include: gone.scad"
+    # an overlay that supplies the file un-excludes it on the next pass
+    ledger.close()
+    overlay = tmp_path / "overlay" / "0200_0"
+    overlay.mkdir(parents=True)
+    (overlay / "gone.scad").write_text("")
+    assert (
+        main(
+            [
+                str(src),
+                "-o",
+                str(out),
+                "--skip-unresolved-includes",
+                "--retry",
+                "excluded",
+                "--include-overlay",
+                str(tmp_path / "overlay"),
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert "would exclude 0 models" in capsys.readouterr().err
