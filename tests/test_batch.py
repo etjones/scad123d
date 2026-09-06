@@ -115,7 +115,7 @@ def test_discover_skips_hidden_dirs_empty_files_and_other_suffixes(tmp_path):
 def test_ledger_tracks_status_and_reverts_changed_files(tmp_path):
     ledger = Ledger(tmp_path / "l.sqlite")
     ledger.discover("/x/a.scad", 10, 1.0, "sha-a")
-    assert ledger.pending() == [("/x/a.scad", "sha-a")]
+    assert ledger.pending() == [("/x/a.scad", "sha-a", False)]
     ledger.record("/x/a.scad", CLASS_OK, seconds=0.5)
     assert ledger.pending() == []
     assert ledger.counts() == {CLASS_OK: 1}
@@ -124,7 +124,7 @@ def test_ledger_tracks_status_and_reverts_changed_files(tmp_path):
     assert ledger.pending() == []
     # edited: back to pending
     ledger.discover("/x/a.scad", 12, 2.0, "sha-a2")
-    assert ledger.pending() == [("/x/a.scad", "sha-a2")]
+    assert ledger.pending() == [("/x/a.scad", "sha-a2", True)]  # tried before
 
 
 def test_ledger_reset_requeues_only_the_named_classes(tmp_path):
@@ -484,3 +484,20 @@ def test_memory_defaults_derive_from_ram_and_jobs(tmp_path):
     assert b.max_rss == pytest.approx(max(2048, 0.6 * total / 4))
     assert b.memory_budget == pytest.approx(0.6 * total)
     assert b.min_free == 3 * 1024
+
+
+def test_requeued_files_come_before_never_seen_ones(fake_batch):
+    # `--retry X --limit N` must redo the X files, not N random pending ones.
+    batch = fake_batch(["bad.scad"])
+    _tree(batch.source, [f"fresh{i}.scad" for i in range(5)], content="sphere(1);")
+    for i in range(5):
+        (batch.source / f"fresh{i}.scad").write_text(f"sphere({i + 1});")
+    batch.scan()
+    batch.run(
+        batch.plan(order="name", limit=1), dashboard=None
+    )  # converts bad.scad -> fails
+    assert batch.ledger.counts()["openscad-error"] == 1
+    assert batch.ledger.reset({"openscad-error"}) == 1
+    tasks = batch.plan(order="shuffle", limit=2)
+    assert tasks[0].path.endswith("bad.scad") and tasks[0].retry
+    assert not tasks[1].retry

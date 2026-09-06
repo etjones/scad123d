@@ -160,12 +160,18 @@ class Ledger:
             self._db.commit()
         return len(reasons)
 
-    def pending(self) -> list[tuple[str, str]]:
-        """(path, sha256) of every file still to convert."""
+    def pending(self) -> list[tuple[str, str, bool]]:
+        """(path, sha256, tried-before) of every file still to convert.
+
+        ``tried-before`` marks a file that has a prior result -- one
+        --retry (or a change on disk) sent back to pending -- so the plan
+        can put it ahead of never-seen files."""
         with self._lock:
-            return self._db.execute(
-                "SELECT path, sha256 FROM files WHERE status = ?", (STATUS_PENDING,)
+            rows = self._db.execute(
+                "SELECT path, sha256, attempts FROM files WHERE status = ?",
+                (STATUS_PENDING,),
             ).fetchall()
+        return [(path, sha, attempts > 0) for path, sha, attempts in rows]
 
     def ok_by_sha(self) -> dict[str, str]:
         """sha256 -> path of one already-converted file per content hash."""
@@ -361,6 +367,7 @@ class Task:
     output: Path
     csg: Path | None
     siblings: list[str] = field(default_factory=list)  # same-content inputs
+    retry: bool = False  # had a result before; --retry or a file change re-queued it
 
 
 @dataclass
@@ -497,24 +504,32 @@ class Batch:
         pending = self.ledger.pending()
         already = self.ledger.ok_by_sha()
         by_sha: dict[str, list[str]] = {}
+        tried: set[str] = set()
         tasks: list[Task] = []
-        for path, sha in pending:
+        for path, sha, tried_before in pending:
             if sha in already:
                 # Same bytes as a finished file: link its output, no work.
                 self._finish_duplicate(path, already[sha])
                 continue
             by_sha.setdefault(sha, []).append(path)
-        for members in by_sha.values():
+            if tried_before:
+                tried.add(sha)
+        for sha, members in by_sha.items():
             first, *rest = members
             output = self.output_for(first)
             csg = output.with_suffix(".csg") if self.keep_csg else None
-            tasks.append(Task(first, output, csg, rest))
+            tasks.append(Task(first, output, csg, rest, retry=sha in tried))
         if order == "shuffle":
             random.Random(0).shuffle(tasks)
         elif order == "size":
             tasks.sort(key=lambda t: Path(t.path).stat().st_size, reverse=True)
         else:
             tasks.sort(key=lambda t: t.path)
+        # Re-queued files go first, whatever the order: `--retry timeout
+        # --limit 300` means "redo those", not "300 random pending files"
+        # -- which, with 75k never-seen files also pending, is what a
+        # shuffle alone delivered.
+        tasks.sort(key=lambda t: not t.retry)
         return tasks[:limit] if limit is not None else tasks
 
     def _finish_duplicate(self, path: str, canonical: str) -> None:
