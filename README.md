@@ -362,18 +362,6 @@ app token, `$THINGIVERSE_TOKEN`); and `scad123d-batch --include-overlay DIR`
 puts each model's overlay folder on `OPENSCADPATH` for that model. Nothing
 touches the corpus itself.
 
-**Everything in one place, afterwards.** A comparison wants the source, the
-CSG, the STEP, and OpenSCAD's own mesh side by side. Once the STEP run is
-done (it is the fragile, expensive one and shouldn't share workers with
-renders), `scad123d-artifacts SRC -o OUT_DIR` reads the batch ledger and,
-for every input, copies the `.scad` beside its outputs (`--symlink` to link
-instead) and renders OpenSCAD's binary STL of it there too — Manifold
-backend, same `--include-overlay` as the batch, so the mesh sees the
-includes the STEP saw. By default every class but `excluded` gets an STL
-(a failed STEP still wants a reference mesh for the repair pass; `--status
-ok,mismatch` narrows it). Renders are recorded in an `stl` table of the same
-ledger, so the pass is resumable and `--report OUT_DIR` summarizes it;
-byte-identical inputs share one render, the way they share one STEP.
 
 The worker half is exposed too: `scad2step --batch` reads JSON tasks
 (`{"input": ..., "output": ...}`) one per line on stdin and writes one JSON
