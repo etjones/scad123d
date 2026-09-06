@@ -258,7 +258,8 @@ def test_dashboard_renders_worker_rows_and_totals(fake_batch):
     counts = batch.run(batch.plan(), dashboard)
     assert counts == {CLASS_OK: 1}
     text = buffer.getvalue()
-    assert "done 1/1" in text and "ok 1" in text
+    assert "this run 1/1" in text and "ok 1" in text
+    assert "corpus:" not in text  # the run covers the whole ledger
     assert "idle" in text  # workers shown even when between files
     assert "hello from the test" in text
 
@@ -325,3 +326,18 @@ def test_verify_flag_reaches_the_worker(fake_batch, tmp_path):
     batch.run(batch.plan(), dashboard=None)
     (message,) = batch.ledger.query("SELECT message FROM files")[0]
     assert json.loads(message)["verify"] is True
+
+
+def test_summary_is_scoped_to_the_run_with_a_corpus_projection(fake_batch):
+    from scad123d.batch import Dashboard
+
+    batch = fake_batch([f"f{i}.scad" for i in range(4)])
+    for i in range(4):
+        (batch.source / f"f{i}.scad").write_text(f"cube({i});")  # distinct
+    batch.scan()
+    tasks = batch.plan(order="name", limit=1)
+    batch.run(tasks, dashboard=None)
+    text = Dashboard(1, live=False)._summary(batch)
+    assert text.startswith("this run 1/1  ok 1  failed 0")
+    assert "corpus: 3 more pending" in text and "at this rate" in text
+    assert "1/4" not in text  # the ledger total is never presented as the run

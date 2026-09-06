@@ -1069,3 +1069,26 @@ OpenSCAD's own render of the extrusion to 1e-6. --verify compares area
 for a purely 2D model (`measure: area`) via the same unit extrusion.
 Probing showed two circles / two squares / faceted circles were already
 analytic, which is why the first tests "did not warn".
+
+**User**: Release solid123d and bump scad123d's floor; keep versions in sync.
+
+**Assistant**: Both to 0.6.0 (scad123d's branch is a feature release; solid123d
+matched). solid123d: PR #11 merged, tagged v0.6.0, published. scad123d: floor
+solid123d>=0.6.0, editable install dropped, 298 tests against the published
+package. CI exposed a real Windows blocker on the branch -- `import resource`
+at module level made scad2step itself unimportable there -- fixed (optional
+import; SIGUSR1-dependent tests skip), plus backslash-safe ledger path lookup.
+Along the way a careless patch deleted Ledger.counts/query and a `| tail`
+masked the failing test, so a broken commit reached the branch; fixed with a
+follow-up commit and pipefail. PR #21 merged, tagged v0.6.0, published;
+`uvx --from 'scad123d[batch]==0.6.0' scad123d-batch` resolves solid123d 0.6.0.
+
+**User**: --limit doesn't affect the ETA, which is computed over the whole
+corpus -- good idea or not?
+
+**Assistant**: Not as it stood (a leftover: Dashboard was handed the run's
+size and never used it). Now: progress, rate, and ETA are scoped to the run
+("this run 120/500, ETA 0:04:10"), and when the run doesn't cover the ledger
+a labeled projection follows ("corpus: 75,543 more pending, ~1d 3h at this
+rate") based on the whole-run average rate rather than the two-minute
+window, which swings early. Final line and dashboard caption run-scoped too.
