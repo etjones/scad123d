@@ -51,6 +51,7 @@ from .cli import (
 from .includes import overlay_dir
 
 CLASS_CRASH = "crash"
+CLASS_MEMORY = "memory"  # killed for exceeding a memory limit; retry with fewer workers
 STATUS_PENDING = "pending"
 STATUS_EXCLUDED = "excluded"  # deliberately out of the run (unresolved includes)
 
@@ -263,6 +264,42 @@ def exclude_unresolved(batch: "Batch", apply: bool = True) -> int:
     return batch.ledger.exclude(reasons) if apply else len(reasons)
 
 
+def _total_memory_mb() -> float:
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total / (1 << 20)
+    except ImportError:  # pragma: no cover
+        return 16 * 1024.0
+
+
+def _available_mb() -> float:
+    try:
+        import psutil
+
+        return psutil.virtual_memory().available / (1 << 20)
+    except ImportError:  # pragma: no cover
+        return float("inf")
+
+
+def _tree_rss_mb(pid: int) -> float:
+    """Resident memory of a worker and everything it spawned (OpenSCAD)."""
+    try:
+        import psutil
+
+        root = psutil.Process(pid)
+        procs = [root, *root.children(recursive=True)]
+        total = 0
+        for p in procs:
+            try:
+                total += p.memory_info().rss
+            except psutil.Error:
+                continue
+        return total / (1 << 20)
+    except (ImportError, Exception):  # noqa: BLE001 -- psutil.Error family
+        return 0.0
+
+
 def _kill_group(proc: subprocess.Popen[str]) -> None:
     """Kill a worker and everything it spawned (its OpenSCAD renders)."""
     if hasattr(os, "killpg"):
@@ -335,6 +372,7 @@ class WorkerState:
     done: int = 0
     rss_mb: float = 0.0
     kill_reason: str | None = None
+    kill_detail: str = ""  # for the ledger message
     dump_at: float = 0.0  # when SIGUSR1 (stack dump request) was sent
     recycle_after: bool = False
 
@@ -392,7 +430,9 @@ class Batch:
         timeout: float,
         keep_csg: bool = True,
         recycle: int = 200,
-        max_rss_gb: float = 6.0,
+        max_rss_gb: float | None = None,
+        memory_budget_gb: float | None = None,
+        min_free_gb: float = 3.0,
         mesh_scope: str = "minimal",
         facet_threshold: int | None = None,
         verify: bool = False,
@@ -407,7 +447,23 @@ class Batch:
         self.timeout = timeout
         self.keep_csg = keep_csg
         self.recycle = recycle
-        self.max_rss = max_rss_gb * 1024
+        # Memory limits, in MB. Per worker: a hard kill for the task that
+        # crosses it (its process tree, OpenSCAD included). Aggregate: a
+        # budget for all workers together, and a floor on what the rest of
+        # the machine keeps -- either one breached kills the largest worker.
+        # The defaults come from physical RAM and -j: twelve workers each
+        # allowed 6 GB on a 48 GB machine (the old fixed default) pushed
+        # macOS into swapping until the boot volume filled and it crashed.
+        total = _total_memory_mb()
+        self.max_rss = (
+            (max_rss_gb * 1024) if max_rss_gb else max(2048.0, 0.6 * total / jobs)
+        )
+        self.memory_budget = (
+            (memory_budget_gb * 1024) if memory_budget_gb else 0.6 * total
+        )
+        self.min_free = min_free_gb * 1024
+        self.mem_total_mb = 0.0  # all worker trees, updated by _watch
+        self.mem_available_mb = 0.0  # system-wide, updated by _watch
         self.mesh_scope = mesh_scope
         self.facet_threshold = facet_threshold
         self.worker_command = worker_command
@@ -591,6 +647,14 @@ class Batch:
             }
         if state.kill_reason == "abort":
             return {"status": STATUS_PENDING}
+        if state.kill_reason == "memory":
+            return {
+                "status": CLASS_MEMORY,
+                "message": (
+                    f"killed for memory: {state.kill_detail}. Retry with fewer "
+                    "workers (-j) or a higher --max-rss-gb"
+                ),
+            }
         detail = f"signal {-code}" if code is not None and code < 0 else f"exit {code}"
         return {
             "status": CLASS_CRASH,
@@ -625,10 +689,6 @@ class Batch:
 
     def _watch(self) -> None:
         """Enforce timeouts and memory limits on running workers."""
-        try:
-            import psutil
-        except ImportError:  # pragma: no cover
-            psutil = None
         deadline = self.timeout + self.kill_grace
         for state in self.workers:
             proc = state.proc
@@ -652,15 +712,46 @@ class Batch:
                 if time.time() - state.dump_at >= 2:
                     _kill_group(proc)
                 continue
-            if psutil is not None:
-                try:
-                    state.rss_mb = psutil.Process(proc.pid).memory_info().rss / (
-                        1 << 20
-                    )
-                except psutil.Error:
-                    continue
-                if state.rss_mb > self.max_rss:
-                    state.recycle_after = True
+            state.rss_mb = _tree_rss_mb(proc.pid)
+            if state.current is not None and state.rss_mb > self.max_rss:
+                self._kill_for_memory(
+                    state,
+                    f"{state.rss_mb / 1024:.1f} GB, over the per-worker limit of "
+                    f"{self.max_rss / 1024:.1f} GB",
+                )
+            elif state.rss_mb > self.max_rss / 2:
+                # Leaked or retained memory: hand the next file to a fresh
+                # process rather than carry it along.
+                state.recycle_after = True
+        self.mem_total_mb = sum(w.rss_mb for w in self.workers if w.proc is not None)
+        self.mem_available_mb = _available_mb()
+        busy = [
+            w
+            for w in self.workers
+            if w.proc is not None and w.current is not None and w.kill_reason is None
+        ]
+        if not busy:
+            return
+        if self.mem_total_mb > self.memory_budget:
+            why = (
+                f"workers together at {self.mem_total_mb / 1024:.1f} GB, over the "
+                f"budget of {self.memory_budget / 1024:.1f} GB"
+            )
+        elif self.mem_available_mb < self.min_free:
+            why = (
+                f"only {self.mem_available_mb / 1024:.1f} GB left for the machine "
+                f"(floor {self.min_free / 1024:.1f} GB)"
+            )
+        else:
+            return
+        largest = max(busy, key=lambda w: w.rss_mb)
+        self._kill_for_memory(largest, f"{largest.rss_mb / 1024:.1f} GB; {why}")
+
+    def _kill_for_memory(self, state: WorkerState, detail: str) -> None:
+        state.kill_reason = "memory"
+        state.kill_detail = detail
+        if state.proc is not None:
+            _kill_group(state.proc)
 
     def _kill_all(self, reason: str) -> None:
         for state in self.workers:
@@ -766,6 +857,11 @@ class Dashboard:
             average = stats.average_rate()
             projection = _fmt_duration(beyond / average) if average > 0 else "?"
             text += f"  |  corpus: {beyond} more pending, ~{projection} at this rate"
+        if batch.mem_total_mb or batch.mem_available_mb:
+            text += (
+                f"  |  mem {batch.mem_total_mb / 1024:.1f}/{batch.memory_budget / 1024:.0f} GB, "
+                f"free {batch.mem_available_mb / 1024:.1f}"
+            )
         return text
 
     def refresh(self, batch: Batch) -> None:
@@ -989,8 +1085,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-rss-gb",
         type=float,
-        default=6.0,
-        help="restart a worker whose memory exceeds this (default: 6)",
+        default=None,
+        help="kill a file whose worker (with its OpenSCAD) exceeds this; it is "
+        "recorded as 'memory' (default: 60%% of RAM divided by -j, at least 2)",
+    )
+    parser.add_argument(
+        "--memory-budget-gb",
+        type=float,
+        default=None,
+        help="all workers together; the largest is killed when exceeded "
+        "(default: 60%% of RAM)",
+    )
+    parser.add_argument(
+        "--min-free-gb",
+        type=float,
+        default=3.0,
+        help="kill the largest worker when the machine has less than this free "
+        "(default: 3)",
     )
     parser.add_argument("--mesh-scope", choices=["minimal", "hoist"], default="minimal")
     parser.add_argument("--facet-threshold", type=int, default=None)
@@ -1055,10 +1166,18 @@ def main(argv: list[str] | None = None) -> int:
         keep_csg=not args.no_csg,
         recycle=args.recycle,
         max_rss_gb=args.max_rss_gb,
+        memory_budget_gb=args.memory_budget_gb,
+        min_free_gb=args.min_free_gb,
         mesh_scope=args.mesh_scope,
         facet_threshold=args.facet_threshold,
         verify=args.verify,
         include_overlay=args.include_overlay,
+    )
+    print(
+        f"scad123d-batch: memory limits: {batch.max_rss / 1024:.1f} GB per worker, "
+        f"{batch.memory_budget / 1024:.0f} GB for all {args.jobs}, "
+        f"{batch.min_free / 1024:.0f} GB kept free",
+        file=sys.stderr,
     )
     print(f"scad123d-batch: scanning {batch.source} ...", file=sys.stderr)
     seen = batch.scan()
