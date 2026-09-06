@@ -36,6 +36,10 @@ FAKE_WORKER = textwrap.dedent(
         if name.startswith("crash"):
             os._exit(3)
         if name.startswith("slow"):
+            # like a worker mid-render: a child that would outlive us
+            import subprocess
+            child = subprocess.Popen(["sleep", "300"])
+            print(f"child pid {child.pid}", file=sys.stderr, flush=True)
             time.sleep(30)
         if name.startswith("bad"):
             print(json.dumps({
@@ -341,3 +345,24 @@ def test_summary_is_scoped_to_the_run_with_a_corpus_projection(fake_batch):
     assert text.startswith("this run 1/1  ok 1  failed 0")
     assert "corpus: 3 more pending" in text and "at this rate" in text
     assert "1/4" not in text  # the ledger total is never presented as the run
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+def test_killing_a_hung_worker_also_kills_its_child_process(fake_batch):
+    import re
+    import signal
+
+    batch = fake_batch(["slow.scad"])
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {CLASS_TIMEOUT: 1}
+    log = (batch.out_dir / "logs" / "worker-1.log").read_text()
+    child = int(re.search(r"child pid (\d+)", log).group(1))
+    time.sleep(0.5)
+    alive = True
+    try:
+        os.kill(child, 0)
+    except ProcessLookupError:
+        alive = False
+    if alive:  # zombie or genuinely running? a running sleep answers signal 0
+        os.kill(child, signal.SIGKILL)
+    assert not alive, "the worker's child survived the worker's kill"

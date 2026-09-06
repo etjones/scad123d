@@ -229,6 +229,17 @@ class Ledger:
             return self._db.execute(sql, params).fetchall()
 
 
+def _kill_group(proc: subprocess.Popen[str]) -> None:
+    """SIGKILL a worker and everything it spawned (its OpenSCAD renders)."""
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    proc.kill()
+
+
 # --- discovery --------------------------------------------------------------
 
 
@@ -435,6 +446,10 @@ class Batch:
             command += ["--facet-threshold", str(self.facet_threshold)]
         # The child inherits the log descriptor; the parent's copy can close
         # right away, or a long run with recycling leaks one per spawn.
+        # Each worker leads its own process group (start_new_session), so
+        # killing it kills the OpenSCAD it may be running: a worker killed
+        # on timeout mid-render otherwise leaves that render orphaned,
+        # burning three cores until it finishes for nobody.
         with open(self.out_dir / "logs" / f"worker-{state.index}.log", "a") as log:
             state.proc = subprocess.Popen(
                 command,
@@ -443,6 +458,7 @@ class Batch:
                 stderr=log,
                 text=True,
                 bufsize=1,
+                start_new_session=True,
             )
         state.done = 0
         state.rss_mb = 0.0
@@ -459,7 +475,7 @@ class Batch:
                 proc.stdin.close()
             proc.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired):
-            proc.kill()
+            _kill_group(proc)
             proc.wait()
 
     def _next_task(self) -> Task | None:
@@ -586,7 +602,7 @@ class Batch:
                             pass
                         continue
                 if time.time() - state.dump_at >= 2:
-                    proc.kill()
+                    _kill_group(proc)
                 continue
             if psutil is not None:
                 try:
@@ -602,7 +618,7 @@ class Batch:
         for state in self.workers:
             if state.proc is not None and state.proc.poll() is None:
                 state.kill_reason = reason
-                state.proc.kill()
+                _kill_group(state.proc)
 
     # -- run
 
