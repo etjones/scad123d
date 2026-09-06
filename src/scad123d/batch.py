@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import shutil
 import signal
 import sqlite3
@@ -88,6 +89,18 @@ class Ledger:
                 updated REAL
             )"""
         )
+        # Diagnostic columns, added after the first ledgers existed: bring an
+        # older file up to date rather than failing on it.
+        present = {row[1] for row in self._db.execute("PRAGMA table_info(files)")}
+        for column, kind in (
+            ("traceback", "TEXT"),
+            ("warnings", "TEXT"),
+            ("stage", "TEXT"),
+            ("volume", "REAL"),
+            ("scad_volume", "REAL"),
+        ):
+            if column not in present:
+                self._db.execute(f"ALTER TABLE files ADD COLUMN {column} {kind}")
         self._db.execute("CREATE INDEX IF NOT EXISTS files_status ON files(status)")
         self._db.execute("CREATE INDEX IF NOT EXISTS files_sha ON files(sha256)")
         self._db.commit()
@@ -123,7 +136,8 @@ class Ledger:
         marks = ",".join("?" * len(statuses))
         with self._lock:
             cur = self._db.execute(
-                f"UPDATE files SET status=?, message=NULL WHERE status IN ({marks})",
+                f"UPDATE files SET status=?, message=NULL, traceback=NULL"
+                f" WHERE status IN ({marks})",
                 (STATUS_PENDING, *statuses),
             )
             self._db.commit()
@@ -153,22 +167,53 @@ class Ledger:
         seconds: float | None = None,
         meshed: list[str] | None = None,
         duplicate_of: str | None = None,
+        traceback: str | None = None,
+        warnings: list[str] | None = None,
+        stage: str | None = None,
+        volume: float | None = None,
+        scad_volume: float | None = None,
     ) -> None:
         with self._lock:
             self._db.execute(
                 "UPDATE files SET status=?, message=?, seconds=?, meshed=?,"
-                " duplicate_of=?, attempts=attempts+1, updated=? WHERE path=?",
+                " duplicate_of=?, traceback=?, warnings=?, stage=?, volume=?,"
+                " scad_volume=?, attempts=attempts+1, updated=? WHERE path=?",
                 (
                     status,
                     message,
                     seconds,
                     json.dumps(meshed) if meshed else None,
                     duplicate_of,
+                    traceback,
+                    json.dumps(warnings) if warnings else None,
+                    stage,
+                    volume,
+                    scad_volume,
                     time.time(),
                     path,
                 ),
             )
             self._db.commit()
+
+    def failures(self) -> list[tuple[str, str, str | None, str | None]]:
+        """(path, status, message, traceback) for every non-ok, non-pending file."""
+        with self._lock:
+            return self._db.execute(
+                "SELECT path, status, message, traceback FROM files"
+                " WHERE status NOT IN (?, ?)",
+                (CLASS_OK, STATUS_PENDING),
+            ).fetchall()
+
+    def lookup(self, path: str) -> tuple[Any, ...] | None:
+        """One file's full row, by exact path or unique path suffix."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT path, status, stage, message, seconds, meshed, warnings,"
+                " volume, scad_volume, traceback FROM files"
+                " WHERE path = ? OR path LIKE '%' || ?",
+                (path, "/" + path.lstrip("/")),
+            ).fetchall()
+        return rows[0] if len(rows) == 1 else None
 
     def counts(self) -> Counter[str]:
         with self._lock:
@@ -236,6 +281,7 @@ class WorkerState:
     done: int = 0
     rss_mb: float = 0.0
     kill_reason: str | None = None
+    dump_at: float = 0.0  # when SIGUSR1 (stack dump request) was sent
     recycle_after: bool = False
 
 
@@ -281,8 +327,10 @@ class Batch:
         max_rss_gb: float = 6.0,
         mesh_scope: str = "minimal",
         facet_threshold: int | None = None,
+        verify: bool = False,
         worker_command: list[str] | None = None,
     ) -> None:
+        self.verify = verify
         self.source = source.resolve()
         self.out_dir = out_dir.resolve()
         self.jobs = jobs
@@ -422,6 +470,7 @@ class Batch:
                 "input": task.path,
                 "output": str(task.output),
                 "csg": str(task.csg) if task.csg else None,
+                "verify": self.verify,
             }
             state.current = task
             state.started = time.time()
@@ -455,27 +504,43 @@ class Batch:
         if state.kill_reason == "timeout":
             return {
                 "status": CLASS_TIMEOUT,
-                "message": f"killed after {time.time() - state.started:.0f}s",
+                "message": (
+                    f"killed after {time.time() - state.started:.0f}s; Python stack "
+                    f"at the hang is in logs/worker-{state.index}.log"
+                ),
             }
         if state.kill_reason == "abort":
             return {"status": STATUS_PENDING}
         detail = f"signal {-code}" if code is not None and code < 0 else f"exit {code}"
-        return {"status": CLASS_CRASH, "message": f"worker died ({detail})"}
+        return {
+            "status": CLASS_CRASH,
+            "message": (
+                f"worker died ({detail}); faulthandler stack, if any, is in "
+                f"logs/worker-{state.index}.log"
+            ),
+        }
 
     def _record(self, task: Task, result: dict[str, Any]) -> None:
         status = result.get("status", CLASS_ERROR)
         if status == STATUS_PENDING:
             return  # aborted mid-file: leave it for the next run
-        message = result.get("message")
-        seconds = result.get("seconds")
-        meshed = result.get("meshed") or None
-        self.ledger.record(task.path, status, message, seconds, meshed)
+        fields = {
+            "message": result.get("message"),
+            "seconds": result.get("seconds"),
+            "meshed": result.get("meshed") or None,
+            "traceback": result.get("traceback"),
+            "warnings": result.get("openscad_warnings") or None,
+            "stage": result.get("stage"),
+            "volume": result.get("volume"),
+            "scad_volume": result.get("scad_volume"),
+        }
+        self.ledger.record(task.path, status, **fields)
         self.stats.add(status)
         for sibling in task.siblings:
             if status == CLASS_OK:
                 self._finish_duplicate(sibling, task.path)
             else:
-                self.ledger.record(sibling, status, message, seconds, meshed)
+                self.ledger.record(sibling, status, **fields)
             self.stats.add(status)
 
     def _watch(self) -> None:
@@ -490,8 +555,22 @@ class Batch:
             if proc is None or proc.poll() is not None:
                 continue
             if state.current is not None and time.time() - state.started > deadline:
-                state.kill_reason = "timeout"
-                proc.kill()
+                # Ask faulthandler for the Python stack first (SIGUSR1 --
+                # see cli._run_batch_mode), then kill once it has had a
+                # moment to write it. Where the platform has no SIGUSR1, or
+                # the worker never registered a handler, the signal or the
+                # kill ends it either way.
+                if state.kill_reason is None:
+                    state.kill_reason = "timeout"
+                    state.dump_at = time.time()
+                    if hasattr(signal, "SIGUSR1"):
+                        try:
+                            proc.send_signal(signal.SIGUSR1)
+                        except OSError:
+                            pass
+                        continue
+                if time.time() - state.dump_at >= 2:
+                    proc.kill()
                 continue
             if psutil is not None:
                 try:
@@ -674,19 +753,98 @@ def report(out_dir: Path) -> int:
         print("slowest successes:")
         for path, seconds in slow:
             print(f"  {seconds:7.1f}s  {path}")
-    failures = ledger.query(
-        "SELECT status, message FROM files WHERE status NOT IN (?, ?)",
-        (CLASS_OK, STATUS_PENDING),
-    )
+    failures = ledger.failures()
     if failures:
         print("most common failures:")
         keyed = Counter(
             (status, (message or "").splitlines()[0][:100])
-            for status, message in failures
+            for _path, status, message, _trace in failures
         )
         for (status, head), n in keyed.most_common(15):
             print(f"  {n:6d}  {status:14s} {head}")
+        sites = Counter(
+            (status, failure_site(trace))
+            for _path, status, _message, trace in failures
+            if trace
+        )
+        if sites:
+            print("where they fail (innermost scad123d/solid123d frame):")
+            for (status, site), n in sites.most_common(15):
+                print(f"  {n:6d}  {status:14s} {site}")
     ledger.close()
+    return 0
+
+
+_FRAME = re.compile(r'^\s*File "(.*?)", line (\d+), in (\w+)')
+
+
+def failure_site(trace: str) -> str:
+    """The innermost scad123d/solid123d frame of a traceback, as file:line fn.
+
+    Grouping failures by this is how a corpus run turns into a bug list:
+    one site with 400 files behind it is one bug, not 400.
+    """
+    site = "(no scad123d frame)"
+    for line in trace.splitlines():
+        match = _FRAME.match(line)
+        if not match:
+            continue
+        file, lineno, function = match.groups()
+        if "/scad123d/" in file or "/solid123d/" in file:
+            site = f"{Path(file).name}:{lineno} {function}"
+    return site
+
+
+def list_class(out_dir: Path, status: str) -> int:
+    """Print every input in a result class, with its message, tab-separated."""
+    ledger = Ledger(out_dir / LEDGER_NAME)
+    rows = ledger.query(
+        "SELECT path, message FROM files WHERE status = ? ORDER BY path", (status,)
+    )
+    for path, message in rows:
+        head = (message or "").splitlines()[0] if message else ""
+        print(f"{path}\t{head}")
+    ledger.close()
+    return 0 if rows else 1
+
+
+def show_file(out_dir: Path, path: str) -> int:
+    """Print everything the ledger holds on one input."""
+    ledger = Ledger(out_dir / LEDGER_NAME)
+    row = ledger.lookup(path)
+    ledger.close()
+    if row is None:
+        print(
+            f"scad123d-batch: no unique ledger entry matches {path!r}", file=sys.stderr
+        )
+        return 1
+    (
+        full,
+        status,
+        stage,
+        message,
+        seconds,
+        meshed,
+        warnings,
+        volume,
+        scad_volume,
+        trace,
+    ) = row
+    print(f"{full}\nstatus: {status}" + (f" (in {stage})" if stage else ""))
+    if seconds is not None:
+        print(f"seconds: {seconds}")
+    if volume is not None:
+        print(f"volume: {volume}  openscad: {scad_volume}")
+    if message:
+        print(f"message: {message}")
+    for label, blob in (("meshed", meshed), ("openscad warnings", warnings)):
+        if blob:
+            print(f"{label}:")
+            for item in json.loads(blob):
+                print(f"  {item}")
+    if trace:
+        print("traceback:")
+        print(trace.rstrip())
     return 0
 
 
@@ -745,10 +903,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mesh-scope", choices=["minimal", "hoist"], default="minimal")
     parser.add_argument("--facet-threshold", type=int, default=None)
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="also render each model with OpenSCAD and flag a >2%% volume "
+        "disagreement as 'mismatch' (catches silently wrong output)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="scan and plan only")
     parser.add_argument("--no-dashboard", action="store_true", help="plain log lines")
     parser.add_argument(
         "--report", type=Path, metavar="OUT_DIR", help="summarize a ledger"
+    )
+    parser.add_argument(
+        "--list",
+        nargs=2,
+        metavar=("OUT_DIR", "CLASS"),
+        help="print every input in a result class (e.g. occt-error)",
+    )
+    parser.add_argument(
+        "--show",
+        nargs=2,
+        metavar=("OUT_DIR", "PATH"),
+        help="print one input's result, warnings, and traceback",
     )
     return parser
 
@@ -758,6 +934,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.report:
         return report(args.report)
+    if args.list:
+        return list_class(Path(args.list[0]), args.list[1])
+    if args.show:
+        return show_file(Path(args.show[0]), args.show[1])
     if args.source is None or args.out_dir is None:
         parser.error("source directory and -o OUT_DIR are required")
     if not args.source.is_dir():
@@ -773,6 +953,7 @@ def main(argv: list[str] | None = None) -> int:
         max_rss_gb=args.max_rss_gb,
         mesh_scope=args.mesh_scope,
         facet_threshold=args.facet_threshold,
+        verify=args.verify,
     )
     print(f"scad123d-batch: scanning {batch.source} ...", file=sys.stderr)
     seen = batch.scan()

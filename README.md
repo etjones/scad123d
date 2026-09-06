@@ -316,6 +316,17 @@ scad123d-batch ~/models -o ~/models-step -j 12 --timeout 120
 - **A live dashboard** shows each worker's current file, elapsed time, and
   memory, plus throughput and ETA (`--no-dashboard` for plain log lines, the
   default when stderr isn't a terminal).
+- **Built for finding scad123d's own bugs.** Every failure keeps its Python
+  traceback and OpenSCAD's warnings in the ledger; `--report` groups
+  failures by the scad123d source line they died on, `--list OUT_DIR CLASS`
+  prints the inputs in a class, and `--show OUT_DIR PATH` prints one file's
+  full trace. Workers run with `faulthandler`, so a segfault inside OCCT —
+  or a hang, which the harness asks the worker to dump before killing it —
+  leaves the Python stack in `logs/worker-N.log` under a `converting <file>`
+  marker. `--verify` goes further and catches *silently wrong* output:
+  each built part's volume is checked against OpenSCAD's own render of the
+  same CSG (fast with the Manifold backend); a disagreement over 2% is
+  classed `mismatch`, ready for `scad123d-diff` on the saved `.csg`.
 
 Two things to arrange before a large run: install the libraries your corpus
 `include`s (BOSL2, MCAD, ...) where OpenSCAD finds them (`OPENSCADPATH`), or

@@ -19,10 +19,13 @@ shell too::
 """
 
 import argparse
+import faulthandler
 import gc
 import json
 import platform
 import resource
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -31,7 +34,7 @@ import warnings
 from pathlib import Path
 from typing import Any, TextIO
 
-from build123d import export_step
+from build123d import Shape, export_step
 from solid123d.customizer import resolve_param_set
 
 from . import import_csg
@@ -45,7 +48,9 @@ from .errors import (
 )
 from .facets import DEFAULT_FACET_THRESHOLD
 from .mesh import clear_cache
-from .openscad import export_csg
+from .mesh_import import read_mesh_file
+from .openscad import export_csg_with_warnings, export_mesh
+from .parser import parse_csg
 
 # Result classes a worker can report. The parent (batch.py) adds "timeout"
 # and "crash", which by their nature the worker itself cannot report.
@@ -58,7 +63,13 @@ CLASS_MESH = "mesh-error"
 CLASS_EXPORT = "export-error"
 CLASS_TIMEOUT = "timeout"
 CLASS_MISSING = "missing"
+CLASS_MISMATCH = "mismatch"  # built, but disagrees with OpenSCAD's own render
 CLASS_ERROR = "error"
+
+# --verify: relative volume disagreement with OpenSCAD's mesh render that
+# counts as a wrong result. Same bar as scad123d-diff: far above facet
+# error on curved geometry, far below any real semantic bug.
+VERIFY_TOLERANCE = 0.02
 
 
 def _parse_value(raw: str) -> Any:
@@ -213,15 +224,33 @@ class _Conversion:
         self.mesh_scope = mesh_scope
         self.timeout = timeout
         self.meshed: list[str] = []
+        self.part: Shape | None = None
+        self.openscad_warnings: list[str] = []
 
     def export(self) -> str:
-        return export_csg(self.input, self.overrides or None, self.timeout)
+        text, stderr = export_csg_with_warnings(
+            self.input, self.overrides or None, self.timeout
+        )
+        # OpenSCAD reports an unknown module or variable as a WARNING and
+        # exits 0 with less geometry than the author meant; for an "empty"
+        # or wrong result these lines are usually the whole explanation.
+        self.openscad_warnings = [
+            line.strip()
+            for line in stderr.splitlines()
+            if line.startswith(("WARNING", "ERROR", "DEPRECATED"))
+        ]
+        return text
 
     def build(self, csg_text: str) -> None:
+        # Parse here rather than handing import_csg() the text: its
+        # str-is-source-or-path heuristic keys on CSG punctuation, and the
+        # export of a model with no top-level geometry (every library file)
+        # is a bare newline -- which it would try to open as a path.
+        tree = parse_csg(csg_text)
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             part = import_csg(
-                csg_text,
+                tree,
                 facet_threshold=self.facet_threshold,
                 mesh_scope=self.mesh_scope,
                 timeout=self.timeout,
@@ -233,6 +262,7 @@ class _Conversion:
                 warnings.showwarning(w.message, w.category, w.filename, w.lineno)
         if not part.label:
             part.label = self.input.stem
+        self.part = part
         self.output.parent.mkdir(parents=True, exist_ok=True)
         export_step(part, str(self.output))
 
@@ -327,11 +357,48 @@ def _peak_rss_mb() -> float:
     return rss / (1024 * 1024 if platform.system() == "Darwin" else 1024)
 
 
+def _openscad_volume(csg_text: str, timeout: float) -> float:
+    """Volume of OpenSCAD's own full render of the model (0 if empty)."""
+    try:
+        path = export_mesh(csg_text, suffix=".3mf", timeout=timeout)
+    except OpenSCADRunError as exc:
+        if "Current top level object is empty" in str(exc):
+            return 0.0
+        raise
+    try:
+        return sum(abs(shape.volume) for shape in read_mesh_file(path))
+    finally:
+        shutil.rmtree(path.parent, ignore_errors=True)
+
+
+def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> None:
+    """Cross-check the built part against OpenSCAD's render; sets status."""
+    assert conversion.part is not None
+    ours = abs(conversion.part.volume)
+    theirs = _openscad_volume(csg_text, conversion.timeout)
+    result["volume"] = round(ours, 6)
+    result["scad_volume"] = round(theirs, 6)
+    scale = max(ours, theirs)
+    if scale < 1e-9:
+        return  # both empty or purely 2D: nothing to compare
+    error = abs(ours - theirs) / scale
+    if error > VERIFY_TOLERANCE:
+        result["status"] = CLASS_MISMATCH
+        result["message"] = (
+            f"volume {ours:.6g} vs OpenSCAD {theirs:.6g} ({100 * error:.1f}% off)"
+        )
+
+
 def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str, Any]:
     """Convert one task and return its result record (never raises)."""
     input_path = Path(task["input"])
     output_path = Path(task.get("output") or input_path.with_suffix(".step"))
     result: dict[str, Any] = {"input": str(input_path), "output": str(output_path)}
+    # A marker per file in the worker's stderr log, so a faulthandler dump
+    # (segfault, or SIGUSR1 from the harness on a timeout) can be tied to
+    # the input that caused it.
+    print(f"--- {time.strftime('%H:%M:%S')} converting {input_path}", file=sys.stderr)
+    sys.stderr.flush()
     start = time.perf_counter()
     conversion = _Conversion(
         input_path,
@@ -350,17 +417,20 @@ def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str,
             Path(csg_path).write_text(csg_text)
         stage = "build"
         conversion.build(csg_text)
+        result["status"] = CLASS_OK
+        if task.get("verify"):
+            stage = "verify"
+            _verify(conversion, csg_text, result)
     except Exception as exc:  # noqa: BLE001 -- a worker must survive anything
         cls, message = classify(exc)
-        if cls == CLASS_ERROR and stage == "build":
-            # A STEP writer failure is worth its own class; everything else
-            # unexpected stays generic but keeps a traceback for diagnosis.
-            cls = CLASS_EXPORT if "export_step" in traceback.format_exc() else cls
-        result.update(status=cls, message=message[:2000])
-        if cls == CLASS_ERROR:
-            result["traceback"] = traceback.format_exc()[-4000:]
-    else:
-        result["status"] = CLASS_OK
+        trace = traceback.format_exc()
+        if cls == CLASS_ERROR and stage == "build" and "export_step" in trace:
+            cls = CLASS_EXPORT
+        result.update(status=cls, message=message[:2000], stage=stage)
+        # Every failure keeps its traceback: the ones that are scad123d
+        # bugs (occt-error, unsupported, mesh-error) need it most.
+        if cls not in (CLASS_MISSING, CLASS_TIMEOUT):
+            result["traceback"] = trace[-6000:]
     finally:
         # The mesh memo is keyed on subtree text and would otherwise grow
         # for the life of the worker; nothing from one model helps the next.
@@ -368,7 +438,12 @@ def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str,
         gc.collect()
     result["seconds"] = round(time.perf_counter() - start, 3)
     result["meshed"] = conversion.meshed
+    result["openscad_warnings"] = conversion.openscad_warnings[:50]
     result["peak_rss_mb"] = round(_peak_rss_mb(), 1)
+    print(
+        f"--- {result['status']} in {result['seconds']}s: {input_path}", file=sys.stderr
+    )
+    sys.stderr.flush()
     return result
 
 
@@ -401,6 +476,14 @@ def _run_batch_mode(args: argparse.Namespace) -> int:
     results_fd = os.dup(sys.stdout.fileno())
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
     results = os.fdopen(results_fd, "w", buffering=1)
+    # A segfault inside OCCT would otherwise leave nothing behind; with
+    # faulthandler the Python stack (which build.py branch, which solid123d
+    # call) lands in the worker log, after this file's "converting" marker.
+    # SIGUSR1 is the harness asking for the same dump before it kills a
+    # worker that has run past its timeout -- where OCCT was spinning.
+    faulthandler.enable(file=sys.stderr, all_threads=True)
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
     try:
         return run_batch(sys.stdin, results, args)
     finally:

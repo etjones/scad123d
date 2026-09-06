@@ -984,3 +984,23 @@ Built on feature/batch-conversion:
   crash isolation, recycling by count/RSS, rich dashboard, --report.
   `batch` extra adds rich + psutil.
 277 tests pass; README section added.
+
+**User**: Some of the 80k files will surface scad123d bugs -- do we have
+logging / a way to trace where errors occur and gather stack traces?
+
+**Assistant**: Partially before, fully now. Gaps closed on the branch:
+tracebacks were only kept for the generic `error` class and the harness
+dropped them (no ledger column); crashes and timeouts left nothing;
+worker logs had no per-file markers; nothing caught silently-wrong
+output; --report couldn't say *where* failures occur. Now: every
+failure's traceback, stage and OpenSCAD warnings go in the ledger
+(schema migrates older ledgers); workers run `faulthandler` and register
+SIGUSR1, and the harness sends SIGUSR1 then kills on timeout, so hangs
+and segfaults leave the Python stack in logs/worker-N.log under a
+`converting <file>` marker; `--verify` renders each model with OpenSCAD
+(Manifold, cheap) and classes a >2% volume disagreement as `mismatch`;
+`--report` groups failures by innermost scad123d/solid123d frame;
+`--list OUT CLASS` and `--show OUT PATH` for triage. Found a real bug
+while testing: an empty top-level model's CSG export is "\n", which
+import_csg's str heuristic treated as a *path* -> every library file
+would have been classed `missing`; the worker now parses explicitly.

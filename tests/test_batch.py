@@ -27,7 +27,8 @@ from scad123d.batch import (
 
 FAKE_WORKER = textwrap.dedent(
     """
-    import json, os, sys, time
+    import faulthandler, json, os, signal, sys, time
+    faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
     for line in sys.stdin:
         task = json.loads(line)
         name = os.path.basename(task["input"])
@@ -36,7 +37,17 @@ FAKE_WORKER = textwrap.dedent(
         if name.startswith("slow"):
             time.sleep(30)
         if name.startswith("bad"):
-            print(json.dumps({"status": "openscad-error", "message": "nope", "seconds": 0.01}))
+            print(json.dumps({
+                "status": "openscad-error", "message": "nope", "seconds": 0.01,
+                "stage": "export",
+                "openscad_warnings": ["WARNING: Ignoring unknown module 'foo'"],
+                "traceback": (
+                    'Traceback (most recent call last):\\n'
+                    '  File "/x/scad123d/cli.py", line 10, in export\\n'
+                    '  File "/x/scad123d/openscad.py", line 99, in _run\\n'
+                    "OpenSCADRunError: nope\\n"
+                ),
+            }))
         else:
             open(task["output"], "w").write("step")
             print(json.dumps({"status": "ok", "seconds": 0.01, "meshed": []}))
@@ -249,3 +260,64 @@ def test_dashboard_renders_worker_rows_and_totals(fake_batch):
     assert "done 1/1" in text and "ok 1" in text
     assert "idle" in text  # workers shown even when between files
     assert "hello from the test" in text
+
+
+# --- diagnostics -------------------------------------------------------------
+
+
+def test_failure_details_are_kept_and_shown(fake_batch, capsys):
+    batch = fake_batch(["bad.scad"])
+    batch.run(batch.plan(), dashboard=None)
+    row = batch.ledger.lookup("bad.scad")
+    assert row is not None
+    _path, status, stage, message, *_rest, warnings, _v, _sv, trace = row
+    assert (status, stage, message) == ("openscad-error", "export", "nope")
+    assert json.loads(warnings) == ["WARNING: Ignoring unknown module 'foo'"]
+    assert "openscad.py" in trace
+
+    assert main(["--show", str(batch.out_dir), "bad.scad"]) == 0
+    text = capsys.readouterr().out
+    assert "status: openscad-error (in export)" in text
+    assert "unknown module 'foo'" in text and 'File "/x/scad123d/openscad.py"' in text
+
+    assert main(["--list", str(batch.out_dir), "openscad-error"]) == 0
+    line = capsys.readouterr().out.strip()
+    assert line.endswith("bad.scad\tnope")
+    assert main(["--list", str(batch.out_dir), "timeout"]) == 1  # nothing in it
+
+
+def test_report_groups_failures_by_innermost_frame(fake_batch, capsys):
+    batch = fake_batch(["bad.scad"])
+    _tree(batch.source, ["bad2.scad"], content="also bad")
+    batch.scan()
+    batch.run(batch.plan(), dashboard=None)
+    assert main(["--report", str(batch.out_dir)]) == 0
+    text = capsys.readouterr().out
+    assert "where they fail" in text
+    assert "2  openscad-error openscad.py:99 _run" in text
+
+
+def test_timeout_asks_the_worker_for_a_stack_dump_before_killing(fake_batch):
+    batch = fake_batch(["slow.scad"])
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {CLASS_TIMEOUT: 1}
+    (message,) = batch.ledger.query("SELECT message FROM files")[0]
+    assert "worker-1.log" in message
+    log = (batch.out_dir / "logs" / "worker-1.log").read_text()
+    # faulthandler's dump names the sleeping frame
+    assert "Current thread" in log and "worker.py" in log
+
+
+def test_verify_flag_reaches_the_worker(fake_batch, tmp_path):
+    echo = tmp_path / "echo.py"
+    echo.write_text(
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    t = json.loads(line); open(t['output'], 'w').write('x')\n"
+        "    print(json.dumps({'status': 'ok', 'message': json.dumps(t)})); sys.stdout.flush()\n"
+    )
+    batch = fake_batch(["a.scad"], verify=True)
+    batch.worker_command = [sys.executable, str(echo)]
+    batch.run(batch.plan(), dashboard=None)
+    (message,) = batch.ledger.query("SELECT message FROM files")[0]
+    assert json.loads(message)["verify"] is True

@@ -310,3 +310,38 @@ def test_run_batch_converts_and_classifies_per_line(tmp_path):
     assert (tmp_path / "box.step").stat().st_size > 0
     assert "cube(size = [10, 10, 10]" in (tmp_path / "box.csg").read_text()
     assert lines[0]["seconds"] > 0 and lines[0]["peak_rss_mb"] > 0
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_verify_cross_checks_volume_against_openscad(tmp_path):
+    scad = tmp_path / "box.scad"
+    scad.write_text("cube([10, 10, 10]);")
+    tasks = io.StringIO(
+        json.dumps(
+            {"input": str(scad), "output": str(tmp_path / "box.step"), "verify": True}
+        )
+        + "\n"
+    )
+    results = io.StringIO()
+    assert run_batch(tasks, results, _build_parser().parse_args(["--batch"])) == 0
+    (result,) = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert result["status"] == "ok"
+    assert result["volume"] == pytest.approx(1000)
+    assert result["scad_volume"] == pytest.approx(1000)
+    assert result["openscad_warnings"] == []
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_keeps_openscad_warnings_and_tracebacks(tmp_path):
+    scad = tmp_path / "lib.scad"
+    scad.write_text("module unused() { cube(1); }\nnot_a_module();\n")
+    tasks = io.StringIO(
+        json.dumps({"input": str(scad), "output": str(tmp_path / "o.step")}) + "\n"
+    )
+    results = io.StringIO()
+    run_batch(tasks, results, _build_parser().parse_args(["--batch"]))
+    (result,) = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert result["status"] == "empty"
+    assert any("not_a_module" in w for w in result["openscad_warnings"])
+    assert "UnsupportedNodeError" in result["traceback"]
+    assert result["stage"] == "build"
