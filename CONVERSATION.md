@@ -1125,3 +1125,19 @@ silently drops such a solid where it overlaps another (cube: 1600 vs
 reversing faces and rebuilding FORWARD solids shell by shell. scad123d's
 difference now also cuts all subtrahends in one op. Windows fixes for
 the process-group kill test on PR #22 (merged).
+
+**User**: Merge both, run CI, release when green. Also: error rate is still
+~18% (407/500) after all the changes -- why?
+
+**Assistant**: solid123d #13 and scad123d #23 merged; both mains green;
+released solid123d 0.7.0 and scad123d 0.7.0 (floor solid123d>=0.7.0;
+venv back on the published package; fresh uvx install resolves 0.7.0).
+On the rate: every run samples 500 *new* files and no failed file has
+ever been retried (attempts>1 = 0), so the number is the steady-state
+rate for fresh files, not a before/after; of this run's 93 failures, 24
+carry a missing-include warning and 7 are the expected 1-2% minkowski
+bucket; the run already used the N-ary code and 9 of 14 timeouts hang
+inside a single fuse (N-ary removes the accumulation cost, not hard
+geometry); 19 mismatches >20% remain unbisected. Fixable fresh-file rate
+~12%. Next: --retry the accumulated failures under 0.7.0 as a controlled
+measurement, then bisect the >20%s.
