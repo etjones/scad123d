@@ -63,6 +63,27 @@ of OpenSCAD; it delegates to it. Discovery order:
 
 CSG export needs no OpenGL, so no `xvfb` wrapper is required on headless Linux.
 
+### Mesh renderer
+
+When part of a model takes the mesh fallback, OpenSCAD renders that subtree
+to 3MF. Binaries that offer a choice of kernel (`--backend`, 2024+ releases
+and nightlies) are asked for **Manifold** rather than the default CGAL: same
+geometry, two orders of magnitude faster (a hull-heavy real model's fallback
+went from 9.8s to 0.07s). `$SCAD123D_BACKEND` overrides — `CGAL` to compare
+against the old renderer, or any value a future OpenSCAD accepts. Binaries
+without the flag (2021.01) are left alone.
+
+The 3MF is turned into a solid by `mesh_import.py`, not build123d's
+`Mesher.read`. The latter sews free triangles back together with
+`BRepBuilderAPI_Sewing`, a heuristic that mis-oriented a patch of Manifold's
+triangulation of a slab with a through-hole (an *invalid* solid, 2% off in
+volume, silently). A mesh from OpenSCAD is already consistent indexed
+topology, so scad123d builds exactly that — one vertex per position, shared
+edges, faces oriented by their winding, connected components as shells with
+the largest as the outer boundary and the rest as voids — and checks the
+result's volume against the triangles' own. A disagreement raises
+`MeshImportError` rather than returning a wrong shape.
+
 ## Calling a module, or a whole file's worth of them
 
 There is no OpenSCAD-level operation for "just run this one module" — a

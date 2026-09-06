@@ -928,3 +928,59 @@ semantics (partition into labeled bodies, contested volume to the later
 child) and updated the TestColor docstring + README color block.
 251 tests pass against the published wheel (editable install replaced
 by PyPI 0.5.0 via uv sync — the local-editable workaround is retired).
+
+**User**: scad2step crashed with a deep "recursive" traceback on
+~/Downloads/ultimate+parametric+junction+box+cover.scad (BOSL2 model).
+
+**Assistant**: The recursion was just CSG nesting depth; the real error
+was `polygon(points = [])` (BOSL2 emits it for a branch that renders
+nothing) reaching build123d's `Wire.make_polygon`. Guarded polygon,
+then on request audited every leaf: `polyhedron(points=[], faces=[])`
+and `linear_extrude(height=0)` had the same gap (OpenSCAD renders both
+as nothing); `text("")`, `rotate_extrude(angle=0)` (OpenSCAD's own
+falsy-defaults-to-360 quirk), transforms and booleans were fine.
+Released scad123d 0.5.1.
+
+**User**: The STEP differs from OpenSCAD's STL: the spring clip's body
+sits with its top at z=0, but its rounded corners and threaded hole
+don't.
+
+**Assistant**: Root cause in solid123d: `linear_extrude` called
+build123d `extrude()` without `dir`, which sweeps each face along its
+own winding-derived normal. BOSL2's `stroke()` ribbon face wound
+clockwise while its `round_corners()` joint fragments wound CCW, so the
+body extruded to -Z and the joints to +Z (and, meeting only at a knife
+edge, never fused: 51 solids instead of 2). Fix: pin `dir=(0, 0, 1)` --
+OpenSCAD ignores winding. Released solid123d 0.5.2 and scad123d 0.5.2
+(versions kept in step per user); STEP now matches the STL bbox exactly.
+
+**User**: Design a fast pipeline to convert the ~80k-model CodeCAD corpus
+(still downloading into ~/Dropbox/Projects/codecad): parallel batch
+mode, progress, failure handling, resume. Does OCCT use the GPU?
+
+**Assistant**: Measured: build123d import is 1.85s vs 0.1-0.2s of work
+per typical file, so batch mode is the big win; OCCT and OpenSCAD's
+export path are CPU-only (no GPU contention); OCCT uses ~1.5 cores per
+conversion. Decisions (user): outputs outside Dropbox; Manifold as the
+default mesh-fallback backend; harness ships in scad123d.
+Built on feature/batch-conversion:
+- `openscad.py`: `--backend=Manifold` when the binary supports it
+  (140x faster on the junction box's hull fallback; whole test suite
+  73s -> 12s), `$SCAD123D_BACKEND` overrides.
+- `mesh_import.py`: Manifold's 3MF exposed that build123d's
+  sewing-based `Mesher.read` can return an invalid, wrong-volume solid
+  (3143.6 vs 3071.9 on a slab with a through-hole; the triangles
+  themselves were right). Replaced with a sewing-free topological build
+  (shared vertices/edges, components -> shells, largest = outer, rest =
+  voids) verified against the divergence-theorem volume; disagreement
+  raises `MeshImportError` instead of returning wrong geometry.
+- `scad2step --batch`: long-lived worker, JSON task/result lines, stdout
+  reserved for results, failures classified (empty / openscad-error /
+  unsupported / occt-error / mesh-error / export-error / timeout /
+  missing / error), per-file mesh-cache clear, optional .csg save.
+- `scad123d-batch`: discovery (skips cloud placeholders), SQLite ledger
+  (resume, --retry CLASS, --force, changed-file detection), sha256 dedup
+  with hard-linked outputs, worker pool with kill-on-timeout + respawn,
+  crash isolation, recycling by count/RSS, rich dashboard, --report.
+  `batch` extra adds rich + psutil.
+277 tests pass; README section added.

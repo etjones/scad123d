@@ -16,6 +16,7 @@ from pathlib import Path
 from .errors import OpenSCADNotFoundError, OpenSCADRunError
 
 _ENV_VAR = "SCAD123D_OPENSCAD"
+_BACKEND_ENV_VAR = "SCAD123D_BACKEND"
 
 _MAC_CANDIDATES = (
     "/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD",
@@ -113,6 +114,37 @@ def openscad_version() -> str:
     )
 
 
+@lru_cache(maxsize=1)
+def _supports_backend_flag() -> bool:
+    """Whether this OpenSCAD accepts ``--backend`` (2024+ builds do; 2021.01
+    does not)."""
+    result = subprocess.run(
+        [str(require_openscad()), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    return "--backend" in (result.stdout + result.stderr)
+
+
+def mesh_backend() -> str | None:
+    """The renderer passed as ``--backend`` for mesh export, or None for the
+    binary's default.
+
+    Manifold is used whenever the binary offers it: it is a different kernel
+    from the default CGAL, but the same geometry -- and two orders of
+    magnitude faster (a hull-heavy real model went from 9.8s to 0.07s), which
+    is the difference between a mesh fallback being a note and being the
+    whole conversion time. ``$SCAD123D_BACKEND`` overrides (e.g. ``CGAL`` to
+    compare against the old renderer).
+    """
+    override = os.environ.get(_BACKEND_ENV_VAR)
+    if override:
+        return override
+    return "Manifold" if _supports_backend_flag() else None
+
+
 def _run(args: list[str], timeout: float) -> str:
     result = subprocess.run(
         args, capture_output=True, text=True, timeout=timeout, check=False
@@ -184,7 +216,11 @@ def export_mesh(
     src = tmpdir / "subtree.csg"
     src.write_text(source)
     out = tmpdir / f"subtree{suffix}"
-    _run([str(binary), "-o", str(out), str(src)], timeout)
+    args = [str(binary), "-o", str(out)]
+    backend = mesh_backend()
+    if backend:
+        args.append(f"--backend={backend}")
+    _run(args + [str(src)], timeout)
     if not out.exists():
         raise OpenSCADRunError("OpenSCAD produced no mesh output")
     return out

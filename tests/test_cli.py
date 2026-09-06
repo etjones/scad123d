@@ -5,10 +5,21 @@ Tier 2 (needs_openscad): actually converting a file, via main() end to end.
 """
 
 import argparse
+import io
+import json
+import subprocess
 
 import pytest
 
-from scad123d.cli import _build_parser, _override, _parse_value, main
+from scad123d.cli import (
+    _build_parser,
+    _override,
+    _parse_value,
+    classify,
+    main,
+    run_batch,
+)
+from scad123d.errors import MeshImportError, OpenSCADRunError, UnsupportedNodeError
 
 
 def test_parse_value_recognizes_booleans():
@@ -246,3 +257,56 @@ def test_dash_p_selects_a_set(tmp_path, capsys):
     assert "parameter set 'a'" in capsys.readouterr().err
     part = import_step(str(tmp_path / "box.step"))
     assert part.bounding_box().size.X == pytest.approx(20)
+
+
+# --- batch (worker) mode -------------------------------------------------------
+
+
+def test_classify_maps_exceptions_to_ledger_classes():
+    assert classify(OpenSCADRunError("x"))[0] == "openscad-error"
+    assert (
+        classify(UnsupportedNodeError("the CSG tree produced no geometry"))[0]
+        == "empty"
+    )
+    assert classify(UnsupportedNodeError("weird node"))[0] == "unsupported"
+    assert classify(MeshImportError("x"))[0] == "mesh-error"
+    assert classify(FileNotFoundError("x"))[0] == "missing"
+    assert classify(subprocess.TimeoutExpired("openscad", 5))[0] == "timeout"
+    assert classify(ValueError("x"))[0] == "error"
+
+    class Standard_Failure(Exception):
+        pass
+
+    assert classify(Standard_Failure("boom"))[0] == "occt-error"
+
+
+def test_batch_rejects_a_positional_input():
+    with pytest.raises(SystemExit):
+        main(["--batch", "x.scad"])
+
+
+@pytest.mark.needs_openscad
+def test_run_batch_converts_and_classifies_per_line(tmp_path):
+    scad = tmp_path / "box.scad"
+    scad.write_text("cube([10, 10, 10]);")
+    tasks = io.StringIO(
+        json.dumps(
+            {
+                "input": str(scad),
+                "output": str(tmp_path / "box.step"),
+                "csg": str(tmp_path / "box.csg"),
+            }
+        )
+        + "\n"
+        + json.dumps({"input": str(tmp_path / "missing.scad")})
+        + "\n"
+        + "not json\n"
+    )
+    results = io.StringIO()
+    defaults = _build_parser().parse_args(["--batch"])
+    assert run_batch(tasks, results, defaults) == 0
+    lines = [json.loads(line) for line in results.getvalue().splitlines()]
+    assert [r["status"] for r in lines] == ["ok", "missing", "error"]
+    assert (tmp_path / "box.step").stat().st_size > 0
+    assert "cube(size = [10, 10, 10]" in (tmp_path / "box.csg").read_text()
+    assert lines[0]["seconds"] > 0 and lines[0]["peak_rss_mb"] > 0

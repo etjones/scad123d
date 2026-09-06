@@ -29,10 +29,19 @@ Issues = "https://github.com/etjones/scad123d/issues"
 [project.scripts]
 scad2step = "scad123d.cli:main"
 scad123d-diff = "scad123d.diff:main"
+scad123d-batch = "scad123d.batch:main"
+
+[project.optional-dependencies]
+batch = [
+    "psutil>=5.9",
+    "rich>=13.0",
+]
 
 [dependency-groups]
 dev = [
+    "psutil>=7.2.2",
     "pytest>=8.0",
+    "rich>=15.0.0",
     "ruff>=0.16.3",
     "watchfiles>=0.21",
 ]

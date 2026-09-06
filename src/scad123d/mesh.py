@@ -13,10 +13,11 @@ import copy
 import shutil
 import warnings
 
-from build123d import Mesher, Shape
+from build123d import Shape
 
 from .emit import emit
 from .errors import MeshFallbackWarning, OpenSCADRunError
+from .mesh_import import read_mesh_file
 from .nodes import CsgNode
 from .openscad import export_mesh
 
@@ -40,8 +41,9 @@ def clear_cache() -> None:
 def mesh_subtree(node: CsgNode, timeout: float = 600) -> Shape | None:
     """Render one CSG subtree via OpenSCAD and import it as a build123d Shape.
 
-    3MF is used rather than STL: it carries manifold information, so the
-    imported solid needs less repair.
+    3MF is used rather than STL: it carries indexed (shared-vertex)
+    triangles, which mesh_import.py turns into exact BRep topology without
+    any sewing heuristics.
 
     Results are memoized on the emitted source. Every return -- including
     the first -- is a copy, so no caller ever holds the cached original:
@@ -67,7 +69,7 @@ def _render(source: str, timeout: float) -> Shape | None:
             return None
         raise
     try:
-        shapes = Mesher().read(str(path))
+        shapes = read_mesh_file(path)
     finally:
         shutil.rmtree(path.parent, ignore_errors=True)
 
