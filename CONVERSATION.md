@@ -1180,3 +1180,16 @@ plus one needs_openscad test; smoke run on 12 real corpus files (11 ok, one
 2D model rejected). Not committed; nothing touched in ~/codecad-step.
 Suggested later run:
 `scad123d-artifacts ~/Dropbox/Projects/3D_geometry/codecad/dataset -o ~/codecad-step -j 8 --timeout 300 --include-overlay <overlay>`.
+
+**User**: Two machine crashes during `--limit 2000` runs (~35 GB free
+disk); workers claim >3 GB. Look at the memory-control mechanism.
+
+**Assistant**: It was soft: exceeding --max-rss-gb only set a recycle
+flag honored after the current file; only the worker's own RSS was
+measured (not its OpenSCAD render); nothing looked at the machine, so
+12 workers x the fixed 6 GB default = 72 GB on 48 GB RAM -> macOS swap
+filled a nearly-full boot volume. PR #26: process-tree RSS, immediate
+kill past the per-worker limit (class `memory`), aggregate budget and
+free-memory floor kill the largest worker, defaults from RAM and -j
+(60% of RAM shared, >=2 GB each), leak recycling at half the limit,
+dashboard totals. Tests allocate for real. Unreleased (weekly cadence).
