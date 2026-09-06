@@ -366,3 +366,21 @@ def test_run_batch_verify_compares_area_for_a_2d_model(tmp_path):
     assert result["measure"] == "area"
     assert result["volume"] == pytest.approx(result["scad_volume"], rel=1e-6)
     assert 87 < result["volume"] < 88  # 100 - 16-gon of r=2 (~12.2)
+
+
+def test_measure_counts_leaves_of_a_nested_compound():
+    # build123d's Compound.volume only sees direct Solid children; a
+    # color-partitioned union nests Compounds, so its .volume reads 0.
+    from build123d import Box, Compound, Pos, Rectangle
+
+    from scad123d.cli import measure
+
+    nested = Compound(
+        [Compound([Box(2, 2, 2)]), Compound([Pos(10, 0, 0) * Box(1, 1, 1)])]
+    )
+    assert nested.volume == 0  # the blind spot this guards against
+    assert measure(nested) == pytest.approx(9)
+    flat = Compound(
+        [Compound([Rectangle(2, 3)]), Compound([Pos(10, 0, 0) * Rectangle(1, 1)])]
+    )
+    assert measure(flat, two_d=True) == pytest.approx(7)

@@ -1092,3 +1092,18 @@ size and never used it). Now: progress, rate, and ETA are scoped to the run
 a labeled projection follows ("corpus: 75,543 more pending, ~1d 3h at this
 rate") based on the whole-run average rate rather than the two-minute
 window, which swings early. Final line and dashboard caption run-scoped too.
+
+**User**: Analyze the latest 500-file run (411 ok / 89 failed); and why is
+OpenSCAD still at 300% CPU after the run ended?
+
+**Assistant**: The CPU: a fallback render orphaned when its worker was
+killed (workers were killed alone, not their children); found one from the
+aborted run at 1h37m. Fixed: workers lead a process group, killed with
+killpg (test: fake worker spawns a child). Analysis: timeouts still all in
+OCCT unions; 7 "dimensions inconsistent" (most with missing includes);
+5 "Null TopoDS_Shape" (OCCT null results, probably legal empties);
+linear_extrude(text that renders nothing) returns []; and the headline
+mismatch, ChessBoard "0 vs 1.69M", was a verify artifact: build123d's
+Compound.volume sums only direct Solid children and the color-partitioned
+union nests Compounds -- the STEP had all 384 solids. --verify now sums
+leaves (measure()); half the >20% mismatches used color().
