@@ -314,11 +314,16 @@ def mesh_volume(path: str | Path) -> float:
 
     For checking a build against OpenSCAD's own render, where the render
     may have tens of thousands of facets: pure arithmetic over the
-    triangles, no OCCT. Cavities are recognized the same way as in
-    ``solid_from_triangles`` -- a component nested inside another, with
-    winding normalized per component first -- but by bounding box only,
-    which is exact for what OpenSCAD emits (a cavity's box lies inside its
-    body's) and cheap.
+    triangles, no OCCT.
+
+    Whether a component is a body or a cavity comes from its winding:
+    OpenSCAD winds bodies outward (positive signed volume) and cavities
+    inward. Bounding boxes are *not* a containment test -- the balls of a
+    ball bearing sit inside the ring's box without being inside the ring,
+    and calling them cavities made a real model's volume come out negative.
+    The box is consulted only to rescue the one case winding gets wrong: a
+    user polyhedron listed inside-out passes through Manifold still
+    inside-out, and if nothing could enclose it, it is a body.
     """
     mesher = Mesher()
     reader = mesher.model.QueryReader("3mf")
@@ -331,36 +336,23 @@ def mesh_volume(path: str | Path) -> float:
         vertices = [tuple(v.Coordinates[0:3]) for v in mesh.GetVertices()]
         triangles = [tuple(t.Indices[0:3]) for t in mesh.GetTriangleIndices()]
         points, tris = _dedupe(vertices, triangles)  # type: ignore[arg-type]
-        groups = _components(tris)
         volumes: list[float] = []
         bboxes: list[tuple[Point, Point]] = []
-        for members in groups:
+        for members in _components(tris):
             comp = [tris[ti] for ti in members]
-            volumes.append(abs(signed_volume(points, comp)))
+            volumes.append(signed_volume(points, comp))
             used = {v for t in comp for v in t}
             xs = [points[v][0] for v in used]
             ys = [points[v][1] for v in used]
             zs = [points[v][2] for v in used]
             bboxes.append(((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))))
-        order = sorted(range(len(groups)), key=lambda i: volumes[i])
-        depth = [0] * len(groups)
-        for rank, i in enumerate(order):
-            for j in order[rank + 1 :]:
-                if _nested(bboxes, i, j):
-                    depth[i] = depth[j] + 1 if depth[j] else 1
-                    break
-        # depth was filled smallest-first, so a parent's depth may not have
-        # been final; recompute by walking parents explicitly.
-        parent: list[int | None] = [None] * len(groups)
-        for rank, i in enumerate(order):
-            for j in order[rank + 1 :]:
-                if _nested(bboxes, i, j):
-                    parent[i] = j
-                    break
-        for i in range(len(groups)):
-            d, k = 0, i
-            while parent[k] is not None:
-                k = parent[k]  # type: ignore[assignment]
-                d += 1
-            total += -volumes[i] if d % 2 else volumes[i]
+        for i, volume in enumerate(volumes):
+            if volume >= 0:
+                total += volume
+                continue
+            enclosable = any(
+                j != i and abs(volumes[j]) > -volume and _nested(bboxes, i, j)
+                for j in range(len(volumes))
+            )
+            total += volume if enclosable else -volume
     return total

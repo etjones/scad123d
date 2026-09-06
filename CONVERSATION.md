@@ -1023,3 +1023,35 @@ BRep-free (mesh_volume) so a fine sphere render costs ms, not 10s;
 (3) minkowski_polyhedron.scad at 1.7% is the documented rung-1 choice
 (faceted polyhedron ball -> exact sphere), reported as a bucketed
 "1-2%" mismatch and explained in the README. 289 tests pass.
+
+**User**: 500-file corpus run: 112 failures. Analyze the patterns (no
+fixes), then: fix the verify false alarms (row 5) and dig into the
+"ours << OpenSCAD" drop bug.
+
+**Assistant**: Analysis by root cause: 2D geometry reaching the mesh
+fallback (21; OpenSCAD can't write 2D to 3MF), missing include files (13
+empty + >=7 errors; the dataset keeps one .scad per folder), OCCT union
+performance (9 of 12 timeouts, all in group()'s pairwise fuse),
+scad123d silently dropping most of a model (>=6 of the worst mismatches),
+--verify false alarms (bbox-based cavity rule), and 7 small gaps
+(non-planar polyhedron faces, offset(), stacked modifiers, unescaped
+quotes in text(), empty-compound intersection).
+Row 5: mesh_volume now takes body/cavity from winding, bbox only rescues
+an un-enclosable inside-out body; Fidget and extending_tube become exact
+matches, ball_bearings becomes a real 34% mismatch.
+Drop bug, two layers, both in solid123d's occt_workarounds (branch
+fix/clean-guard-tolerance): (1) the seam-bug clean guard's 1e-9 volume
+tolerance rejected 20 of 21 cleans as integration noise (~1e-7), so
+faces fragmented 26 -> 822 until OCCT's fuse returned an inverted 8-face
+shape; now 1e-5 (seam bug loses 17%, guard intact per user's note);
+(2) OCCT's exact fuse silently returns a valid-looking sliver when an
+operand nearly coincides with the result (for(i=[0:n]) duplicate at
+360 deg) -- now every boolean is bounded by its inputs and an implausible
+result is retried with fuzzy tolerance 1e-5, warned if still wrong.
+servo_arm_base 1.9 -> 454.2 (OpenSCAD 452.8), MCP_knobs exact. Also
+fixed scad123d-diff, which reported "agreement" whenever a side failed
+(its OpenSCAD side used the sewing importer, which raised); it now uses
+mesh_volume and reports uncomparable subtrees. Remaining: dps-600,
+polychannel, cube_picture, 196915 (negative volume), ball_bearings are
+other bugs; polychannel's run-to-run flip suggests OCCT RunParallel
+nondeterminism.

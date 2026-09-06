@@ -202,3 +202,21 @@ def test_mesh_volume_is_brep_free_and_handles_cavities_and_bodies(tmp_path):
     mesher.add_shape([hollow, other])
     mesher.write(str(tmp_path / "m.3mf"))
     assert mesh_volume(tmp_path / "m.3mf") == pytest.approx(7 + 8, rel=1e-9)
+
+
+def test_mesh_volume_does_not_mistake_a_nested_body_for_a_cavity(tmp_path):
+    # A ball inside a ring's bounding box is not inside the ring: winding
+    # says body, and only winding decides. (A ball bearing came out with
+    # a negative volume under the old bounding-box rule.)
+    from build123d import Box, Cylinder, Mesher, Pos, Sphere
+
+    from scad123d.mesh_import import mesh_volume
+
+    ring = Cylinder(10, 4) - Cylinder(6, 4)
+    ball = Sphere(2)  # at the origin: inside the ring's box, in its hole
+    hollow = Box(30, 30, 30).moved(Pos(50, 0, 0)) - Box(10, 10, 10).moved(Pos(50, 0, 0))
+    mesher = Mesher()
+    mesher.add_shape([ring, ball, hollow])
+    mesher.write(str(tmp_path / "m.3mf"))
+    expected = ring.volume + ball.volume + hollow.volume
+    assert mesh_volume(tmp_path / "m.3mf") == pytest.approx(expected, rel=1e-3)
