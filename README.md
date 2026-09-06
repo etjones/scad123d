@@ -308,6 +308,13 @@ scad123d-batch ~/models -o ~/models-step -j 12 --timeout 120
   current file with it. `scad123d-batch --report OUT_DIR` summarizes by
   class with the most common messages, and `--retry timeout,crash --timeout
   900` re-queues just those for a second, more patient pass.
+- **Memory is enforced, not just watched.** A file whose worker (with its
+  OpenSCAD render) grows past `--max-rss-gb` is killed and recorded as
+  `memory`; if all workers together exceed `--memory-budget-gb`, or the
+  machine drops under `--min-free-gb`, the largest worker is killed. The
+  defaults come from RAM and `-j` (60% of RAM shared across workers), so
+  twelve workers cannot push a 48 GB machine into swap. `--retry memory
+  -j 4` redoes the big ones with room.
 - **Duplicates are converted once.** Byte-identical inputs (common in a
   scraped corpus) share one conversion; the others get a hard link to it.
 - **Replayable.** Each STEP gets the OpenSCAD `.csg` export it was built
@@ -354,6 +361,7 @@ mirrors the corpus; `fetch` fills absent ones from the Thingiverse API (an
 app token, `$THINGIVERSE_TOKEN`); and `scad123d-batch --include-overlay DIR`
 puts each model's overlay folder on `OPENSCADPATH` for that model. Nothing
 touches the corpus itself.
+
 
 The worker half is exposed too: `scad2step --batch` reads JSON tasks
 (`{"input": ..., "output": ...}`) one per line on stdin and writes one JSON

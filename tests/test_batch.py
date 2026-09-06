@@ -47,6 +47,11 @@ FAKE_WORKER = textwrap.dedent(
             )
             print(f"child pid {child.pid}", file=sys.stderr, flush=True)
             time.sleep(30)
+        if name.startswith("hog"):
+            big = bytearray(int(name.split("hog")[1].split(".")[0] or 300) << 20)
+            for i in range(0, len(big), 4096):
+                big[i] = 1  # touch every page so it is resident
+            time.sleep(30)
         if name.startswith("bad"):
             print(json.dumps({
                 "status": "openscad-error", "message": "nope", "seconds": 0.01,
@@ -82,6 +87,12 @@ def fake_batch(tmp_path):
     def make(names: list[str], **kwargs) -> Batch:  # type: ignore[no-untyped-def]
         src = tmp_path / "src"
         _tree(src, names)
+        # Supervision tests must not depend on the host's free RAM (a CI
+        # runner can sit under the default floor): no memory limits unless
+        # a test sets them.
+        kwargs.setdefault("min_free_gb", 0.0)
+        kwargs.setdefault("memory_budget_gb", 1024.0)
+        kwargs.setdefault("max_rss_gb", 1024.0)
         batch = Batch(
             src,
             tmp_path / "out",
@@ -441,6 +452,44 @@ def test_skip_unresolved_includes_excludes_and_retry_restores(tmp_path, capsys):
         == 0
     )
     assert "would exclude 0 models" in capsys.readouterr().err
+
+
+def test_task_exceeding_the_per_worker_limit_is_killed_as_memory(fake_batch):
+    batch = fake_batch(["hog300.scad"], timeout=20, max_rss_gb=0.15)
+    start = time.time()
+    counts = batch.run(batch.plan(), dashboard=None)
+    assert counts == {"memory": 1}
+    assert time.time() - start < 15  # not the fake worker's 30 s sleep
+    (message,) = batch.ledger.query("SELECT message FROM files")[0]
+    assert "over the per-worker limit" in message and "GB" in message
+
+
+def test_aggregate_budget_kills_the_largest_worker(fake_batch):
+    batch = fake_batch(
+        ["hog250.scad", "hog120.scad"], timeout=20, max_rss_gb=2, memory_budget_gb=0.3
+    )
+    # distinct contents, or the sha dedup makes them one task with a sibling
+    (batch.source / "hog250.scad").write_text("cube(250);")
+    (batch.source / "hog120.scad").write_text("cube(120);")
+    batch.scan()
+    counts = batch.run(batch.plan(order="name"), dashboard=None)
+    assert counts["memory"] >= 1
+    rows = dict(batch.ledger.query("SELECT path, status FROM files"))
+    assert rows[str(batch.source / "hog250.scad")] == "memory"  # the largest went first
+    (message,) = batch.ledger.query(
+        "SELECT message FROM files WHERE path LIKE '%hog250%'"
+    )[0]
+    assert "over the budget" in message
+
+
+def test_memory_defaults_derive_from_ram_and_jobs(tmp_path):
+    from scad123d.batch import _total_memory_mb
+
+    b = Batch(tmp_path, tmp_path / "out", jobs=4, timeout=1)
+    total = _total_memory_mb()
+    assert b.max_rss == pytest.approx(max(2048, 0.6 * total / 4))
+    assert b.memory_budget == pytest.approx(0.6 * total)
+    assert b.min_free == pytest.approx(min(3072, 0.1 * total))
 
 
 def test_requeued_files_come_before_never_seen_ones(fake_batch):

@@ -1157,3 +1157,39 @@ the v2 data says otherwise: 19% of models have unresolved includes, 91%
 of those also miss the symbols. Installed 16 libraries (library refs
 3,225 -> 348), then excluded 12,635 models from the ledger (reversible).
 Also fixed: `--limit 0` converted everything.
+
+**User**: STEP conversions go to ~/codecad-step; later I'll repair failures
+and automate comparisons against OpenSCAD's STL. Write a script (or batch
+addition) that, in a separate pass after the STEP run, renders OpenSCAD's
+STL beside each STEP and copies or symlinks the source .scad there, so
+.scad/.csg/.stl/.step sit together. Don't disturb the running batch.
+
+**Assistant**: `scad123d-artifacts` (new module `artifacts.py`, console
+script registered): reads the batch ledger's `files` table for inputs and
+STEP classes, copies the `.scad` (`--symlink` optional) beside the STEP,
+renders OpenSCAD's binary STL (Manifold, `--include-overlay` like the
+batch, per-render `--timeout`, `-j` threads over subprocesses, `.part`
+temp name so a killed render leaves no truncated STL). Records each render
+in a new `stl` table of the same ledger (ok / empty / openscad-error /
+timeout), so re-runs skip finished STLs and retry failures; `--force`,
+`--status` (default: every class but `excluded`), `--no-stl`,
+`--no-source`, `--dry-run`, `--report`. Duplicates hard-link the
+original's STL. OpenSCAD exits 1 on an empty top level, so `empty` comes
+from its stderr, not from a zero-triangle file. Tests with a fake renderer
+plus one needs_openscad test; smoke run on 12 real corpus files (11 ok, one
+2D model rejected). Not committed; nothing touched in ~/codecad-step.
+Suggested later run:
+`scad123d-artifacts ~/Dropbox/Projects/3D_geometry/codecad/dataset -o ~/codecad-step -j 8 --timeout 300 --include-overlay <overlay>`.
+
+**User**: Two machine crashes during `--limit 2000` runs (~35 GB free
+disk); workers claim >3 GB. Look at the memory-control mechanism.
+
+**Assistant**: It was soft: exceeding --max-rss-gb only set a recycle
+flag honored after the current file; only the worker's own RSS was
+measured (not its OpenSCAD render); nothing looked at the machine, so
+12 workers x the fixed 6 GB default = 72 GB on 48 GB RAM -> macOS swap
+filled a nearly-full boot volume. PR #26: process-tree RSS, immediate
+kill past the per-worker limit (class `memory`), aggregate budget and
+free-memory floor kill the largest worker, defaults from RAM and -j
+(60% of RAM shared, >=2 GB each), leak recycling at half the limit,
+dashboard totals. Tests allocate for real. Unreleased (weekly cadence).
