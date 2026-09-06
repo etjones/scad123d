@@ -1141,3 +1141,19 @@ inside a single fuse (N-ary removes the accumulation cost, not hard
 geometry); 19 mismatches >20% remain unbisected. Fixable fresh-file rate
 ~12%. Next: --retry the accumulated failures under 0.7.0 as a controlled
 measurement, then bisect the >20%s.
+
+**User**: Any way to handle the missing includes? Make a program to scan for
+them (known libraries or Thingiverse), no LLM. Then: read the CodeCAD paper
+for the real structure; install common libraries and exclude models with
+unresolved dependencies.
+
+**Assistant**: `scad123d-includes` (PR #25): static include scan in
+OpenSCAD's search order; classifies known library (curated table) /
+sibling (same thing, elsewhere in the corpus) / absent; `resolve` and
+`fetch` (Thingiverse API, token) write an overlay tree, never the corpus;
+`scad123d-batch --include-overlay` and `--skip-unresolved-includes`.
+Paper says local deps were inlined and unresolved externals filtered;
+the v2 data says otherwise: 19% of models have unresolved includes, 91%
+of those also miss the symbols. Installed 16 libraries (library refs
+3,225 -> 348), then excluded 12,635 models from the ledger (reversible).
+Also fixed: `--limit 0` converted everything.

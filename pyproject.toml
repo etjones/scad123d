@@ -30,6 +30,7 @@ Issues = "https://github.com/etjones/scad123d/issues"
 scad2step = "scad123d.cli:main"
 scad123d-diff = "scad123d.diff:main"
 scad123d-batch = "scad123d.batch:main"
+scad123d-includes = "scad123d.includes:main"
 
 [project.optional-dependencies]
 batch = [

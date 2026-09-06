@@ -343,6 +343,18 @@ those files will all fail as `openscad-error`; and write the output outside
 any cloud-synced folder — STEP files are large, and a sync client indexing
 tens of thousands of them will compete for the CPU.
 
+**Missing includes.** A scraped corpus loses the files its models `include`
+— a `configuration.scad`, a `helpers.scad`, the library they were written
+against — and OpenSCAD renders what survives with only a warning, so those
+models come out silently wrong. `scad123d-includes scan DIR` reads every
+model's includes and says what doesn't resolve and why: a *known library*
+(with where to get it), a *sibling* (the same thing's file, elsewhere in the
+corpus), or *absent*. `resolve` copies siblings into an overlay tree that
+mirrors the corpus; `fetch` fills absent ones from the Thingiverse API (an
+app token, `$THINGIVERSE_TOKEN`); and `scad123d-batch --include-overlay DIR`
+puts each model's overlay folder on `OPENSCADPATH` for that model. Nothing
+touches the corpus itself.
+
 The worker half is exposed too: `scad2step --batch` reads JSON tasks
 (`{"input": ..., "output": ...}`) one per line on stdin and writes one JSON
 result per line, if you'd rather drive it from your own tooling.

@@ -374,6 +374,75 @@ def test_killing_a_hung_worker_also_kills_its_child_process(fake_batch):
     assert not alive, "the worker's child survived the worker's kill"
 
 
+def test_include_overlay_reaches_the_worker_as_openscadpath(fake_batch, tmp_path):
+    echo = tmp_path / "echo.py"
+    echo.write_text(
+        "import json, os, sys\n"
+        "for line in sys.stdin:\n"
+        "    t = json.loads(line); os.makedirs(os.path.dirname(t['output']), exist_ok=True)\n"
+        "    open(t['output'], 'w').write('x')\n"
+        "    print(json.dumps({'status': 'ok', 'message': json.dumps(t)})); sys.stdout.flush()\n"
+    )
+    batch = fake_batch(["0100_0/body.scad"], include_overlay=tmp_path / "overlay")
+    batch.worker_command = [sys.executable, str(echo)]
+    batch.run(batch.plan(), dashboard=None)
+    (message,) = batch.ledger.query("SELECT message FROM files")[0]
+    assert json.loads(message)["openscadpath"] == str(
+        (tmp_path / "overlay" / "0100_0").resolve()
+    )
+
+
+def test_skip_unresolved_includes_excludes_and_retry_restores(tmp_path, capsys):
+    from scad123d.batch import STATUS_EXCLUDED
+
+    src = tmp_path / "src"
+    _tree(src, ["0100_0/whole.scad"], content="cube(1);")
+    _tree(src, ["0200_0/hollow.scad"], content="use <gone.scad>\ncube(1);")
+    out = tmp_path / "out"
+    assert (
+        main([str(src), "-o", str(out), "--skip-unresolved-includes", "--dry-run"]) == 0
+    )
+    err = capsys.readouterr().err
+    assert (
+        "would exclude 1 models" in err and "2 to convert" in err
+    )  # dry run: nothing written
+    assert (
+        main([str(src), "-o", str(out), "--skip-unresolved-includes", "--limit", "0"])
+        == 0
+    )
+    capsys.readouterr()
+    ledger = Ledger(out / "ledger.sqlite")
+    rows = dict(ledger.query("SELECT path, status FROM files"))
+    assert rows[str(src / "0200_0" / "hollow.scad")] == STATUS_EXCLUDED
+    assert rows[str(src / "0100_0" / "whole.scad")] == STATUS_PENDING
+    (message,) = ledger.query(
+        "SELECT message FROM files WHERE status=?", (STATUS_EXCLUDED,)
+    )[0]
+    assert message == "unresolved include: gone.scad"
+    # an overlay that supplies the file un-excludes it on the next pass
+    ledger.close()
+    overlay = tmp_path / "overlay" / "0200_0"
+    overlay.mkdir(parents=True)
+    (overlay / "gone.scad").write_text("")
+    assert (
+        main(
+            [
+                str(src),
+                "-o",
+                str(out),
+                "--skip-unresolved-includes",
+                "--retry",
+                "excluded",
+                "--include-overlay",
+                str(tmp_path / "overlay"),
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    assert "would exclude 0 models" in capsys.readouterr().err
+
+
 def test_requeued_files_come_before_never_seen_ones(fake_batch):
     # `--retry X --limit N` must redo the X files, not N random pending ones.
     batch = fake_batch(["bad.scad"])
