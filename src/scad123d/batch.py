@@ -205,26 +205,17 @@ class Ledger:
             ).fetchall()
 
     def lookup(self, path: str) -> tuple[Any, ...] | None:
-        """One file's full row, by exact path or unique path suffix."""
+        """One file's full row, by exact path or unique path suffix (either
+        separator: ledgers written on Windows hold backslashes)."""
+        needle = path.lstrip("/\\")
         with self._lock:
             rows = self._db.execute(
                 "SELECT path, status, stage, message, seconds, meshed, warnings,"
                 " volume, scad_volume, traceback FROM files"
-                " WHERE path = ? OR path LIKE '%' || ?",
-                (path, "/" + path.lstrip("/")),
+                " WHERE path = ? OR path LIKE ? OR path LIKE ?",
+                (path, "%/" + needle, "%\\" + needle),
             ).fetchall()
         return rows[0] if len(rows) == 1 else None
-
-    def counts(self) -> Counter[str]:
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT status, COUNT(*) FROM files GROUP BY status"
-            ).fetchall()
-        return Counter(dict(rows))
-
-    def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
-        with self._lock:
-            return self._db.execute(sql, params).fetchall()
 
 
 # --- discovery --------------------------------------------------------------
@@ -790,7 +781,7 @@ def failure_site(trace: str) -> str:
         if not match:
             continue
         file, lineno, function = match.groups()
-        if "/scad123d/" in file or "/solid123d/" in file:
+        if {"scad123d", "solid123d"} & set(Path(file).parts):
             site = f"{Path(file).name}:{lineno} {function}"
     return site
 
