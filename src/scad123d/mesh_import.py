@@ -8,20 +8,25 @@ hull-shaped through-hole) it returns a shell with a mis-oriented patch:
 ``is_valid`` is False and the volume is off by a few percent, silently.
 
 A mesh from OpenSCAD already *is* consistent topology -- each triangle
-lists its vertices by index, wound outward -- so there is nothing to
-rediscover. This module builds the BRep the way the mesh describes it:
-one vertex per distinct position, one edge per vertex pair, each triangle
-a wire of those shared edges reversed as its winding dictates. Connected
-components become shells; the largest is the outer boundary, the rest are
-voids. Every result is checked against the divergence-theorem volume of
-the triangles themselves, and a disagreement raises ``MeshImportError``
+lists its vertices by index -- so there is nothing to rediscover. This
+module builds the BRep the way the mesh describes it: one vertex per
+distinct position, one edge per vertex pair, each triangle a wire of those
+shared edges reversed as its winding dictates. Edge-connected components
+become shells. Which shells are bodies and which are cavities is decided
+geometrically (a shell inside another is that body's void), not from
+winding: OpenSCAD's own output winds voids inward, but a user polyhedron
+listed inside-out passes through Manifold still inside-out, and CGAL
+repairs it -- so winding is normalized per component first, then ignored.
+
+Every result is checked against the divergence-theorem volume of the
+triangles themselves, and a disagreement raises ``MeshImportError``
 instead of returning a wrong shape.
 """
 
 import math
 from pathlib import Path
 
-from build123d import Mesher, Shape, Shell, Solid
+from build123d import Compound, Mesher, Shape, Shell, Solid
 from OCP.BRep import BRep_Builder
 from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeEdge,
@@ -29,8 +34,12 @@ from OCP.BRepBuilderAPI import (
     BRepBuilderAPI_MakeSolid,
     BRepBuilderAPI_MakeVertex,
     BRepBuilderAPI_MakeWire,
+    BRepBuilderAPI_Sewing,
 )
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
 from OCP.gp import gp_Pnt
+from OCP.TopAbs import TopAbs_ShapeEnum, TopAbs_State
+from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Shell
 
 from .errors import MeshImportError
@@ -45,7 +54,7 @@ _VOLUME_RTOL = 1e-6
 
 
 def read_mesh_file(path: str | Path) -> list[Shape]:
-    """Read every mesh object in a 3MF file as a build123d Solid."""
+    """Read every mesh object in a 3MF file as a build123d shape."""
     mesher = Mesher()
     reader = mesher.model.QueryReader("3mf")
     reader.ReadFromFile(str(path))
@@ -120,7 +129,20 @@ def _components(triangles: list[Triangle]) -> list[list[int]]:
     return list(groups.values())
 
 
-def _build_topologically(points: list[Point], triangles: list[Triangle]) -> Solid:
+class _Component:
+    """One closed shell, wound outward, with a point known to lie on it."""
+
+    def __init__(self, shell: TopoDS_Shell, volume: float, probe: Point) -> None:
+        self.shell = shell
+        self.volume = volume  # positive: the shell has been normalized outward
+        self.probe = probe
+        self.solid = Solid(BRepBuilderAPI_MakeSolid(shell).Solid())
+        self.bbox = self.solid.bounding_box()
+
+
+def _shells_topologically(
+    points: list[Point], triangles: list[Triangle]
+) -> list[_Component]:
     vertices = [BRepBuilderAPI_MakeVertex(gp_Pnt(*p)).Vertex() for p in points]
     edges: dict[tuple[int, int], object] = {}
 
@@ -133,36 +155,33 @@ def _build_topologically(points: list[Point], triangles: list[Triangle]) -> Soli
         e = edges[key]
         return e if (a, b) == key else TopoDS.Edge_s(e.Reversed())
 
-    shells: list[Shell] = []
+    components: list[_Component] = []
     for members in _components(triangles):
+        tris = [triangles[ti] for ti in members]
+        volume = signed_volume(points, tris)
+        if volume < 0:  # wound inward (a void, or an inside-out polyhedron)
+            tris = [(i, k, j) for i, j, k in tris]
+            volume = -volume
         builder = BRep_Builder()
         shell = TopoDS_Shell()
         builder.MakeShell(shell)
-        for ti in members:
-            i, j, k = triangles[ti]
+        for i, j, k in tris:
             wire = BRepBuilderAPI_MakeWire(edge(i, j), edge(j, k), edge(k, i)).Wire()
             builder.Add(shell, BRepBuilderAPI_MakeFace(wire, True).Face())
         shell.Closed(True)
-        shells.append(Shell(shell))
-
-    outer = max(shells, key=lambda s: math.prod(s.bounding_box().size))
-    maker = BRepBuilderAPI_MakeSolid(outer.wrapped)
-    for inner in shells:
-        if inner is not outer:
-            maker.Add(inner.wrapped)
-    solid = Solid(maker.Solid())
-    if solid.volume < 0:
-        solid = Solid(solid.wrapped.Complemented())
-    return solid
+        i, j, k = tris[0]
+        probe = tuple(
+            (points[i][d] + points[j][d] + points[k][d]) / 3 for d in range(3)
+        )
+        components.append(_Component(shell, volume, probe))  # type: ignore[arg-type]
+    return components
 
 
-def _build_by_sewing(points: list[Point], triangles: list[Triangle]) -> Solid:
+def _shells_by_sewing(
+    points: list[Point], triangles: list[Triangle]
+) -> list[_Component]:
     """build123d's own approach, kept as the second attempt for meshes whose
     edge sharing is not clean (an edge used by more than two triangles)."""
-    from OCP.BRepBuilderAPI import BRepBuilderAPI_Sewing
-    from OCP.TopAbs import TopAbs_ShapeEnum
-    from OCP.TopExp import TopExp_Explorer
-
     sewing = BRepBuilderAPI_Sewing()
     for i, j, k in triangles:
         wire = BRepBuilderAPI_MakeWire(
@@ -172,59 +191,176 @@ def _build_by_sewing(points: list[Point], triangles: list[Triangle]) -> Solid:
         ).Wire()
         sewing.Add(BRepBuilderAPI_MakeFace(wire, True).Face())
     sewing.Perform()
-    sewn = sewing.SewedShape()
-    shells: list[Shell] = []
-    explorer = TopExp_Explorer(sewn, TopAbs_ShapeEnum.TopAbs_SHELL)
+    components: list[_Component] = []
+    explorer = TopExp_Explorer(sewing.SewedShape(), TopAbs_ShapeEnum.TopAbs_SHELL)
     while explorer.More():
-        shells.append(Shell(TopoDS.Shell_s(explorer.Current())))
+        shell = TopoDS.Shell_s(explorer.Current())
+        volume = Solid(BRepBuilderAPI_MakeSolid(shell).Solid()).volume
+        if volume < 0:
+            shell = TopoDS.Shell_s(shell.Reversed())
+            volume = -volume
+        probe = Shell(shell).faces()[0].center()
+        components.append(_Component(shell, volume, (probe.X, probe.Y, probe.Z)))
         explorer.Next()
-    if not shells:
+    if not components:
         raise MeshImportError("sewing produced no shell")
-    outer = max(shells, key=lambda s: math.prod(s.bounding_box().size))
-    maker = BRepBuilderAPI_MakeSolid(outer.wrapped)
-    for inner in shells:
-        if inner is not outer:
-            maker.Add(inner.wrapped)
-    solid = Solid(maker.Solid())
-    if solid.volume < 0:
-        solid = Solid(solid.wrapped.Complemented())
-    return solid
+    return components
 
 
-def _agrees(solid: Solid, expected: float) -> bool:
-    if not solid.is_valid:
+def _contains(outer: _Component, inner: _Component) -> bool:
+    """Whether a point on ``inner``'s surface lies strictly inside ``outer``."""
+    bb, ib = outer.bbox, inner.bbox
+    if not (
+        bb.min.X <= ib.min.X
+        and bb.min.Y <= ib.min.Y
+        and bb.min.Z <= ib.min.Z
+        and ib.max.X <= bb.max.X
+        and ib.max.Y <= bb.max.Y
+        and ib.max.Z <= bb.max.Z
+    ):
         return False
-    return math.isclose(solid.volume, expected, rel_tol=_VOLUME_RTOL, abs_tol=1e-9)
+    classifier = BRepClass3d_SolidClassifier(
+        outer.solid.wrapped, gp_Pnt(*inner.probe), 1e-7
+    )
+    return classifier.State() == TopAbs_State.TopAbs_IN
 
 
-def solid_from_triangles(vertices: list[Point], triangles: list[Triangle]) -> Solid:
-    """Build a Solid from an indexed triangle mesh, verified by volume.
+def _assemble(components: list[_Component]) -> tuple[Shape, float]:
+    """Nest shells into solids with voids; returns the shape and the volume
+    the nesting implies (bodies minus cavities), for the caller to verify.
+
+    Each shell's parent is the smallest shell enclosing it. Even nesting
+    depth is material, odd is a cavity -- so an island inside a cavity is a
+    body again.
+    """
+    order = sorted(range(len(components)), key=lambda i: components[i].volume)
+    parent: list[int | None] = [None] * len(components)
+    for rank, i in enumerate(order):
+        for j in order[rank + 1 :]:  # candidates larger than i, smallest first
+            if _contains(components[j], components[i]):
+                parent[i] = j
+                break
+
+    def depth(i: int) -> int:
+        d = 0
+        while parent[i] is not None:
+            i = parent[i]  # type: ignore[assignment]
+            d += 1
+        return d
+
+    depths = [depth(i) for i in range(len(components))]
+    solids: list[Solid] = []
+    expected = 0.0
+    for i, comp in enumerate(components):
+        if depths[i] % 2:
+            expected -= comp.volume
+            continue
+        expected += comp.volume
+        maker = BRepBuilderAPI_MakeSolid(comp.shell)
+        for j, other in enumerate(components):
+            if parent[j] == i:
+                maker.Add(TopoDS.Shell_s(other.shell.Reversed()))
+        solids.append(Solid(maker.Solid()))
+    shape: Shape = solids[0] if len(solids) == 1 else Compound(solids)
+    return shape, expected
+
+
+def _agrees(shape: Shape, expected: float) -> bool:
+    if not shape.is_valid:
+        return False
+    return math.isclose(shape.volume, expected, rel_tol=_VOLUME_RTOL, abs_tol=1e-9)
+
+
+def solid_from_triangles(vertices: list[Point], triangles: list[Triangle]) -> Shape:
+    """Build a Solid (or a Compound of them) from an indexed triangle mesh,
+    verified by volume.
 
     Raises MeshImportError if neither the topological build nor sewing
-    yields a valid solid enclosing the volume the triangles do.
+    yields a valid shape enclosing the volume the triangles do.
     """
     points, tris = _dedupe(vertices, triangles)
     if not tris:
         raise MeshImportError("mesh has no non-degenerate triangles")
-    expected = abs(signed_volume(points, tris))
 
     attempts: list[str] = []
     for name, build in (
-        ("topology", _build_topologically),
-        ("sewing", _build_by_sewing),
+        ("topology", _shells_topologically),
+        ("sewing", _shells_by_sewing),
     ):
         try:
-            solid = build(points, tris)
+            shape, expected = _assemble(build(points, tris))
         except Exception as exc:  # noqa: BLE001 -- OCCT raises many types
             attempts.append(f"{name}: {type(exc).__name__}: {exc}")
             continue
-        if _agrees(solid, expected):
-            return solid
+        if _agrees(shape, expected):
+            return shape
         attempts.append(
-            f"{name}: volume {solid.volume:.6g} vs triangles {expected:.6g}, "
-            f"valid={solid.is_valid}"
+            f"{name}: volume {shape.volume:.6g} vs triangles {expected:.6g}, "
+            f"valid={shape.is_valid}"
         )
     raise MeshImportError(
         "could not build a valid solid from OpenSCAD's mesh "
         f"({len(points)} vertices, {len(tris)} triangles): " + "; ".join(attempts)
     )
+
+
+def _nested(bboxes: list[tuple[Point, Point]], i: int, j: int) -> bool:
+    (imin, imax), (jmin, jmax) = bboxes[i], bboxes[j]
+    return all(jmin[d] <= imin[d] and imax[d] <= jmax[d] for d in range(3))
+
+
+def mesh_volume(path: str | Path) -> float:
+    """Volume enclosed by every mesh in a 3MF file, without building a BRep.
+
+    For checking a build against OpenSCAD's own render, where the render
+    may have tens of thousands of facets: pure arithmetic over the
+    triangles, no OCCT. Cavities are recognized the same way as in
+    ``solid_from_triangles`` -- a component nested inside another, with
+    winding normalized per component first -- but by bounding box only,
+    which is exact for what OpenSCAD emits (a cavity's box lies inside its
+    body's) and cheap.
+    """
+    mesher = Mesher()
+    reader = mesher.model.QueryReader("3mf")
+    reader.ReadFromFile(str(path))
+    iterator = mesher.model.GetMeshObjects()
+    total = 0.0
+    for _ in range(iterator.Count()):
+        iterator.MoveNext()
+        mesh = iterator.GetCurrentMeshObject()
+        vertices = [tuple(v.Coordinates[0:3]) for v in mesh.GetVertices()]
+        triangles = [tuple(t.Indices[0:3]) for t in mesh.GetTriangleIndices()]
+        points, tris = _dedupe(vertices, triangles)  # type: ignore[arg-type]
+        groups = _components(tris)
+        volumes: list[float] = []
+        bboxes: list[tuple[Point, Point]] = []
+        for members in groups:
+            comp = [tris[ti] for ti in members]
+            volumes.append(abs(signed_volume(points, comp)))
+            used = {v for t in comp for v in t}
+            xs = [points[v][0] for v in used]
+            ys = [points[v][1] for v in used]
+            zs = [points[v][2] for v in used]
+            bboxes.append(((min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))))
+        order = sorted(range(len(groups)), key=lambda i: volumes[i])
+        depth = [0] * len(groups)
+        for rank, i in enumerate(order):
+            for j in order[rank + 1 :]:
+                if _nested(bboxes, i, j):
+                    depth[i] = depth[j] + 1 if depth[j] else 1
+                    break
+        # depth was filled smallest-first, so a parent's depth may not have
+        # been final; recompute by walking parents explicitly.
+        parent: list[int | None] = [None] * len(groups)
+        for rank, i in enumerate(order):
+            for j in order[rank + 1 :]:
+                if _nested(bboxes, i, j):
+                    parent[i] = j
+                    break
+        for i in range(len(groups)):
+            d, k = 0, i
+            while parent[k] is not None:
+                k = parent[k]  # type: ignore[assignment]
+                d += 1
+            total += -volumes[i] if d % 2 else volumes[i]
+    return total

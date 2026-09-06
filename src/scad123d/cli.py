@@ -23,6 +23,7 @@ import faulthandler
 import gc
 import json
 import platform
+import re
 import resource
 import shutil
 import signal
@@ -48,7 +49,7 @@ from .errors import (
 )
 from .facets import DEFAULT_FACET_THRESHOLD
 from .mesh import clear_cache
-from .mesh_import import read_mesh_file
+from .mesh_import import mesh_volume
 from .openscad import export_csg_with_warnings, export_mesh
 from .parser import parse_csg
 
@@ -66,10 +67,16 @@ CLASS_MISSING = "missing"
 CLASS_MISMATCH = "mismatch"  # built, but disagrees with OpenSCAD's own render
 CLASS_ERROR = "error"
 
-# --verify: relative volume disagreement with OpenSCAD's mesh render that
-# counts as a wrong result. Same bar as scad123d-diff: far above facet
-# error on curved geometry, far below any real semantic bug.
-VERIFY_TOLERANCE = 0.02
+# --verify: relative volume disagreement with OpenSCAD's own render that
+# counts as a wrong result. The render is re-tessellated finely ($fa=1,
+# $fs=0.2: a circle of radius 3 gets 94 segments instead of 9), so facet
+# error is ~0.1% and 1% is far above it while far below any semantic bug.
+# Where part of *our* model is a mesh fallback it carries the original
+# coarse tessellation, so a second comparison against the coarse render
+# is allowed a looser bar.
+VERIFY_TOLERANCE = 0.01
+VERIFY_TOLERANCE_COARSE = 0.05
+_TESSELLATION = re.compile(r"\$fa = [0-9.eE+-]+, \$fs = [0-9.eE+-]+")
 
 
 def _parse_value(raw: str) -> Any:
@@ -357,6 +364,13 @@ def _peak_rss_mb() -> float:
     return rss / (1024 * 1024 if platform.system() == "Darwin" else 1024)
 
 
+def refine_tessellation(csg_text: str) -> str:
+    """The same CSG with every ``$fa``/``$fs`` pair set fine, so OpenSCAD's
+    render converges on the exact volume. An explicit ``$fn`` wins over
+    both in OpenSCAD, so deliberately low-poly geometry is untouched."""
+    return _TESSELLATION.sub("$fa = 1, $fs = 0.2", csg_text)
+
+
 def _openscad_volume(csg_text: str, timeout: float) -> float:
     """Volume of OpenSCAD's own full render of the model (0 if empty)."""
     try:
@@ -366,27 +380,59 @@ def _openscad_volume(csg_text: str, timeout: float) -> float:
             return 0.0
         raise
     try:
-        return sum(abs(shape.volume) for shape in read_mesh_file(path))
+        return mesh_volume(path)
     finally:
         shutil.rmtree(path.parent, ignore_errors=True)
+
+
+def _relative_error(ours: float, theirs: float) -> float:
+    scale = max(ours, theirs)
+    return abs(ours - theirs) / scale if scale > 1e-9 else 0.0
 
 
 def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> None:
     """Cross-check the built part against OpenSCAD's render; sets status."""
     assert conversion.part is not None
     ours = abs(conversion.part.volume)
-    theirs = _openscad_volume(csg_text, conversion.timeout)
+    fine = _openscad_volume(refine_tessellation(csg_text), conversion.timeout)
     result["volume"] = round(ours, 6)
-    result["scad_volume"] = round(theirs, 6)
-    scale = max(ours, theirs)
-    if scale < 1e-9:
-        return  # both empty or purely 2D: nothing to compare
-    error = abs(ours - theirs) / scale
-    if error > VERIFY_TOLERANCE:
-        result["status"] = CLASS_MISMATCH
-        result["message"] = (
-            f"volume {ours:.6g} vs OpenSCAD {theirs:.6g} ({100 * error:.1f}% off)"
+    result["scad_volume"] = round(fine, 6)
+    error = _relative_error(ours, fine)
+    if error <= VERIFY_TOLERANCE:
+        return
+    if conversion.meshed:
+        # Our meshed regions were rendered at the model's own coarse
+        # tessellation, so compare against that render too; a real bug
+        # disagrees with both.
+        coarse = _openscad_volume(csg_text, conversion.timeout)
+        coarse_error = _relative_error(ours, coarse)
+        if coarse_error <= VERIFY_TOLERANCE_COARSE:
+            result["message"] = (
+                f"volume {ours:.6g} matches OpenSCAD's coarse render "
+                f"{coarse:.6g} ({100 * coarse_error:.1f}%), not its fine one "
+                f"{fine:.6g}: mesh-fallback tessellation, not a bug"
+            )
+            return
+    # A magnitude bucket leads the message so --report groups mismatches by
+    # severity rather than by their (unique) volumes. The 1-2% bucket is
+    # where a known, deliberate divergence lands: a minkowski() whose ball
+    # is a faceted polyhedron (BOSL2's cuboid(rounding=)) is built as an
+    # exact sphere, slightly larger than OpenSCAD's inscribed facets.
+    bucket = next(
+        label
+        for limit, label in (
+            (0.02, "1-2%"),
+            (0.05, "2-5%"),
+            (0.2, "5-20%"),
+            (1e9, ">20%"),
         )
+        if error <= limit
+    )
+    result["status"] = CLASS_MISMATCH
+    result["message"] = (
+        f"volume off by {bucket}: {ours:.6g} vs OpenSCAD {fine:.6g} "
+        f"({100 * error:.1f}%)"
+    )
 
 
 def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str, Any]:

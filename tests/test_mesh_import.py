@@ -114,3 +114,91 @@ def test_manifold_through_hole_matches_cgal(tmp_path, monkeypatch):
         volumes[backend] = shapes[0].volume
     assert volumes["Manifold"] == pytest.approx(volumes["CGAL"], rel=1e-6)
     assert volumes["CGAL"] == pytest.approx(3071.94, abs=0.01)
+
+
+def _shift(verts, dx):  # type: ignore[no-untyped-def]
+    return [(x + dx, y, z) for x, y, z in verts]
+
+
+def test_separate_bodies_become_a_compound_not_voids():
+    # Two cubes side by side: the second is not inside the first, so it is
+    # a body of its own. (Treating every non-largest shell as a cavity made
+    # every multi-part model import as an invalid solid.)
+    verts = CUBE_VERTS + _shift(CUBE_VERTS, 10)
+    tris = CUBE_TRIS + [(a + 8, b + 8, c + 8) for a, b, c in CUBE_TRIS]
+    shape = solid_from_triangles(verts, tris)
+    assert shape.is_valid
+    assert len(shape.solids()) == 2
+    assert shape.volume == pytest.approx(16)
+
+
+def test_inside_out_separate_body_is_still_a_body():
+    # A user polyhedron listed inside-out comes through Manifold inside-out
+    # (CGAL would have repaired it). It is a body, not a cavity: winding is
+    # normalized, containment decides.
+    verts = CUBE_VERTS + _shift(CUBE_VERTS, 10)
+    tris = CUBE_TRIS + [(a + 8, c + 8, b + 8) for a, b, c in CUBE_TRIS]
+    shape = solid_from_triangles(verts, tris)
+    assert shape.is_valid
+    assert len(shape.solids()) == 2
+    assert shape.volume == pytest.approx(16)
+
+
+def test_outward_wound_cavity_is_still_a_cavity():
+    inner_verts = _scaled(CUBE_VERTS, 0.5)
+    inner_tris = [(a + 8, b + 8, c + 8) for a, b, c in CUBE_TRIS]  # wound outward
+    shape = solid_from_triangles(CUBE_VERTS + inner_verts, CUBE_TRIS + inner_tris)
+    assert shape.is_valid
+    assert len(shape.solids()) == 1
+    assert shape.volume == pytest.approx(8 - 1)
+
+
+def test_island_inside_a_cavity_is_a_body_again():
+    mid = _scaled(CUBE_VERTS, 0.75)  # cavity
+    core = _scaled(CUBE_VERTS, 0.25)  # island inside it
+    verts = CUBE_VERTS + mid + core
+    tris = (
+        CUBE_TRIS
+        + [(a + 8, c + 8, b + 8) for a, b, c in CUBE_TRIS]
+        + [(a + 16, b + 16, c + 16) for a, b, c in CUBE_TRIS]
+    )
+    shape = solid_from_triangles(verts, tris)
+    assert shape.is_valid
+    assert len(shape.solids()) == 2
+    assert shape.volume == pytest.approx(8 - 0.75**3 * 8 + 0.25**3 * 8)
+
+
+@pytest.mark.needs_openscad
+def test_full_multi_body_render_imports_valid():
+    """The fixture that exposed the void bug: several separate primitives in
+    one render, both backends."""
+    from scad123d.mesh_import import read_mesh_file
+    from scad123d.openscad import _supports_backend_flag, export_csg, export_mesh
+
+    csg = export_csg("tests/fixtures/scad/primitives.scad")
+    backends = ["CGAL", "Manifold"] if _supports_backend_flag() else [None]
+    for backend in backends:
+        env = {"SCAD123D_BACKEND": backend} if backend else {}
+        with pytest.MonkeyPatch.context() as mp:
+            for k, v in env.items():
+                mp.setenv(k, v)
+            shapes = read_mesh_file(export_mesh(csg, suffix=".3mf"))
+        total = sum(s.volume for s in shapes)
+        assert all(s.is_valid for s in shapes)
+        assert total == pytest.approx(8097.28, abs=0.01)
+
+
+def test_mesh_volume_is_brep_free_and_handles_cavities_and_bodies(tmp_path):
+    # Write a 3MF with build123d's own Mesher, then read its volume back
+    # with pure arithmetic: an outer cube with a cavity plus a separate
+    # inside-out body.
+    from build123d import Box, Mesher, Pos
+
+    from scad123d.mesh_import import mesh_volume
+
+    hollow = Box(2, 2, 2) - Box(1, 1, 1)
+    other = Pos(10, 0, 0) * Box(2, 2, 2)
+    mesher = Mesher()
+    mesher.add_shape([hollow, other])
+    mesher.write(str(tmp_path / "m.3mf"))
+    assert mesh_volume(tmp_path / "m.3mf") == pytest.approx(7 + 8, rel=1e-9)

@@ -325,8 +325,13 @@ scad123d-batch ~/models -o ~/models-step -j 12 --timeout 120
   leaves the Python stack in `logs/worker-N.log` under a `converting <file>`
   marker. `--verify` goes further and catches *silently wrong* output:
   each built part's volume is checked against OpenSCAD's own render of the
-  same CSG (fast with the Manifold backend); a disagreement over 2% is
-  classed `mismatch`, ready for `scad123d-diff` on the saved `.csg`.
+  same CSG, tessellated finely so the comparison is sharp (fast with the
+  Manifold backend); a disagreement over 1% is classed `mismatch`, with
+  the magnitude bucketed in the message so `--report` groups them. One
+  deliberate divergence lands in the 1–2% bucket: a `minkowski()` whose
+  ball is a faceted polyhedron (what BOSL2's `cuboid(rounding=)` emits) is
+  built as an exact sphere, slightly larger than OpenSCAD's inscribed
+  facets. Anything beyond that is worth `scad123d-diff` on the saved `.csg`.
 
 Two things to arrange before a large run: install the libraries your corpus
 `include`s (BOSL2, MCAD, ...) where OpenSCAD finds them (`OPENSCADPATH`), or

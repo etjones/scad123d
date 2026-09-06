@@ -1004,3 +1004,22 @@ and segfaults leave the Python stack in logs/worker-N.log under a
 while testing: an empty top-level model's CSG export is "\n", which
 import_csg's str heuristic treated as a *path* -> every library file
 would have been classed `missing`; the worker now parses explicitly.
+
+**Assistant** (follow-up, same branch): --verify's first run over the
+fixtures found three things, all mine or tessellation, none OpenSCAD's:
+(1) the mesh importer treated every non-largest shell as a *void* of the
+largest, so any multi-body render came back as an invalid solid
+(exact volume, is_valid False, both backends) -- voids are now decided by
+containment (BRepClass3d classifier, smallest enclosing shell, even
+depth = body / odd = cavity) after normalizing each component's winding,
+because a user polyhedron listed inside-out passes through Manifold
+inside-out (polyhedron.scad: 800 vs 1200) while CGAL repairs it;
+(2) comparing against OpenSCAD's default tessellation is not a fair
+check (an r=3 circle is a 9-gon, 8% under) -- the verify render now
+rewrites $fa/$fs to 1/0.2 (explicit $fn still wins), which brought
+agreement to <=0.11% on every fixture, so the bar is 1% (5% against the
+coarse render when our side has mesh-fallback regions); the check is
+BRep-free (mesh_volume) so a fine sphere render costs ms, not 10s;
+(3) minkowski_polyhedron.scad at 1.7% is the documented rung-1 choice
+(faceted polyhedron ball -> exact sphere), reported as a bucketed
+"1-2%" mismatch and explained in the README. 289 tests pass.
