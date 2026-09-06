@@ -28,7 +28,8 @@ from scad123d.batch import (
 FAKE_WORKER = textwrap.dedent(
     """
     import faulthandler, json, os, signal, sys, time
-    faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
+    if hasattr(signal, "SIGUSR1"):  # not on Windows
+        faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
     for line in sys.stdin:
         task = json.loads(line)
         name = os.path.basename(task["input"])
@@ -297,6 +298,9 @@ def test_report_groups_failures_by_innermost_frame(fake_batch, capsys):
     assert "2  openscad-error openscad.py:99 _run" in text
 
 
+@pytest.mark.skipif(
+    not hasattr(__import__("signal"), "SIGUSR1"), reason="no SIGUSR1 on Windows"
+)
 def test_timeout_asks_the_worker_for_a_stack_dump_before_killing(fake_batch):
     batch = fake_batch(["slow.scad"])
     counts = batch.run(batch.plan(), dashboard=None)

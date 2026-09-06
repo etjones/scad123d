@@ -24,7 +24,6 @@ import gc
 import json
 import platform
 import re
-import resource
 import shutil
 import signal
 import subprocess
@@ -52,6 +51,11 @@ from .mesh import clear_cache
 from .mesh_import import mesh_volume, unit_extrusion
 from .openscad import export_csg_with_warnings, export_mesh
 from .parser import parse_csg
+
+try:
+    import resource
+except ImportError:  # Windows has no resource module
+    resource = None  # type: ignore[assignment]
 
 # Result classes a worker can report. The parent (batch.py) adds "timeout"
 # and "crash", which by their nature the worker itself cannot report.
@@ -359,6 +363,8 @@ def classify(exc: BaseException) -> tuple[str, str]:
 
 
 def _peak_rss_mb() -> float:
+    if resource is None:
+        return 0.0  # the harness reads live RSS via psutil anyway
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # macOS reports bytes, Linux kilobytes.
     return rss / (1024 * 1024 if platform.system() == "Darwin" else 1024)
