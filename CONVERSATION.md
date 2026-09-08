@@ -1236,3 +1236,11 @@ and the comparison is exact.
 path; one old test updated to the color-fill semantics. 334 pass.
 Smoke-tested on a two-material lid: steelblue 2400 exactly, both STEP
 layouts correct, colors round-tripping to six decimals.
+
+**Assistant** (sequencing): scad123d's floor is raised to
+`solid123d>=0.8.0`, since `export_step`/`region_bodies` and the corrected
+union precedence are unreleased. scad123d#28 therefore cannot go green
+until solid123d#15 is merged and released; that is the normal order for
+this pair (geometry semantics land in solid123d first) and matches the
+weekly release cadence. Locally both suites pass together via
+`PYTHONPATH=~/Dropbox/Projects/solid123d/src`.
