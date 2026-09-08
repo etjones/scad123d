@@ -1866,3 +1866,23 @@ colored 3MF/OBJ export. Group-by-color: yes, a bucket sweep over the
 flattened bodies (RGBA rounded ~1e-3 incl. alpha; uncolored bucket;
 transforms already baked; optional fuse per bucket), as an export mode
 since it discards the hierarchy. No code changes.
+
+**User**: Re-run the mismatch retry, generate a top-100 review directory,
+and leave a report of what is still failing plus the size of the changes.
+
+**Assistant**: Retried all 4,364 mismatches with scad123d
+`feature/debug-ornament-volume` plus merged solid123d main on PYTHONPATH.
+572 now ok (13.1%), 3,753 still mismatch, 39 moved to another failure
+(mostly memory/timeout at the 300 s / 3.6 GB limits). Corpus ok
+55,088 -> 55,660. All four magnitude buckets moved by a similar 7-20%,
+so no single cause dominates. `~/codecad-review` (the original worst 100,
+selection kept) reports 14 of 100 resolved and 28 changed, including the
+coins/ornament case which now reads `ok`; `~/codecad-review-2` holds a
+fresh worst 100. Report at `~/codecad-step/RETRY-REPORT.md`.
+
+Sharpest remaining finding: 21 files build to a volume of exactly 0 while
+OpenSCAD renders a real solid, and they are classed `mismatch` at 100%
+rather than `empty`, so they hide in the largest bucket. 13 used no mesh
+fallback and 15 carry no OpenSCAD warning, so the geometry is lost on our
+side. Only 71 of 3,753 differ by more than 100x; the rest is a long tail.
+2,351 memory/timeout files remain `deferred` and were never re-run.
