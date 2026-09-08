@@ -32,12 +32,15 @@ import sys
 import time
 import traceback
 import warnings
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, TextIO
 
-from build123d import Shape, export_step
+from build123d import Shape
+from solid123d import color_label, export_step, region_bodies
 from solid123d.customizer import resolve_param_set
 
+from . import colors as _colors
 from . import import_csg
 from .errors import (
     MeshFallbackWarning,
@@ -168,6 +171,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="seconds allowed for OpenSCAD to run (default: 600)",
     )
     parser.add_argument(
+        "--group-by-color",
+        action="store_true",
+        help="in the STEP, put every body under one group per color() (plus "
+        "'uncolored') instead of mirroring the model's own grouping; what "
+        "slicers read, at the cost of the author's structure",
+    )
+    parser.add_argument(
         "--batch",
         action="store_true",
         help="worker mode: read JSON tasks from stdin, one per line, and write a "
@@ -228,6 +238,7 @@ class _Conversion:
         facet_threshold: int,
         mesh_scope: str,
         timeout: float,
+        group_by_color: bool = False,
     ) -> None:
         self.input = input_path
         self.output = output_path
@@ -235,6 +246,7 @@ class _Conversion:
         self.facet_threshold = facet_threshold
         self.mesh_scope = mesh_scope
         self.timeout = timeout
+        self.group_by_color = group_by_color
         self.meshed: list[str] = []
         self.part: Shape | None = None
         self.openscad_warnings: list[str] = []
@@ -276,7 +288,7 @@ class _Conversion:
             part.label = self.input.stem
         self.part = part
         self.output.parent.mkdir(parents=True, exist_ok=True)
-        export_step(part, str(self.output))
+        export_step(part, str(self.output), group_by_color=self.group_by_color)
 
     def run(self) -> None:
         self.build(self.export())
@@ -307,6 +319,7 @@ def _run_single(args: argparse.Namespace, parser: argparse.ArgumentParser) -> in
         facet_threshold=args.facet_threshold,
         mesh_scope=args.mesh_scope,
         timeout=args.timeout,
+        group_by_color=args.group_by_color,
     )
     try:
         conversion.run()
@@ -409,9 +422,53 @@ def measure(part: Shape, two_d: bool = False) -> float:
     return sum(abs(s.volume) for s in part.solids())
 
 
+def color_volumes(part: Shape) -> dict[str, float] | None:
+    """Volume per resolved color, keyed by the color's label (``uncolored``
+    for bodies without one); None when nothing is colored."""
+    totals: dict[str, float] = {}
+    for body in region_bodies(part):
+        key = color_label(body.rgba) if body.rgba else "uncolored"
+        totals[key] = totals.get(key, 0.0) + body.volume
+    if set(totals) <= {"uncolored"}:
+        return None
+    return {k: round(v, 6) for k, v in totals.items()}
+
+
 def _relative_error(ours: float, theirs: float) -> float:
     scale = max(ours, theirs)
     return abs(ours - theirs) / scale if scale > 1e-9 else 0.0
+
+
+def _verify_colors(
+    conversion: _Conversion, csg_text: str, result: dict[str, Any]
+) -> None:
+    """Compare volume per color against OpenSCAD's, where OpenSCAD has one.
+
+    A matching total volume does not mean the colors are right: the same
+    material painted the wrong color prints wrong while measuring
+    perfectly. Only reached once the total already agrees, so a
+    disagreement here is about assignment, not geometry.
+    """
+    ours = result.get("colors")
+    if not ours:
+        return
+    try:
+        theirs = _colors.openscad_color_volumes(csg_text, conversion.timeout)
+    except (OpenSCADRunError, subprocess.TimeoutExpired, KeyError, ET.ParseError):
+        # The total volume already agreed; a failed second render is not
+        # evidence against the conversion, so it stays unchecked.
+        result["colors_unchecked"] = "OpenSCAD's colored render failed"
+        return
+    if theirs is None:
+        result["colors_unchecked"] = (
+            "colors overlap: OpenSCAD assigns no volume to a color there"
+        )
+        return
+    result["scad_colors"] = theirs
+    message = _colors.compare(ours, theirs, VERIFY_TOLERANCE)
+    if message:
+        result["status"] = CLASS_MISMATCH
+        result["message"] = message
 
 
 def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> None:
@@ -428,6 +485,7 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
         result["measure"] = "area"
     error = _relative_error(ours, fine)
     if error <= VERIFY_TOLERANCE:
+        _verify_colors(conversion, csg_text, result)
         return
     if conversion.meshed:
         # Our meshed regions were rendered at the model's own coarse
@@ -482,6 +540,9 @@ def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str,
         facet_threshold=int(task.get("facet_threshold", defaults.facet_threshold)),
         mesh_scope=str(task.get("mesh_scope", defaults.mesh_scope)),
         timeout=float(task.get("timeout", defaults.timeout)),
+        group_by_color=bool(
+            task.get("group_by_color", getattr(defaults, "group_by_color", False))
+        ),
     )
     # A per-task include overlay (scad123d-batch --include-overlay): the
     # folder holding this model's missing includes goes first on OpenSCAD's
@@ -501,6 +562,11 @@ def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str,
         stage = "build"
         conversion.build(csg_text)
         result["status"] = CLASS_OK
+        assert conversion.part is not None
+        # Before verify, which compares these against OpenSCAD's own.
+        by_color = color_volumes(conversion.part)
+        if by_color:
+            result["colors"] = by_color
         if task.get("verify"):
             stage = "verify"
             _verify(conversion, csg_text, result)

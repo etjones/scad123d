@@ -102,6 +102,7 @@ class Ledger:
             ("stage", "TEXT"),
             ("volume", "REAL"),
             ("scad_volume", "REAL"),
+            ("colors", "TEXT"),
         ):
             if column not in present:
                 self._db.execute(f"ALTER TABLE files ADD COLUMN {column} {kind}")
@@ -195,12 +196,13 @@ class Ledger:
         stage: str | None = None,
         volume: float | None = None,
         scad_volume: float | None = None,
+        colors: dict[str, float] | None = None,
     ) -> None:
         with self._lock:
             self._db.execute(
                 "UPDATE files SET status=?, message=?, seconds=?, meshed=?,"
                 " duplicate_of=?, traceback=?, warnings=?, stage=?, volume=?,"
-                " scad_volume=?, attempts=attempts+1, updated=? WHERE path=?",
+                " scad_volume=?, colors=?, attempts=attempts+1, updated=? WHERE path=?",
                 (
                     status,
                     message,
@@ -212,6 +214,7 @@ class Ledger:
                     stage,
                     volume,
                     scad_volume,
+                    json.dumps(colors) if colors else None,
                     time.time(),
                     path,
                 ),
@@ -234,7 +237,7 @@ class Ledger:
         with self._lock:
             rows = self._db.execute(
                 "SELECT path, status, stage, message, seconds, meshed, warnings,"
-                " volume, scad_volume, traceback FROM files"
+                " volume, scad_volume, traceback, colors FROM files"
                 " WHERE path = ? OR path LIKE ? OR path LIKE ?",
                 (path, "%/" + needle, "%\\" + needle),
             ).fetchall()
@@ -698,6 +701,7 @@ class Batch:
             "stage": result.get("stage"),
             "volume": result.get("volume"),
             "scad_volume": result.get("scad_volume"),
+            "colors": result.get("colors"),
         }
         self.ledger.record(task.path, status, **fields)
         self.stats.add(status)
@@ -1037,12 +1041,16 @@ def show_file(out_dir: Path, path: str) -> int:
         volume,
         scad_volume,
         trace,
+        colors,
     ) = row
     print(f"{full}\nstatus: {status}" + (f" (in {stage})" if stage else ""))
     if seconds is not None:
         print(f"seconds: {seconds}")
     if volume is not None:
         print(f"volume: {volume}  openscad: {scad_volume}")
+    if colors:
+        by_color = ", ".join(f"{k} {v}" for k, v in json.loads(colors).items())
+        print(f"colors: {by_color}")
     if message:
         print(f"message: {message}")
     for label, blob in (("meshed", meshed), ("openscad warnings", warnings)):

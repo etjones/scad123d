@@ -1207,3 +1207,32 @@ tenth of RAM and the fake-worker fixture disables limits by default, and
 (b) an uncommitted `scad123d-artifacts` work-in-progress that my
 `git add -A` had swept into the branch and whose Windows test fails;
 lifted back out and left in the working tree as it was. #27 merged.
+
+**Assistant** (scad123d side): `feature/per-body-color` (worktree
+`../scad123d-color`). `build.py` routes `difference`/`intersection`
+through solid123d's color-aware operations instead of raw `cut`/`&`, so
+the retained material keeps its colors. `cli.py`: `export_step` comes
+from solid123d, `--group-by-color` is wired through `_Conversion` to both
+the single-file and batch paths, and `color_volumes()` records volume per
+color into each result before verify. New `colors.py` cross-checks that
+against OpenSCAD's own colored 3MF render: `--verify` now catches
+material painted the wrong color, which a matching total volume cannot
+see.
+
+The check is only defined where OpenSCAD defines it, which the work
+established: OpenSCAD's `color()` is a *surface* attribute, not a
+volumetric material assignment. In a union of two overlapping colored
+cubes the interface between them carries no triangles at all -- the union
+removed them -- so each per-color triangle group is an open surface
+enclosing no volume. `openscad_color_volumes` therefore tests closure and
+returns None for such a model, and `_verify` records
+`colors_unchecked` with the reason rather than comparing nonsense. Where
+regions are disjoint (the ordinary multi-material case) every group closes
+and the comparison is exact.
+
+`batch.py` gains a `colors` ledger column, shown by `--show`. Tests:
+`test_colors.py` (9, incl. 2 needs_openscad), a boolean-color class in
+`test_build.py`, and CLI tests for `--group-by-color` and the verify
+path; one old test updated to the color-fill semantics. 334 pass.
+Smoke-tested on a two-material lid: steelblue 2400 exactly, both STEP
+layouts correct, colors round-tripping to six decimals.
