@@ -361,7 +361,32 @@ mirrors the corpus; `fetch` fills absent ones from the Thingiverse API (an
 app token, `$THINGIVERSE_TOKEN`); and `scad123d-batch --include-overlay DIR`
 puts each model's overlay folder on `OPENSCADPATH` for that model. Nothing
 touches the corpus itself.
+**Everything in one place, afterwards.** A comparison wants the source, the
+CSG, the STEP, and OpenSCAD's own mesh side by side. Once the STEP run is
+done (it is the fragile, expensive one and shouldn't share workers with
+renders), `scad123d-artifacts -o OUT_DIR` reads the batch ledger and,
+for every input, copies the `.scad` beside its outputs (`--symlink` to link
+instead) and renders OpenSCAD's binary STL of it there too — Manifold
+backend, same `--include-overlay` as the batch, so the mesh sees the
+includes the STEP saw. By default every class but `excluded` gets an STL
+(a failed STEP still wants a reference mesh for the repair pass; `--status
+ok,mismatch` narrows it). Renders are recorded in an `stl` table of the same
+ledger, so the pass is resumable (`--limit N` does the next N unfinished
+files) and `--report OUT_DIR` summarizes it; byte-identical inputs share
+one render, the way they share one STEP. The source root is inferred from
+the ledger and the STEPs on disk; passing a different one is refused, since
+the outputs would land in a parallel tree instead of beside the STEPs.
 
+**Reviewing the worst cases by eye.** `scad123d-review -o OUT_DIR REVIEW_DIR
+--top 100` picks the hundred worst `mismatch` conversions (largest volume
+disagreement first; `--status` for another class) and gives each a folder:
+symlinks to the `.scad`, `.csg`, OpenSCAD's `.stl` and scad123d's `.step`,
+a thumbnail of OpenSCAD's mesh (the reference shape; open the STEP in your
+own viewer), and a README with the ledger's message, volumes, mesh
+fallbacks, warnings, traceback, and source. The selection is recorded, so
+after a fix and a `--retry mismatch` run the same command refreshes the same
+set: each case's history grows and `INDEX.md` says what was resolved since
+selection and what changed in this refresh. `--reselect` starts a fresh set.
 
 The worker half is exposed too: `scad2step --batch` reads JSON tasks
 (`{"input": ..., "output": ...}`) one per line on stdin and writes one JSON
