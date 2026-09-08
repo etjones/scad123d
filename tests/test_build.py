@@ -5,6 +5,8 @@ from collections import Counter
 
 import pytest
 from build123d import GeomType
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.TopAbs import TopAbs_State
 from scipy.spatial import ConvexHull
 
 import scad123d
@@ -1094,3 +1096,81 @@ class TestReflectionOrientation:
         assert mirrored.is_valid
         assert len(mirrored.shells()) == 2
         assert mirrored.volume == pytest.approx(1000 - 64)
+
+    @pytest.mark.parametrize(
+        ("matrix", "factor"),
+        [
+            ([[0.2, 0, 0, 3], [0, -0.2, 0, -7], [0, 0, 1, 2], [0, 0, 0, 1]], 0.04),
+            ([[-0.2, 0, 0, 0], [0, 0.2, 0, 0], [0, 0, 0.2, 0], [0, 0, 0, 1]], 0.008),
+            ([[-1, 0.5, 0, 0], [0, 2, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], 2.0),
+            ([[-0.2, 0, 0, 0], [0, -0.3, 0, 0], [0, 0, -0.4, 0], [0, 0, 0, 1]], 0.024),
+            ([[-0.2, 0, 0, 0], [0, -0.3, 0, 0], [0, 0, 0.4, 0], [0, 0, 0, 1]], 0.024),
+        ],
+        ids=[
+            "ornament-scale",
+            "uniform-reflection",
+            "reflected-shear",
+            "three-negatives",
+            "two-negatives",
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("source", "volume", "solids", "shells"),
+        [
+            ("cube(size = [10, 10, 10], center = true);", 1000, 1, 1),
+            (
+                (
+                    "difference() { cube(size = [10, 10, 10], center = true);"
+                    " cube(size = [4, 4, 4], center = true); }"
+                ),
+                936,
+                1,
+                2,
+            ),
+            (
+                (
+                    "union() { cube(size = [10, 10, 10], center = true);"
+                    " multmatrix([[1,0,0,20],[0,1,0,0],[0,0,1,0],[0,0,0,1]])"
+                    " { cube(size = [10, 10, 10], center = true); } }"
+                ),
+                2000,
+                2,
+                2,
+            ),
+        ],
+        ids=["solid", "cavity", "compound"],
+    )
+    def test_affine_transform_preserves_outward_orientation(
+        self,
+        matrix: list[list[float]],
+        factor: float,
+        source: str,
+        volume: float,
+        solids: int,
+        shells: int,
+    ) -> None:
+        original = scad123d.import_csg(source)
+        transformed = apply_matrix(original, matrix)
+        assert sum(s.volume for s in transformed.solids()) == pytest.approx(
+            volume * factor
+        )
+        assert transformed.is_valid
+        assert len(transformed.solids()) == solids
+        assert len(transformed.shells()) == shells
+        assert sum(s.volume for s in original.solids()) == pytest.approx(volume)
+        for solid in transformed.solids():
+            classifier = BRepClass3d_SolidClassifier(solid.wrapped)
+            classifier.PerformInfinitePoint(1e-7)
+            assert classifier.State() == TopAbs_State.TopAbs_OUT
+
+    def test_nonuniform_reflection_survives_a_cut(self) -> None:
+        shape = scad123d.import_csg(
+            "difference() {"
+            " multmatrix([[0.2,0,0,0],[0,-0.2,0,0],[0,0,1,0],[0,0,0,1]])"
+            " { cube(size = [10, 10, 3], center = true); }"
+            " multmatrix([[1,0,0,0.5],[0,1,0,0],[0,0,1,0],[0,0,0,1]])"
+            " { cube(size = [2, 4, 5], center = true); } }"
+        )
+        assert shape.volume == pytest.approx(3)
+        assert shape.is_valid
+        assert tuple(shape.bounding_box().size) == pytest.approx((0.5, 2, 3), abs=1e-6)
