@@ -11,8 +11,6 @@ mesh fallback.
 
 import warnings
 from dataclasses import dataclass, field
-from functools import reduce
-from operator import and_
 
 import solid123d as s1
 from build123d import Shape
@@ -213,15 +211,16 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         if not shapes or shapes[0] is None:
             return None
         rest = [s for s in shapes[1:] if s is not None]
-        # every subtrahend in one OCCT cut (A - (B u C) == (A - B) - C),
-        # rather than a pairwise reduce that re-cuts the result each time
-        return shapes[0].cut(*rest) if rest else shapes[0]
+        # solid123d cuts every subtrahend in one OCCT operation and, when
+        # the minuend carries color() regions, cuts each region on its own
+        # so the retained material keeps its colors.
+        return s1.difference()(shapes[0], *rest) if rest else shapes[0]
 
     if name == "intersection":
         shapes = _children_positional(node, options)
         if not shapes or any(s is None for s in shapes):
             return None
-        return reduce(and_, shapes)
+        return s1.intersection()(*shapes)
 
     # --- transforms -----------------------------------------------------
     if name == "multmatrix":

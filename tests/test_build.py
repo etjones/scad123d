@@ -754,16 +754,13 @@ class TestColor:
             "\t\t\tmultmatrix([[1, 0, 0, 20], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
             "\t\t\t\tsphere($fn = 32, $fa = 12, $fs = 2, r = 5);\n\t\t\t}\n\t\t}\n\t}\n}"
         )
-        assert tuple(shape.color) == pytest.approx(self._RED)
         cube, sphere = shape.children
-        # The cube has no color of its own -- build123d's Shape.color is a
-        # property that, when unset locally, walks up .parent and resolves
-        # to the nearest ancestor's color (matching OpenSCAD; this is also
-        # exactly what export_step's own color-inheritance docs describe).
-        assert cube._color is None
-        assert tuple(cube.color) == pytest.approx(self._RED)
-        # The sphere's own nested color() overrides the ancestor's.
-        assert tuple(sphere.color) == pytest.approx(self._BLUE)
+        # An enclosing color() fills what is still uncolored and leaves the
+        # nested color() alone; the group node itself carries no color, so
+        # the tree is structure only and every body owns its color.
+        assert shape._color is None
+        assert tuple(cube._color) == pytest.approx(self._RED)
+        assert tuple(sphere._color) == pytest.approx(self._BLUE)
 
     def test_same_colored_children_still_group_correctly(self):
         shape = scad123d.import_csg(
@@ -1094,3 +1091,56 @@ class TestReflectionOrientation:
         assert mirrored.is_valid
         assert len(mirrored.shells()) == 2
         assert mirrored.volume == pytest.approx(1000 - 64)
+
+
+class TestColorThroughBooleans:
+    """difference()/intersection() go through solid123d's color-aware
+    operations: retained material keeps its color, cutter colors are
+    ignored, and shared material follows the union's later-wins rule."""
+
+    _RED = (1.0, 0.0, 0.0, 1.0)
+    _BLUE = (0.0, 0.0, 1.0, 1.0)
+
+    @staticmethod
+    def _bodies(shape) -> list[tuple[tuple | None, float]]:
+        from solid123d._common import own_rgba, total_volume, world_leaves
+
+        return sorted(
+            ((own_rgba(b), round(total_volume(b), 6)) for b in world_leaves(shape)),
+            key=lambda t: (t[0] is not None, t[0] or (), t[1]),
+        )
+
+    def test_difference_keeps_the_retained_colors(self):
+        shape = scad123d.import_csg(
+            "difference() {\n"
+            "\tunion() {\n"
+            "\t\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
+            "\t\tcolor([0, 0, 1, 1]) {\n"
+            "\t\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t\t}\n\t\t}\n\t}\n"
+            "\tcolor([0, 1, 0, 1]) {\n"
+            "\t\tmultmatrix([[1, 0, 0, 7], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\t\tcube(size = [3, 3, 3], center = false);\n\t\t}\n\t}\n}"
+        )
+        assert self._bodies(shape) == [
+            (self._BLUE, pytest.approx(1000 - 27)),
+            (self._RED, 500.0),
+        ]
+
+    def test_intersection_gives_shared_material_the_later_color(self):
+        shape = scad123d.import_csg(
+            "intersection() {\n"
+            "\tcolor([1, 0, 0, 1]) { cube(size = [10, 10, 10], center = false); }\n"
+            "\tcolor([0, 0, 1, 1]) {\n"
+            "\t\tmultmatrix([[1, 0, 0, 5], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]) {\n"
+            "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
+        )
+        assert self._bodies(shape) == [(self._BLUE, 500.0)]
+
+    def test_uncolored_booleans_stay_single_solids(self):
+        shape = scad123d.import_csg(
+            "difference() {\n\tcube(size = [10, 10, 10], center = false);\n"
+            "\tcube(size = [5, 5, 5], center = false);\n}"
+        )
+        assert len(shape.solids()) == 1 and not shape.children
+        assert shape.volume == pytest.approx(875)

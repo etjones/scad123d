@@ -1088,7 +1088,7 @@ requires-dist = [
     { name = "lark", specifier = ">=1.1.9" },
     { name = "psutil", marker = "extra == 'batch'", specifier = ">=5.9" },
     { name = "rich", marker = "extra == 'batch'", specifier = ">=13.0" },
-    { name = "solid123d", specifier = ">=0.7.0" },
+    { name = "solid123d", specifier = ">=0.8.0" },
 ]
 provides-extras = ["batch"]
 
@@ -1388,16 +1388,16 @@ wheels = [
 
 [[package]]
 name = "solid123d"
-version = "0.7.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "build123d" },
     { name = "fonttools" },
     { name = "webcolors" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/05/11f13947c2828ed694b7b90adbec00931393bed89296774428a01b9aa61c/solid123d-0.7.0.tar.gz", hash = "sha256:9b48ad468cecd5ecc26da8bcaecd053958fe0486f4dcd80653eeea09a7affd13", size = 152951, upload-time = "2026-09-06T16:06:37.682Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/95/c815d2faa9fce84617841d3faec2acbb725514e1d63c2aa7f367651773b3/solid123d-0.8.0.tar.gz", hash = "sha256:756a57f8aad1d60a228a8855bdebc5ac328b427088c6d7bb1f026496356106eb", size = 163983, upload-time = "2026-09-09T00:22:55.534Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/c4/e20449a927ee78be5aec9f1f280d178ad0e7e018ff12a9a267a007c60c9a/solid123d-0.7.0-py3-none-any.whl", hash = "sha256:2d14bd451139db371b6f31cbb37d4b407b1c875fa82da5c0413260520b5b4173", size = 43518, upload-time = "2026-09-06T16:06:36.612Z" },
+    { url = "https://files.pythonhosted.org/packages/57/62/1fcafb4720cfafcd9bcf702674484e80487010a45fae8d721c95f098c5aa/solid123d-0.8.0-py3-none-any.whl", hash = "sha256:a2371b0728c0a6be796436170238e44a1c985b0fe4ad5e53949a72ee72bb8db3", size = 49710, upload-time = "2026-09-09T00:22:54.452Z" },
 ]
 
 [[package]]
