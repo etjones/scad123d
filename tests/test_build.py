@@ -1313,3 +1313,60 @@ class TestOpenPolyhedron:
         shape = scad123d.import_csg(csg)
         assert shape.volume == pytest.approx(1.0)
         assert shape.is_valid
+
+
+class TestSingularTransform:
+    """OpenSCAD removes an object a transform would flatten -- "Scaling a
+    3D object with 0 - removing object" -- rather than keeping it as a
+    zero-thickness shape. The CSG export keeps the singular matrix, so the
+    rule has to be applied on this side."""
+
+    @staticmethod
+    def build_csg(text: str):
+        from scad123d.build import build
+        from scad123d.parser import parse_csg
+
+        return build(parse_csg(text))
+
+    def test_a_flattened_cutter_removes_nothing(self):
+        """The corpus case: scale(v=[.1, .1, 0]) on a cutting cylinder.
+        Flattened and subtracted, it erased the whole model."""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            shape = self.build_csg(
+                "difference() {\n"
+                "  cube(size = [10, 10, 2], center = true);\n"
+                "  multmatrix([[0.5, 0, 0, 0], [0, 0.5, 0, 0],"
+                " [0, 0, 0, 0], [0, 0, 0, 1]]) {\n"
+                "    cylinder($fn = 0, $fa = 12, $fs = 2, h = 4, r = 5,"
+                " center = true);\n"
+                "  }\n"
+                "}\n"
+            )
+        assert shape.volume == pytest.approx(200)
+
+    def test_a_flattened_object_says_so(self):
+        with pytest.warns(UserWarning, match="scales this object to nothing"):
+            shape = self.build_csg(
+                "multmatrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0],"
+                " [0, 0, 0, 1]]) { cube(size = [10, 10, 10], center = true); }"
+            )
+        assert shape is None
+
+    def test_an_ordinary_transform_is_untouched(self):
+        shape = self.build_csg(
+            "multmatrix([[2, 0, 0, 1], [0, 2, 0, 0], [0, 0, 2, 0],"
+            " [0, 0, 0, 1]]) { cube(size = [10, 10, 10], center = true); }"
+        )
+        assert shape.volume == pytest.approx(8000)
+        assert shape.bounding_box().min.X == pytest.approx(-9)
+
+    def test_a_mirror_is_not_mistaken_for_a_collapse(self):
+        """A reflection has a negative determinant, not a zero one."""
+        shape = self.build_csg(
+            "multmatrix([[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0],"
+            " [0, 0, 0, 1]]) { cube(size = [10, 10, 10], center = true); }"
+        )
+        assert shape.volume == pytest.approx(1000)

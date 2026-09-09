@@ -2066,3 +2066,26 @@ This repo now requires `solid123d>=0.8.1`, so a plain `scad2step` needs no
 `PYTHONPATH` prefix to get the fixes. Verified on the release: saucer v2
 35,392.12, saucer v3 71,297.64, table-eq-wire_V2 88,590.69, tweezers
 7,802.73, and reversi still 118.80 rather than the 740.16 that #18 caused.
+
+---
+
+## A transform that flattens an object removes it
+
+OpenSCAD's own binary carries the string "Scaling a 3D object with 0 -
+removing object", and its render confirms it: a cylinder scaled by
+`[0.1, 0.1, 0]` and subtracted from a plate cuts nothing, and the plate
+keeps its full 1,682. We were flattening that cylinder into a
+zero-thickness solid and subtracting it, which erased the whole model.
+
+The CSG export keeps the singular matrix rather than dropping the node,
+so the rule has to be applied on this side. `flattens()` in solids.py
+answers whether a 4x4's linear part is singular, and the `multmatrix`
+branch of build.py returns nothing when it is, with a warning. Its
+threshold is 1e-12 rather than exact zero because a CSG export writes six
+significant figures, so a matrix built as singular can arrive a few ulps
+off.
+
+Found in the corpus among the models converting to exactly zero volume;
+five of the 3,049 remaining mismatches contain such a transform. The
+coin calibration test now converts to 1,682.00 against OpenSCAD's
+1,682.00.

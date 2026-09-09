@@ -29,7 +29,7 @@ from .facets import (
 )
 from .mesh import mesh_subtree, warn_meshed
 from .nodes import CsgNode
-from .solids import apply_matrix
+from .solids import apply_matrix, flattens
 
 # CSG text() emits halign/valign="default"; solid123d expects OpenSCAD's names.
 _HALIGN = {"default": "left", "left": "left", "center": "center", "right": "right"}
@@ -280,6 +280,20 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         matrix = a.get("_0")
         if shape is None or matrix is None:
             return shape
+        if flattens(matrix):
+            # OpenSCAD drops the object rather than flattening it:
+            # "Scaling a 3D object with 0 - removing object". A CSG export
+            # keeps the singular matrix, so the rule has to be applied
+            # here; without it the collapsed shape goes on to be unioned
+            # or, worse, subtracted, and a scale(v=[1, 1, 0]) cutter
+            # erases the whole model.
+            warnings.warn(
+                "scad123d: a transform scales this object to nothing "
+                "(the matrix is singular), so OpenSCAD removes it; "
+                "this build does the same",
+                stacklevel=2,
+            )
+            return None
         return apply_matrix(shape, matrix)
 
     if name == "color":
