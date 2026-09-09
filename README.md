@@ -133,12 +133,24 @@ approximation of one.
 
 **`color()` survives into STEP.** STL has no notion of color, so OpenSCAD
 exports throw it away. STEP files support colored, named bodies, and
-scad123d keeps them: each `color()`ed part comes through as its own body
-with its color and a recognizable label, so multi-material models open in
-slicers and CAD viewers ready to assign. This holds even when parts
-overlap in a `union()` — later children claim the contested volume, and
-each `color()` region keeps its color on everything not claimed by a
-later sibling.
+scad123d keeps them: colors live on bodies, never on groups, and every
+operation preserves one invariant — the result is a set of
+non-overlapping bodies, each with at most one resolved color. Contested
+material goes to the assigned color over uncolored material, and between
+two assigned colors to the later one — so a red part stays whole under a
+later uncolored one, while a later blue part would take the overlap. A
+`union()` of overlapping colored parts is partitioned on that rule; a
+`difference()` cuts each colored body on its own
+and keeps its color, ignoring the cutter's; an `intersection()` gives the
+shared material the later operand's color when it has one; an enclosing
+`color()` fills whatever is still uncolored without repainting explicit
+inner colors. `hull()` and `minkowski()` create new material, so they
+drop their children's colors with a warning. Each body is labeled with the
+color name you wrote and becomes its own STEP product, under the model's
+own grouping by default; `scad2step --group-by-color` puts the bodies
+under one group per color (plus `uncolored`) instead, which is what
+slicers read, at the cost of the author's structure. `scad123d-batch`
+records each model's volume per color in the ledger (`--show` prints it).
 
 ```python
 # two_tone.scad:

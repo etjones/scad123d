@@ -1886,3 +1886,39 @@ rather than `empty`, so they hide in the largest bucket. 13 used no mesh
 fallback and 15 carry no OpenSCAD warning, so the geometry is lost on our
 side. Only 71 of 3,753 differ by more than 100x; the rest is a long tail.
 2,351 memory/timeout files remain `deferred` and were never re-run.
+**Assistant** (scad123d side): `feature/per-body-color` (worktree
+`../scad123d-color`). `build.py` routes `difference`/`intersection`
+through solid123d's color-aware operations instead of raw `cut`/`&`, so
+the retained material keeps its colors. `cli.py`: `export_step` comes
+from solid123d, `--group-by-color` is wired through `_Conversion` to both
+the single-file and batch paths, and `color_volumes()` records volume per
+color into each result before verify. New `colors.py` cross-checks that
+against OpenSCAD's own colored 3MF render: `--verify` now catches
+material painted the wrong color, which a matching total volume cannot
+see.
+
+The check is only defined where OpenSCAD defines it, which the work
+established: OpenSCAD's `color()` is a *surface* attribute, not a
+volumetric material assignment. In a union of two overlapping colored
+cubes the interface between them carries no triangles at all -- the union
+removed them -- so each per-color triangle group is an open surface
+enclosing no volume. `openscad_color_volumes` therefore tests closure and
+returns None for such a model, and `_verify` records
+`colors_unchecked` with the reason rather than comparing nonsense. Where
+regions are disjoint (the ordinary multi-material case) every group closes
+and the comparison is exact.
+
+`batch.py` gains a `colors` ledger column, shown by `--show`. Tests:
+`test_colors.py` (9, incl. 2 needs_openscad), a boolean-color class in
+`test_build.py`, and CLI tests for `--group-by-color` and the verify
+path; one old test updated to the color-fill semantics. 334 pass.
+Smoke-tested on a two-material lid: steelblue 2400 exactly, both STEP
+layouts correct, colors round-tripping to six decimals.
+
+**Assistant** (sequencing): scad123d's floor is raised to
+`solid123d>=0.8.0`, since `export_step`/`region_bodies` and the corrected
+union precedence are unreleased. scad123d#28 therefore cannot go green
+until solid123d#15 is merged and released; that is the normal order for
+this pair (geometry semantics land in solid123d first) and matches the
+weekly release cadence. Locally both suites pass together via
+`PYTHONPATH=~/Dropbox/Projects/solid123d/src`.

@@ -384,3 +384,86 @@ def test_measure_counts_leaves_of_a_nested_compound():
         [Compound([Rectangle(2, 3)]), Compound([Pos(10, 0, 0) * Rectangle(1, 1)])]
     )
     assert measure(flat, two_d=True) == pytest.approx(7)
+
+
+@pytest.mark.needs_openscad
+def test_group_by_color_and_per_color_volumes(tmp_path):
+    scad = tmp_path / "two.scad"
+    scad.write_text(
+        'color("red") cube(10);\n'
+        'color("blue") translate([20, 0, 0]) cube(5);\n'
+        "translate([0, 20, 0]) cube(2);\n"
+    )
+    # single-file path: the author's grouping by default, per-color groups on request
+    assert main([str(scad), "-o", str(tmp_path / "tree.step")]) == 0
+    assert (
+        main([str(scad), "-o", str(tmp_path / "grouped.step"), "--group-by-color"]) == 0
+    )
+    tree = (tmp_path / "tree.step").read_text()
+    grouped = (tmp_path / "grouped.step").read_text()
+    for text in (tree, grouped):
+        assert "PRODUCT('red'" in text and "PRODUCT('blue'" in text
+    assert "PRODUCT('uncolored'" not in tree
+    assert "PRODUCT('uncolored'" in grouped
+
+    # batch path: per-color volumes travel in the result record
+    tasks = io.StringIO(
+        json.dumps({"input": str(scad), "output": str(tmp_path / "b.step")}) + "\n"
+    )
+    results = io.StringIO()
+    defaults = _build_parser().parse_args(["--batch"])
+    assert run_batch(tasks, results, defaults) == 0
+    record = json.loads(results.getvalue().splitlines()[0])
+    assert record["status"] == "ok"
+    assert record["colors"] == {
+        "red": pytest.approx(1000),
+        "blue": pytest.approx(125),
+        "uncolored": pytest.approx(8),
+    }
+
+
+@pytest.mark.needs_openscad
+def test_verify_checks_volume_per_color_and_says_when_it_cannot(tmp_path):
+    """--verify compares each color's volume once the total agrees, and
+    reports the comparison undefined where OpenSCAD defines no per-color
+    volume (overlapping colors)."""
+    disjoint = tmp_path / "disjoint.scad"
+    disjoint.write_text(
+        'color("red") cube(10);\ncolor("blue") translate([20, 0, 0]) cube(5);\n'
+    )
+    overlapping = tmp_path / "overlapping.scad"
+    overlapping.write_text(
+        'color("red") cube(10);\ncolor("blue") translate([5, 0, 0]) cube(10);\n'
+    )
+    tasks = io.StringIO(
+        "\n".join(
+            json.dumps(
+                {
+                    "input": str(path),
+                    "output": str(path.with_suffix(".step")),
+                    "verify": True,
+                }
+            )
+            for path in (disjoint, overlapping)
+        )
+        + "\n"
+    )
+    results = io.StringIO()
+    defaults = _build_parser().parse_args(["--batch"])
+    assert run_batch(tasks, results, defaults) == 0
+    first, second = (json.loads(line) for line in results.getvalue().splitlines())
+
+    assert first["status"] == "ok"
+    assert first["colors"] == {"red": pytest.approx(1000), "blue": pytest.approx(125)}
+    assert first["scad_colors"] == {
+        "red": pytest.approx(1000, rel=1e-6),
+        "blue": pytest.approx(125, rel=1e-6),
+    }
+    assert "colors_unchecked" not in first
+
+    # Overlap: our partition gives red 500 / blue 1000, OpenSCAD gives no
+    # per-color volume at all, so the check is skipped with a reason.
+    assert second["status"] == "ok"
+    assert second["colors"] == {"red": pytest.approx(500), "blue": pytest.approx(1000)}
+    assert "colors overlap" in second["colors_unchecked"]
+    assert "scad_colors" not in second

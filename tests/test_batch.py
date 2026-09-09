@@ -293,7 +293,7 @@ def test_failure_details_are_kept_and_shown(fake_batch, capsys):
     batch.run(batch.plan(), dashboard=None)
     row = batch.ledger.lookup("bad.scad")
     assert row is not None
-    _path, status, stage, message, *_rest, warnings, _v, _sv, trace = row
+    _path, status, stage, message, *_rest, warnings, _v, _sv, trace, _colors = row
     assert (status, stage, message) == ("openscad-error", "export", "nope")
     assert json.loads(warnings) == ["WARNING: Ignoring unknown module 'foo'"]
     assert "openscad.py" in trace
