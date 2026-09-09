@@ -1176,7 +1176,9 @@ class TestReflectionOrientation:
 class TestColorThroughBooleans:
     """difference()/intersection() go through solid123d's color-aware
     operations: retained material keeps its color, cutter colors are
-    ignored, and shared material follows the union's later-wins rule."""
+    ignored, and shared material follows the agreed precedence -- an
+    assigned color beats uncolored material, and between two assigned
+    colors the later operand wins."""
 
     _RED = (1.0, 0.0, 0.0, 1.0)
     _BLUE = (0.0, 0.0, 1.0, 1.0)
