@@ -182,7 +182,7 @@ def apply_matrix(shape: Shape, m: Sequence[Sequence[float]]) -> Shape:
 
     # A reflection (negative determinant, e.g. OpenSCAD mirror()) inverts face
     # orientation, leaving a solid that encloses negative volume.
-    if _determinant(rows) < 0:
+    if decomposed is not None and _determinant(rows) < 0:
         result = _reoriented(result)
     return result
 

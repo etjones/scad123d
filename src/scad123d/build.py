@@ -14,6 +14,9 @@ from dataclasses import dataclass, field
 
 import solid123d as s1
 from build123d import Shape
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+from OCP.TopExp import TopExp
+from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 from solid123d import polyhedron
 from solid123d.hull import analytic_hull
 from solid123d.minkowski import analytic_minkowski
@@ -119,6 +122,22 @@ def _fallback(node: CsgNode, options: BuildOptions, reason: str) -> Shape | None
     return mesh_subtree(node, options.timeout)
 
 
+def _free_edges(shape: Shape) -> int:
+    """Edges of *shape* that belong to fewer than two faces.
+
+    Zero for a closed shell. Counted after construction, so OCCT has
+    already sewn coincident vertices together -- an index-level duplicate
+    corner is not a free edge.
+    """
+    ancestors = TopTools_IndexedDataMapOfShapeListOfShape()
+    TopExp.MapShapesAndAncestors_s(shape.wrapped, TopAbs_EDGE, TopAbs_FACE, ancestors)
+    return sum(
+        1
+        for i in range(1, ancestors.Extent() + 1)
+        if ancestors.FindFromIndex(i).Extent() < 2
+    )
+
+
 def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
     name = node.name
     a = node.args
@@ -162,7 +181,40 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         points, faces = a.get("points", []), a.get("faces", [])
         if not points or not faces:
             return None
-        return polyhedron(points, faces)
+        solid = polyhedron(points, faces)
+        # A polyhedron whose faces leave free edges is an open surface, not
+        # a volume, and OCCT will still hand back a "solid" made of it:
+        # BRepBuilderAPI_MakeSolid documents that it performs no coherence
+        # check and that a non-closed shell may be converted, while OCCT's
+        # own validity criterion for a solid is "a closed shell and
+        # coherent faces orientation". Such a result takes an arbitrary
+        # volume and exports to STEP as faces with no solid at all, which
+        # every viewer reads as empty.
+        #
+        # OpenSCAD, faced with the same mesh, warns that it may not be a
+        # valid 2-manifold, retries after merging very close vertices, and
+        # if it is still not manifold the conversion fails and the
+        # polyhedron contributes nothing. Match that outcome directly.
+        # Asking OpenSCAD to render it instead -- the mesh fallback hull()
+        # and minkowski() use -- was tried and is worse: OpenSCAD's own
+        # output for such a mesh is empty or still non-manifold, so the
+        # import fails and takes the whole conversion down with it.
+        #
+        # The exact BRep path still handles every polyhedron that closes,
+        # which is nearly all of them. Free edges are counted on the built
+        # shape, so faces that merely repeat a shared corner are
+        # unaffected, OCCT having already sewn those together.
+        loose = _free_edges(solid)
+        if loose:
+            warnings.warn(
+                f"scad123d: polyhedron() leaves {loose} free edge(s), so it is "
+                "not a valid 2-manifold and encloses no volume; it "
+                "contributes nothing, as in OpenSCAD (check the model's "
+                "face indices and winding)",
+                stacklevel=3,
+            )
+            return None
+        return solid
 
     # --- leaves: 2D -----------------------------------------------------
     if name == "square":

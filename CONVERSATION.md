@@ -1208,6 +1208,684 @@ tenth of RAM and the fake-worker fixture disables limits by default, and
 `git add -A` had swept into the branch and whose Windows test fails;
 lifted back out and left in the working tree as it was. #27 merged.
 
+**User**: What overlay directory should I specify?
+
+**Assistant**: None: no overlay tree exists on disk; the batch excluded
+models with unresolved includes instead, and the installed libraries are
+on OpenSCAD's normal search path. Drop the flag; it only matters if an
+overlay is built later with `scad123d-includes resolve/fetch`.
+
+**User**: Add `--limit N`, and have the UI show that target count.
+
+**Assistant**: `--limit N` plans only inputs that still need work (STL
+missing or failed; every input under `--no-stl`), originals first, then
+duplicates, at most N -- so the progress line reads `done/N`. Startup line
+says "N inputs limited to N of the [...] classes". Test added; 10 pass.
+
+**User**: How many .scad files made a valid STL but not a valid STEP, and
+what caused the failures?
+
+**Assistant**: 9,731 of 62,514 STL successes (15.6%). By STEP class:
+mismatch 5,975 (>20%: 1,960; 5-20%: 1,812; 1-2%: 1,220; 2-5%: 983),
+memory 1,380 (all 3.0-3.8 GB against a 3 GB limit), error 1,036 (Null
+TopoDS_Shape 302, wires not planar 276, invalid loft 100, Shell input type
+100, unexpected result type 69, empty-compound intersect 40, `nan` in CSG
+24), timeout 966 (~138 s kills; 26 in verify), occt-error 175 (BRep_API
+not done 68, Bnd_Box void 26, Color out 20), mesh-error 128, crash 36,
+empty 26 (STL proves geometry exists -- bisect targets), openscad-error 7,
+export-error 2. Suggested `--retry memory,timeout --max-rss-gb 6
+--timeout 900 -j 4`.
+
+**User**: Retry the memory and timeout failures with those settings.
+
+**Assistant**: Started 2026-09-07 in the background with `--verify`
+(matching the original run), log at `~/codecad-step/logs/retry-memory-timeout.log`;
+2,385 files re-queued (76,043 inputs scanned). Runs at 4 workers, 6 GB
+each, 29 GB total budget, 900 s per file.
+
+**User**: Quit the retry at ~1%. Make a document to review assorted
+valid-STL / invalid-STEP conversions; some deserve human eyes, some are
+probably just too complex.
+
+**Assistant**: Retry had done 33 of 2,385 (10 ok, 18 memory again at 6 GB,
+3 timeout again at 900 s, 2 mismatch); killed the lingering harness.
+Found and fixed a layout split: the STL pass (and my retry) used
+`.../codecad/dataset` as source while the original batch used
+`.../codecad`, so 63,410 dirs of .stl/.scad (and 16 STEP + 38 CSG from
+the retry) sat at `~/codecad-step/<thing>/` beside `dataset/<thing>/`.
+Merged 125,976 files into `dataset/` (44 retry outputs replaced older
+ones, matching the ledger). `scad123d-artifacts` now infers the source
+root from the ledger + STEPs on disk and refuses a mismatched one (test
+added; 11 pass). Review page "STL Yes, STEP No": 67 cases sampled across
+all classes (mismatch by bucket, error by message, retried
+timeout/memory), each with an OpenSCAD render of its STL, ledger message,
+volumes, traceback, source, and per-case verdict buttons exporting TSV.
+https://claude.ai/code/artifact/eacc281d-bc19-4277-a8ca-85787c2a520f
+Generator: scratchpad/review/{collect.py,build_html.py}.
+
+**User**: Genuine bug: `~/codecad-step/dataset/0586843_0/` has an oval
+prism that extrudes differently in the STL vs the STEP.
+
+**Assistant**: `scad123d-diff`: children agree, root union diverges
+(21043 vs 19246). Built the `hull()` of the two lifted cylinders alone:
+right volume, z 16..28 instead of 4..16. Cause in solid123d
+`_hull_of_cylinders`: the stadium is placed at whichever cap face OCCT
+lists first and extruded along the placed face's normal, so from a top
+cap it goes up. Fix: `extrude(..., dir=dir0)` along the shared axis.
+Red/green test asserting the z-span (existing tests only checked
+volume); 152 pass. Rebuilt model: 19251 vs OpenSCAD 19246 (0.03%),
+z 0..20. solid123d PR opened on `fix/hull-cylinder-extrude-direction`;
+scad123d picks it up at the next solid123d release. Worth re-running the
+5,975 mismatches afterwards: any hull of parallel cylinders not sitting
+at z=0 could be affected.
+
+**User**: Merge the PR. No release yet.
+
+**Assistant**: solid123d #14 merged to main (CI green on macOS/Ubuntu,
+3.10/3.13); branch deleted. No tag or publish; the fix reaches scad123d
+at the next weekly release.
+
+**User**: Command to re-run only the mismatches; record mismatch counts
+before and after.
+
+**Assistant**: Before: 6,069 mismatch (>20%: 2,016; 5-20%: 1,836; 1-2%:
+1,227; 2-5%: 990), snapshotted into a `mismatch_before` table in the
+ledger. The 2,351 rows left `pending` by the aborted memory/timeout retry
+(reset had cleared their class) were parked as status `deferred` so they
+stay out of this run (`--retry deferred` resumes them). Run with the
+unreleased solid123d fix on PYTHONPATH and the correct source root:
+`PYTHONPATH=$HOME/Dropbox/Projects/solid123d/src uv run scad123d-batch
+~/Dropbox/Projects/3D_geometry/codecad -o ~/codecad-step --retry mismatch
+--verify -j 8 --timeout 300`. After: join `mismatch_before` to `files`
+grouped by the new status, plus the bucket split of what is still
+mismatch.
+
+**User**: Run the `--retry mismatch` job here.
+
+**Assistant**: Launched in the background (log
+`~/codecad-step/logs/retry-mismatch.log`): 6,069 re-queued, 8 workers,
+300 s timeout, `--verify`, patched solid123d via PYTHONPATH (confirmed
+present in a worker's environment). Early rate ~260/min, ETA ~25 min.
+Before/after comparison via the `mismatch_before` table when it ends.
+
+**User**: How's the mismatch retry going? (55 min, no terminal output)
+
+**Assistant**: Output was going to the log file. Finished after ~1h50
+at ~55/min. Of the 6,069 mismatches: 1,650 now ok (27%), 4,364 still
+mismatch, 55 moved to other failures (memory 22, error 10, crash 8,
+timeout 6, occt 6, other 3). By prior bucket: >20% 2,016 -> 464 ok;
+5-20% 1,836 -> 768 ok; 2-5% 990 -> 261 ok; 1-2% 1,227 -> 157 ok. The
+headset hanger is ok. Corpus mismatch total 6,069 -> 4,364. Ledger has 0
+pending; 2,351 remain `deferred`.
+
+**User**: Program to symlink the top 100 mismatched cases into a review
+directory: scad, csg, thumbnail, stl, step together, one dir each, plus a
+markdown of metadata and failure reasons; re-runnable without tokens so
+each bugfix shows which cases it resolved.
+
+**Assistant**: `scad123d-review` (new `review.py`, console script). First
+run selects the N worst of a class (mismatch by |volume disagreement|)
+and records them in `cases.json`; later runs keep the set, re-read each
+ledger row, append status changes to a per-case history, re-render a
+STEP thumbnail when the STEP is newer than the picture, and rewrite
+`INDEX.md` with "resolved since selection" and "changed this refresh".
+Per case: symlinks to .scad/.csg/.stl/.step, `stl.png` and `step.png`
+(STEP meshed via build123d and rendered by OpenSCAD like the STL), and a
+README (status now vs at selection, history, volumes, build time, mesh
+fallbacks, OpenSCAD warnings, traceback, source). `--reselect`,
+`--status`, `--no-thumbnails`, `-j`. Source root inferred via artifacts'
+`infer_source`; `ArtifactLedger.query()` added. 6 tests (one
+needs_openscad). Built `~/codecad-review` with the top 100.
+
+**User**: Drop the STEP thumbnails; I have a STEP viewer.
+
+**Assistant**: The first build hung 20+ min in an OCCT STEP import
+holding the GIL; moved meshing to a killable child, then removed STEP
+thumbnails entirely at the user's request (STL thumbnail only; README
+notes to open the STEP in a viewer). Rebuilt `~/codecad-review`: 100
+cases, 94 STL thumbnails (6 renders failed). Top ranks are degenerate
+volumes (OpenSCAD ~0 or scad123d ~1e11), i.e. one side's volume is
+nonsense rather than a subtle geometry bug. README/tests updated; 6
+review tests pass.
+
+**User**: I'm working on debugging the project at ~/Projects/scad123d & the related ~/Projects/solid123d. These generate STEP files from OpenSCAD code.
+
+As part of this process, I downloaded a large dataset of openSCAD files at /Users/jonese/Dropbox/Projects/3D_geometry/codecad. Now I'm working my way through different mismatches ( generated STEP file has significantly different volume than generated STL) trying to fix bugs we discovered. You might read through the various README and CONVERSATION files here to acquaint yourself.
+
+Given that background, there's a significant discrepancy between the files at /Users/jonese/codecad-review/004-11221469_0-coins-pendants-ornaments-NO-LIBRARY
+
+See if you can discover what's going wrong
+
+**Assistant**: I’ll read the project notes, inspect the failing model, and trace where the STEP geometry diverges from OpenSCAD. The key question is whether this comes from translation, geometry construction, or the comparison itself; I’ll investigate before changing code.
+
+**Assistant**: The reported STEP volume is close to the volume of the model’s large clipping cylinder, which should be subtracted—not appear in the result. I’m tracing that subtraction and the preceding mirrored scale. I’ll leave the existing outputs and your uncommitted work untouched.
+
+**Assistant**: I confirmed an orientation bug: `scale([0.2, -0.2, 1])` takes the general-transform path, which already handles the reflection correctly. scad123d then reverses it again, turning the coin inside out. The subsequent subtraction pulls the huge clipping region into the STEP.
+
+Skipping that extra reversal removes the huge artifact, but exposes another failure in the final union. I’m checking that too so the diagnosis doesn’t imply a one-line change fully repairs this model.
+
+**Assistant**: The huge mismatch is reproducible, and the reflection bug is isolated. There is also a separate union failure: with the coin’s orientation corrected, OCCT drops the coin and inner ring even though their individual volumes agree with OpenSCAD.
+
+Removing colors in a diagnostic copy changes the intermediate geometry construction and gives **2,599.11 mm³ versus OpenSCAD’s 2,597.03 mm³**—a 0.08% difference. That narrows the second failure, but I haven’t isolated its underlying kernel defect.
+
+The existing suite passes: **337 passed, 3 skipped**, using UTF-8 mode for this terminal’s locale. No conversion code or review artifacts have been changed.
+
+**Assistant**: Found the main cause: **scad123d turns the mirrored coin inside out**, so its clipping operation produces the enormous unwanted geometry.
+
+### Primary bug: reflection applied twice
+
+The source uses `scale([0.2, -0.2, 1])`. In `apply_matrix()`:
+
+1. Nonuniform scaling calls `transform_geometry()`, whose OCCT implementation already corrects orientation for a reflection.
+2. scad123d then calls `_reoriented()` for every negative-determinant matrix, reversing this already-correct solid again.
+
+<ref_snippet file="/Users/jonese/Dropbox/Projects/scad123d/src/scad123d/solids.py" lines="179-186" />
+
+A minimal reproduction confirms it: a `10 × 10 × 3` box scaled by those factors should have volume **+12**; `apply_matrix()` returns **−12**, although `is_valid` still reports `True`.
+
+For the ornament, the inverted coin is then cut by the radius-200 clipping ring. That ring leaks into the exported geometry, explaining the STEP’s **400 mm diameter** and **1,255,471.46 mm³** volume. The existing STL measures **2,597.03 mm³**.
+
+### A second failure remains
+
+I tested the orientation correction in memory:
+
+| Diagnostic variant | Volume, mm³ |
+|---|---:|
+| Existing STEP | 1,255,471.46 |
+| Orientation correction only | 1,323.16 |
+| Orientation correction + colors removed | 2,599.11 |
+| OpenSCAD reference | 2,597.03 |
+
+After correcting orientation, OCCT’s final union drops the coin and inner ring. Removing colors changes the intermediate topology and avoids that failure, bringing agreement to **0.08%**. The failure also occurs in a direct OCCT fuse, before the final color-partitioning step; its precise kernel cause remains unisolated.
+
+**Recommended next step:** restrict the orientation repair to the rigid-transform path, retaining the existing ordinary-mirror fix; then isolate the color-dependent union failure separately. Removing colors was a diagnostic experiment, not a proposed permanent fix.
+
+No conversion code or artifacts changed. Findings recorded in `CONVERSATION.md` on `feature/debug-ornament-volume`. Existing tests: **337 passed, 3 skipped**.
+
+Verification command: `PYTHONUTF8=1 PYTHONPATH=/Users/jonese/Projects/solid123d/src uv run --no-sync pytest -q`. Without UTF-8 mode, this terminal's ASCII locale caused six unrelated read/write encoding failures. Diagnostic changes were process-local only. The general-transform reflection was also checked against the existing rigid-mirror path: corrected nonuniform box volume +12, rigid-mirrored box volume +300. The colored coin alone agrees with OpenSCAD (864.65155 vs 863.99300); the subsequent union returns 1323.16237 instead of at least its 1778.38910-volume ring operand. Raw OCCT fuse fails with either operand order, flattened operands, serial execution, and fuzzy tolerances 0 through 0.001. Both pre- and post-clipping coin operands trigger it. Unguarded clean does not simplify or fix it. Color removal reduces the coin from 222 to 162 B-spline faces; this implicates intermediate topology, but does not establish a specific color-metadata bug.
+
+**User**: There were some repairs to mirror-related code yesterday. Is it possible that this bug was caused by a recent fix which overgeneralized?
+
+Once we're done with the inversion issue, let's look at color(). I made some changes to how color was handled in OpenSCAD, and that may not have been as careful as it should have been. It will be worth keeping track of this file as a breaking example
+
+**Assistant**: I’ll check the mirror-related history to see whether this is a regression from that fix, then add coverage and narrow the orientation repair. Afterward I’ll investigate `color()` separately, keeping this ornament as an end-to-end failing case.
+
+**Assistant**: The repair was overgeneralized, but **the recent fix did not introduce this inversion**.
+
+I ran the same reproduction against the historical code:
+- Initial implementation, **August 18** (`fb5b59d`): volume **−12**
+- Before and after the **September 6** mirror fix (`f16eb8a`): **−12**
+
+The unconditional negative-determinant check was already present. September 6 changed how reflected faces are repaired to address lost geometry in multi-operand unions, but retained the overly broad condition. I’ll preserve that repair and stop applying it to the general-transform path.
+
+**Assistant**: The inversion fix is now in place. Ten new regression cases failed before the change; afterward the geometry and differential tests pass, including the earlier mirror/servo-horn coverage.
+
+The color review also found an independent bug: a translated colored assembly can jump back to its original coordinates during a later union. In a three-box reproduction, the correct result is **2,500 mm³ at x=100…130**; color partitioning returns **3,000 mm³ at x=0…115**. I’m keeping this separate from the ornament’s remaining failure until there’s evidence connecting them.
+
+Inversion repair: `apply_matrix` now calls `_reoriented` only when `_decompose` succeeded and the determinant is negative. The general `BRepBuilderAPI_GTransform` path already returns outward-oriented geometry. Added 16 cases to `TestReflectionOrientation`: combinations of nonuniform reflection, reflected shear, one/three negative axes, two-negative-axis controls, and uniform-reflection controls, tested against solid/cavity/compound inputs; plus a subtraction after nonuniform reflection. Checks include signed leaf volume, infinity classified OUT, cavity/solid counts, unchanged inputs, and cut bounding dimensions. Before: 10 failed, 9 passed in the reflection class. After: geometry/differential suite 158 passed, 3 skipped; full suite 353 passed, 3 skipped. Ruff check/format and git diff --check pass. No solid123d code changes, commits, releases, dataset writes, or ledger updates.
+
+### Open color regressions to retain
+
+**End-to-end ornament case:** `dataset/11221469_0/coins-pendants-ornaments-NO-LIBRARY.scad`, review directory `/Users/jonese/codecad-review/004-11221469_0-coins-pendants-ornaments-NO-LIBRARY`, immutable corpus source `/Users/jonese/Dropbox/Projects/3D_geometry/codecad/dataset/11221469_0/coins-pendants-ornaments-NO-LIBRARY.scad`. Git blob hashes of the reviewed source/CSG (not stored as Git objects): SCAD `ed68e4724def83f43952ec6748f3bba1680e2835`; CSG `f37ace14d1df4a39a6917a13239fbb68ab58a78e`. Reference STL 2597.032831 mm³; freshly rendered CSG reference 2597.032798. Before inversion repair 1255471.455729; after inversion repair 1323.162367; diagnostic color removal after inversion repair 2599.112176. The artifact STEP is intentionally left unchanged. This remains a failing case, not a completed conversion fix.
+
+**Independent translated-color-assembly regression:** runtime comparison of solid123d history proves `7a7e4b4` (August 21) produces the correct volume 2500 and x=100..130, while the experimental color-partition change `f25dff0` (August 25) produces volume 3000 and x=0..115. It still fails on current main. Reproduction, using only synthetic test geometry:
+
+```python
+import solid123d as s
+
+assembly = s.union()(
+    s.color("red")(s.cube(10)),
+    s.color("blue")(s.translate([20, 0, 0])(s.cube(10))),
+)
+moved = s.translate([100, 0, 0])(assembly)
+extra = s.color("green")(s.translate([105, 0, 0])(s.cube(10)))
+correct = moved.fuse(extra)
+result = s.union()(moved, extra)
+assert correct.volume == 2500
+assert result.volume == 2500
+```
+
+The last assertion fails. The translated Compound's wrapped geometry moves to x=100..130, but its Python children remain at x=0..10 and x=20..30. `_color_leaves` descends into those local children without accounting for the parent transform. `_partitioned_union` reconstructs misplaced geometry, then compares against `later`, itself built from those same misplaced children, instead of the original `fused` result. Thus its volume guard accepts the error. A parent-location-aware traversal is needed for moved assemblies; nonuniform transforms also need attention because transformed geometry can be baked into the wrapped shape rather than represented in its location. Do not blindly clear `children`: that can rebuild a Compound's wrapped geometry and discard its bodies. This independent confirmed bug does not yet explain the ornament's direct raw-fuse failure.
+
+**Assistant**: The ornament’s color-dependent failure is now isolated too. The green tree tier causes color handling to preserve touching pieces as a Compound. Subtracting that Compound as one cutter leaves coincident internal faces in the coin. `is_valid` misses them, but OCCT’s boolean self-intersection check detects them; the later union then loses geometry.
+
+Passing the cutter’s individual solids to the subtraction avoids the defect. Applied in memory to the full model, this gives **2,599.11 mm³ versus 2,597.03 mm³**, without stripping source colors. That identifies the next repair target; I haven’t changed the shared subtraction code yet.
+
+I’ll retain the full case and the reduced one-tree reproduction alongside the independent translated-color-assembly bug.
+
+### Ornament color-cut root cause and reduced reproduction
+
+The color-partitioned touching-solid Compound is passed as one cut tool at `src/scad123d/build.py:218`; solid123d's `booleans.py:41` does the same. The coincident interfaces between the cutter's partitioned solids survive the cut as oppositely oriented overlapping faces in the resulting single coin solid. OCCT `BRepCheck`/`is_valid` reports success, but `BOPAlgo_ArgumentAnalyzer` with `SelfInterMode=True` reports four edge/face self-intersections. A direct `BRepAlgoAPI_Cut` reproduces this with zero Python assembly children, so it is separate from the child-coordinate regression above. Fully planar, unscaled triangular tools also produce the defective cut; later scaling affects how the defect manifests downstream.
+
+Reduced case: one peripheral tree at 80 degrees, three triangular tiers, green middle tier, simple inner ring. No reflection, central tree, other peripheral trees, brown trunk, blue coin, or outer clipping operation needed. Compound-tool cut: coin has 19 faces and 4 self-intersection reports; final union has volume 0. Strip its sole color, expand tool solids into separate cut arguments, cut sequentially by solids, or fuse the tool first: coin has 15 faces and no self-intersection reports; final union ~1517.972877 mm³. The bad pre-scale coin has four opposite-oriented face pairs whose intersections have areas 6.9282032303, 17.3205080757, 17.3205080757, and 6.9282032303 mm².
+
+Full-model diagnostic: flatten only the radius-55 cylinder's subtrahends to individual solids, keeping source colors and the inversion repair. Coin: 864.651549421312 mm³, 162 faces, zero self-intersection reports. Full model: 2599.112191982592 mm³, four solids, 0.080% from OpenSCAD. An existing color-partition volume-fallback warning remains: geometric repair is demonstrated, full color fidelity is not. Next implementation should normalize Compound cut tools in a shared path covering scad123d and solid123d, preserve empty/2D behavior, and test multi-solid cutters, cavities, and already-simple tools. No production color/cut code was changed in this investigation.
+
+**Assistant**: **The inversion was an overgeneralization, but it predates the recent fix.** Historical execution reproduces it in the initial August 18 implementation. The September 6 mirror repair retained the overly broad condition rather than introducing it.
+
+The inversion is now fixed: orientation repair applies only to the rigid/uniform transform path. The earlier mirror repair remains intact. Added 16 regression cases covering reflected scaling, shear, cavities, compounds, and subsequent subtraction.
+
+<ref_snippet file="/Users/jonese/Dropbox/Projects/scad123d/src/scad123d/solids.py" lines="183-187" />
+
+### Color investigation: two distinct defects
+
+1. **This ornament:** color partitioning creates touching-solid Compounds. Using one as a subtraction tool leaves coincident internal faces, which later break the union. Passing its solids as separate cut tools fixes the full model in a diagnostic run: **2,599.11 mm³ versus OpenSCAD’s 2,597.03 mm³**, without stripping source colors. The shared subtraction repair is not implemented yet.
+
+2. **Translated colored assemblies:** partitioning uses child-local coordinates without applying the parent’s transform. A three-box example returns **3,000 mm³ instead of 2,500**, with pieces moved back toward the origin. This regression does trace to the **August 25 experimental color-partition change, `f25dff0`**.
+
+The original ornament’s paths, content hashes, expected volumes, reduced one-tree reproduction, and three-box reproduction are retained in <ref_file file="/Users/jonese/Dropbox/Projects/scad123d/CONVERSATION.md" />.
+
+**Verification:** 353 passed, 3 skipped; Ruff and diff checks pass. Changes remain uncommitted on `feature/debug-ornament-volume`; existing STEP/STL artifacts are untouched.
+
+Replayable reduced CSG (currently fails even after the inversion repair; rename its sole `color` to `group` for the control):
+
+```scad
+union() {
+  difference() {
+    cylinder(h=3,r1=12.75,r2=12.75,center=true);
+    cylinder(h=56,r1=10.75,r2=10.75,center=true);
+  }
+  multmatrix([[0.2,0,0,0],[0,0.2,0,0],[0,0,1,0],[0,0,0,1]]) {
+    difference() {
+      cylinder($fn=100,h=3,r1=55,r2=55,center=true);
+      multmatrix([[0.173648,-0.984808,0,0],[0.984808,0.173648,0,0],[0,0,1,0],[0,0,0,1]]) {
+        multmatrix([[1,0,0,0],[0,1,0,43],[0,0,1,-5],[0,0,0,1]]) {
+          multmatrix([[0.4,0,0,0],[0,0.4,0,0],[0,0,3,0],[0,0,0,1]]) {
+            union() {
+              multmatrix([[1,0,0,0],[0,1,0,30],[0,0,1,0],[0,0,0,1]]) {
+                multmatrix([[0,-1,0,0],[1,0,0,0],[0,0,1,0],[0,0,0,1]]) {
+                  cylinder($fn=3,h=3,r1=10,r2=10,center=false);
+                }
+              }
+              multmatrix([[1,0,0,0],[0,1,0,15],[0,0,1,0],[0,0,0,1]]) {
+                color([0,0.501961,0,1]) {
+                  multmatrix([[0,-1,0,0],[1,0,0,0],[0,0,1,0],[0,0,0,1]]) {
+                    cylinder($fn=3,h=3,r1=15,r2=15,center=false);
+                  }
+                }
+              }
+              multmatrix([[0,-1,0,0],[1,0,0,0],[0,0,1,0],[0,0,0,1]]) {
+                cylinder($fn=3,h=3,r1=20,r2=20,center=false);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**User**: I suspect that the color() behavior is a little muddied. I wasn't exactly sure what I *wanted* color() to do, especially when overlapping other non-colored or differently colored volumes. Before we make a fix, let's agree on exactly what behavior color() *should* have, describable in plain text
+
+**Assistant**: The main ambiguity is whether **color describes appearance or assigns ownership of material**. Those lead to different behavior. Our current partitioning code effectively chose material ownership, which is stronger than simply coloring a model.
+
+I’d establish these rules regardless of that choice:
+
+### Non-negotiable rules
+
+- **Color must never add, remove, move, or duplicate material.** Removing every `color()` from a model must leave the same geometry.
+- **Transforms carry colors with the geometry.** Translation, rotation, scaling, and mirroring cannot detach a color from its object.
+- **A cutting tool’s color does not paint the cut.** Subtracting a blue cylinder from a red block must not create a blue hole.
+- **Disjoint objects retain their individual colors.**
+- **“No color specified” is distinct from an explicitly chosen color.** We should not silently treat it as a competing material.
+- **Overlaps and coincident surfaces need a deterministic rule**, not whichever operand OCCT happens to return first.
+
+### The fundamental choice
+
+**Appearance only — my recommendation for an OpenSCAD-to-STEP converter**
+
+A red box and blue sphere produce their ordinary geometric union. Surviving exterior surfaces retain their colors where possible. We do **not** divide the interior into red and blue solids merely to preserve color.
+
+Overlapping interior material has no color ownership because it is not visible. We still need explicit rules for coincident exterior faces and newly exposed cut faces.
+
+**Material regions**
+
+Red and blue identify distinct regions throughout the object’s volume, suitable for multi-material manufacturing. Their overlap must belong to somebody, and the result may need separate, touching solids.
+
+This requires a precedence policy—for example, explicit color beats unspecified color, and later explicitly colored operands win against earlier ones. That is a modeling rule we would be adding, not just visual decoration.
+
+The first option avoids making `color()` responsible for internal geometry construction. The second is useful, but should be an intentional feature rather than an accidental consequence of preserving STEP colors.
+
+**Assistant question**: Should `color()` describe visual appearance, or define colored material regions throughout the volume? Options: Appearance only; Material regions. No color implementation changes will be made until the behavior is agreed.
+
+**User**: I want to be able to assign regions to different materials for multimaterial/multicolor printing. *However*, I'm open to painting only faces if that were helpful, or applying colors to bodies after calculations, etc; I don't really care *how* we do it. But a STEP file generated with scad123d/solid123d should be able to represent all the regions with a given color like openSCAD's preview does, and they should all be selectable as a group (so that a STEP file could show/hide all geometry of a given color with a single click)
+
+**Assistant**: The requirement is **selectable material regions, organized by color**. How we encode them is secondary, provided the exported STEP supports that workflow. Face colors alone would not be sufficient unless they also preserve the region identities needed for selection and material assignment.
+
+Here is a proposed plain-text contract.
+
+## Proposed behavior
+
+### 1. Geometry is independent of color
+
+Adding, removing, or changing colors must not change the total material present in the model.
+
+Different material regions may touch, but must not overlap or leave unintended gaps. The exporter must not duplicate overlapping material into multiple colored bodies.
+
+### 2. Every region has one resolved color—or is uncolored
+
+A region’s color identifies its intended material assignment. Uncolored material remains explicitly distinguishable from colored material.
+
+Color does not imply that a region is a separate physical object: one connected object can contain several material regions.
+
+### 3. The STEP is organized by color
+
+All regions with the same resolved color belong to one named group, even when they are disconnected or originate in different modules.
+
+For example:
+
+- **Red**
+  - All red bodies or regions
+- **Blue**
+  - All blue bodies or regions
+- **Uncolored**
+  - All remaining material
+
+The regions remain individually accessible within their groups. Selecting or hiding a group should affect every region of that color. We can provide that hierarchy in STEP; the exact single-click interaction depends on the importing application.
+
+### 4. Operations carry material assignments with them
+
+- **Transforms:** move both geometry and its material assignments together.
+- **Difference:** retain the first operand’s material assignments wherever material remains. Cutter colors have no effect.
+- **Union:** combine the geometry, resolving competing material assignments in overlaps using an explicit precedence rule.
+- **Intersection:** retain only the shared geometry; we need to choose which operands supply its material assignments.
+
+### 5. Preserve OpenSCAD’s visible color regions where unambiguous
+
+Ordinary, non-overlapping colored parts should look like the preview.
+
+However, the preview cannot tell us who owns **hidden overlapping material**. We need our own deterministic rule for that, rather than trying to infer material ownership from rendered pixels.
+
+### 6. Do not silently change material assignments
+
+If conversion cannot preserve the agreed material regions, it should report that failure—not quietly return an uncolored union that appears to have converted successfully.
+
+## Proposed defaults for the remaining ambiguities
+
+I suggest:
+
+| Situation | Result |
+|---|---|
+| Red overlaps uncolored in a union | Red owns the overlap |
+| Red overlaps blue in a union | The later operand owns the overlap |
+| An outer red `color()` contains an explicitly blue region | Blue stays blue; red fills otherwise-uncolored regions |
+| Red object minus blue cutter | Remaining object stays red |
+| Multicolored object intersected with another object | First operand supplies material assignments; subsequent operands act as masks |
+
+These defaults treat explicit colors as intentional assignments, uncolored geometry as neutral, and cuts/intersection masks as geometry constraints rather than painting operations. The three choices below would settle the important remaining semantics.
+
+**Assistant questions**: In a union, which operand should own overlapping material? Should an outer color replace explicit inner colors or only fill uncolored regions? In an intersection, should the first operand supply material colors while subsequent operands act only as masks?
+
+**User — union**: A -- but I don't love any of these options. Ideally, In A union B, there are three segments -- A-only, B-only, and A intersect B. If A is colored and B is not, then I'd like to see no change in the A-only and B-only segments. What happens in the A intersect B segment is... undefined. I'd be fine letting that intersection be colored by the later operand.
+
+But note that an "infectious" color (unioning a white eyeball to a yellow head shouldn't turn the head white) isn't what anyone intuitively wants.
+
+**User — nested colors**: a
+
+**User — intersection**: b, but let's talk through any conclusions you've come to before doing anything. If I've specified something that's going to be prohibitively expensive or fiddly, I can reframe this
+
+**Assistant**: Your central requirement is **local color ownership, not whole-object recoloring**. Connectedness must not make a color spread.
+
+For a yellow head unioned with a white eyeball:
+
+- Head-only material stays yellow.
+- Eyeball-only material stays white.
+- Only the overlapping material needs a precedence decision.
+- Nothing about that overlap should recolor the rest of either object.
+
+That distinction should be an explicit invariant in both the specification and the tests.
+
+## What I think we have agreed
+
+1. **Color describes material regions.** A connected object can contain multiple colors; a color group can contain multiple disconnected objects.
+2. **Union preserves each operand’s non-overlapping regions unchanged.** Precedence affects only shared material.
+3. **An enclosing color supplies a default.** It fills otherwise-uncolored regions rather than repainting explicitly colored inner regions.
+4. **Difference removes material without importing the cutter’s color.** Every surviving region keeps its assignment, including newly exposed cut surfaces.
+5. **Intersection uses the same color precedence as union.** Only shared material survives, and competing assignments there are resolved by that rule. It is not automatically “the first operand’s color.”
+6. **Transforms preserve the region assignments.**
+7. **Export groups all regions of the same resolved color together**, without duplicating material or changing the overall shape.
+
+For example, intersecting an entirely red operand with an entirely blue operand would produce one color throughout the intersection, selected by precedence—not a mixture or an average.
+
+## Is this prohibitively expensive or fiddly?
+
+**It is a reasonable requirement, but exact material partitioning is not free.**
+
+The important architectural distinction is between:
+
+- **Computing the model’s geometry**, and
+- **Dividing the final material into selectable color regions.**
+
+Those need not be performed together at every intermediate operation. Our ornament bug demonstrates why treating color-preserving assemblies as ordinary working boolean operands is risky.
+
+A sensible approach would keep ordinary geometry calculations separate from the information needed to resolve material ownership, then construct the exportable colored regions. That is an implementation direction to investigate, not yet a promised solution.
+
+The expensive cases will be models with many interacting color boundaries and small interlocking regions. A model with many disconnected objects grouped into a few colors is a different—and generally simpler—case. We should benchmark representative examples before committing to an algorithm.
+
+I would **not** simplify your requirements just to accommodate the current implementation. Nor would I promise identical performance to an uncolored conversion.
+
+## One remaining ambiguity
+
+Your union answer selected **“explicit color, then later,”** but also said you would accept the later operand coloring the overlap even when one operand is uncolored.
+
+Those produce different results here:
+
+| Earlier operand | Later operand | Explicit color wins first | Later always wins |
+|---|---|---|---|
+| Red | Uncolored | Overlap is red | Overlap is uncolored |
+| Red | Blue | Overlap is blue | Overlap is blue |
+
+**Both preserve the red-only and uncolored-only regions. Neither is infectious.** Their computational cost should not meaningfully determine the choice.
+
+I lean toward retaining an explicit color rather than letting an uncolored operand erase it. But this is a preference we should settle explicitly, not infer from implementation convenience. No implementation changes yet.
+
+**Assistant question**: When a later uncolored operand overlaps an earlier colored operand, should the overlapping material retain the explicit color or become uncolored? Options: Retain explicit color; Later operand always wins.
+
+**User**: Retain explicit color.
+
+**Assistant**: The precedence rule is now settled:
+
+> **An assigned color wins over uncolored material. Between competing assigned colors, the later operand wins. Precedence affects only overlapping material—never the rest of either object.**
+
+## Agreed color behavior
+
+1. **Geometry stays unchanged.** Colors must not add, remove, move, or duplicate material. Different material regions may touch but must not overlap or leave unintended gaps.
+
+2. **Union preserves non-overlapping regions.** A-only retains A’s assignment; B-only retains B’s. The overlap follows the precedence rule above. A white eyeball cannot turn an entire yellow head white.
+
+3. **Intersection uses that same precedence.** Only shared material remains, and its competing assignments are resolved exactly as for a union.
+
+4. **Difference preserves the retained material’s assignments.** Cutter colors are ignored. Newly exposed surfaces belong to the surviving material, not to the cutter.
+
+5. **An enclosing color fills uncolored regions rather than repainting colored ones.** Evaluate the enclosed model’s assignments, then give its remaining uncolored material the enclosing color. Explicit inner colors survive.
+
+6. **Transforms carry assignments with the geometry.** Translation, rotation, scaling, and mirroring cannot detach or redistribute colors.
+
+7. **STEP output groups regions by resolved color.** All red regions belong to one named red group, including disconnected regions. Likewise for other colors, with a separate uncolored group. Individual regions remain accessible within their groups; exact selection/hide controls depend on the importing application.
+
+8. **Failures are explicit.** If the converter cannot preserve geometry or material assignments, it must not silently substitute a differently colored or uncolored result.
+
+### Examples
+
+| Operation | Result |
+|---|---|
+| Red A union uncolored B | A-only and overlap red; B-only uncolored |
+| Red A union blue B | A-only red; B-only and overlap blue |
+| Blue B union red A | B-only blue; A-only and overlap red |
+| Red A intersect uncolored B | Shared material red |
+| Red A intersect blue B | Shared material blue |
+| Red A minus blue B | Remaining A red |
+
+This defines scoped coloring, booleans, transforms, and STEP grouping without committing to an implementation strategy. Operations that create new material—particularly `hull()` and `minkowski()`—still need a separate ownership rule before extending the contract to them.
+
+No color implementation changes have been made.
+
+**User**: Using groups (or build123d Compounds) to select color seems like a dubious choice, although it could be handy. How do color-mediated groups work with explicitly created groups thta might have different membership? What would we do in that case? How else would we manage color? How does a pure-build123d shape manage color?
+
+**Assistant**: I’ll check build123d’s color and assembly APIs, including what survives STEP export. The key question is whether color selection can be kept separate from structural grouping rather than forcing both into one hierarchy.
+
+**Assistant**: **Color selection should not dictate the assembly tree.** My previous proposal conflated two different things: structural membership and selection by an attribute. I would revise that part of the contract.
+
+## 1. Structural groups and color collections should coexist
+
+Consider:
+
+```text
+Model
+  Head
+    Yellow skin
+    White eyes
+  Body
+    Yellow torso
+    White badge
+```
+
+“Head” is a structural group. “Everything white” is a selection spanning several structural groups. Neither should replace the other.
+
+A build123d assembly node has one parent. I verified that putting the same child into a second `Compound(children=[...])` **removes it from the first parent**. Making extra assembly instances instead would represent extra occurrences, not an independent selection set.
+
+A flat `Compound([...])` is also a geometry container—not a general-purpose tag or selection set. Compounds remain appropriate for assemblies and multi-solid parts; they should not be our mechanism for cross-cutting color membership.
+
+Separately, scad123d currently treats OpenSCAD’s emitted `group()` as an implicit union, not a preserved named assembly. We should distinguish that from explicitly authored build123d assemblies.
+
+## 2. What native build123d does
+
+I checked the installed **build123d 0.11.1**:
+
+- A `Shape` has a `.color` attribute containing one `Color` value, including alpha. Assigning it does not partition geometry.
+- If unset, the color getter looks up the nearest colored assembly ancestor. It also **caches the inherited color** on the child.
+- This is not a material-ownership system. In a direct test, fusing overlapping red and blue boxes produced **one red solid**, not separate red/blue regions.
+
+<ref_snippet file="/Users/jonese/Dropbox/Projects/scad123d/.venv/lib/python3.13/site-packages/build123d/topology/shape_core.py" lines="345-367" />
+
+The STEP exporter writes colors and names from assembly nodes. Simply assigning a color to a face returned by `part.faces()` is **not a persistent per-face painting API for the parent part**: in my test, fetching the faces again lost that assignment, and STEP export retained only the part’s color. OCCT supports real per-face color metadata, but that requires more than this ordinary build123d usage.
+
+<ref_snippet file="/Users/jonese/Dropbox/Projects/scad123d/.venv/lib/python3.13/site-packages/build123d/exporters3d.py" lines="169-204" />
+
+## 3. Alternatives to color-based Compounds
+
+| Approach | Preserves structural hierarchy? | Main limitation |
+|---|---|---|
+| Colored region bodies + selection by color | Yes | Receiving application needs color-selection/filter support |
+| Independent named STEP layers | Yes | Layer import and visibility support varies by application |
+| Per-face colors | Yes | Surface appearance alone does not identify interior material regions; extra metadata/export work needed |
+| Optional export reorganized by color | Not generally | Useful compatibility mode, but trades away the original hierarchy |
+
+**STEP layers are a concrete possibility, not just speculation.** I created an in-memory XDE document assigning one shape to two layers, then exported both assignments into STEP. OCCT supports layers independently of assembly structure. However, build123d’s current exporter does not automatically create these assignments from shape attributes, despite enabling layer writing.
+
+Internally, a color collection can simply be a list or index of references to existing regions. It need not own, copy, reparent, or move them.
+
+## Recommended revision
+
+> **Preserve structural assemblies. Store color/material identity on the regions. Support collecting regions by color independently of structural membership. Do not require color collections to be assembly nodes.**
+
+We still need separate volumetric regions for your material-assignment semantics, but **those regions can remain under their original structural parts**. Color layers or application-side filters can select across them.
+
+The remaining interoperability question is practical: **which STEP viewer/CAD application and slicer do you use?** That determines whether layers, selection by color, or an optional color-organized export can actually deliver your desired show/hide and material-assignment workflow.
+
+No implementation changes made; only the design discussion is recorded.
+
+Verification details: pure-build123d probes deliberately did not import solid123d (so its monkeypatches could not influence the native behavior). Overlapping 10 mm cubes at x=0 and x=5, colored red/blue, fused to one red solid of volume1500. A child moved from assembly `head` to assembly `white` left `head.children` empty. A yellow solid with a red selected-face wrapper exported only `DRAUGHTING_PRE_DEFINED_COLOUR('yellow')`; a fresh wrapper for that face had color None. An uncolored child's color remained cached red after its parent was changed from red to blue. XDE LayerTool assigned the same shape to `Color/Yellow` and `Selection/Head`; WriteStream returned IFSelect_RetDone and produced two PRESENTATION_LAYER_ASSIGNMENT entities referencing the same representation item. All export probes used BytesIO; no STEP/STL artifacts or production code changed. The layer option is not yet tested in the user's receiving applications. OCCT reference: https://dev.opencascade.org/doc/refman/html/class_x_c_a_f_doc___layer_tool.html .
+
+**User**: Using build123d.Compound to manage color feels too heavy. STEP
+supports layers, a partition separate from the group hierarchy. Research
+which programs support STEP layers and whether this is feasible.
+
+**Assistant**: Feasible in OCCT, weak in consumers. OCCT 7.9.3 (OCP) writes
+`PRESENTATION_LAYER_ASSIGNMENT` from XDE `XCAFDoc_LayerTool` and reads it
+back with `SetLayerMode(True)`; round-trip verified locally. Two writer
+rules found by experiment: layers must sit on part/shape labels (assembly
+and component/instance labels are skipped: "no way to assign layer to
+instance in STEP"), and a top-level solid carrying a `TopLoc_Location`
+is silently dropped ("Cannot find RI") -- bake the transform or wrap in a
+compound; a compound of several solids on one label lists every
+MANIFOLD_SOLID_BREP. A layer is a flat name list; sublayers don't exist
+(McNeel). build123d's exporter enables LayerMode but never assigns
+layers; its `_create_xde` keeps a private label map, though
+`XCAFDoc_ShapeTool.FindShape_s` recovers labels after the fact.
+Consumers: honor layers -- Rhino (import by layer description; AP214
+export), AutoCAD, Creo (Layer Import Options dialog), NX (AP214 "colors
+and layers" by default), CATIA. Ignore layers -- FreeCAD (reader sets
+SetLayerMode but ImportOCAF2 never reads LayerTool; only the debug OCAF
+browser lists them), Fusion 360 / Onshape / SolidWorks parts (no layer
+concept for 3D bodies), PrusaSlicer/Bambu/Orca (mesh only; even colors
+lost), Blender importers, Mayo (LayerTool used only for DXF), CAD
+Assistant (no mention in any release note). Recommendation: layers are a
+fine *additional* tag (cheap, orthogonal, harmless when ignored) but not
+the primary color carrier for the maker toolchain; per-solid XDE color on
+region bodies remains what every consumer reads. Scratch probes:
+scratchpad/layers_recipe.py, layers_roundtrip.py.
+
+**User**: Separate groups per color works well for 3D printing but feels
+like the wrong long-term mechanism. Any other feasible way to record all
+geometry of a given color?
+
+**Assistant**: Honest answer: STEP offers no widely honored "set"
+mechanism besides product structure and per-body color. Surveyed:
+per-body XDE color (universal: FreeCAD, Fusion, SolidWorks, Onshape,
+Rhino all read it; is the ground truth; selection-by-color is the
+importer's job); layers (pro CAD only); AP242 GROUP/APPLIED_GROUP_ASSIGNMENT
+(no XDE tool, OCCT writer doesn't emit); materials (XCAFDoc_MaterialTool,
+SetMaterialMode; ignored by maker tools); properties/metadata
+(SetPropsMode / SetMetaMode exist in OCP 7.9; importers ignore); names
+(universal but crude); 3MF via build123d Mesher (per-object color the
+slicers actually read). Recommendation: internal color index on region
+bodies + per-body color in STEP with the user's own structure preserved;
+group-by-color as an explicit export *mode* for printing, and 3MF export
+as the proper print path. No code changes.
+
+**User**: Is 3MF as capable as STEP? Can it handle all the surface types
+STEP can?
+
+**Assistant**: No. 3MF is triangles only (plus per-object/per-triangle
+color and material, object tree with instancing, and extensions: beam
+lattice, slices, mesh booleans, volumetric/implicit). STEP carries exact
+analytic and B-spline surfaces with real topology, so fillets, face
+selection, exact booleans, and deferred tessellation all survive; in 3MF
+they don't. STEP stays the exact model; 3MF is a slicer delivery format
+where per-object color maps cleanly. "As well", not "instead".
+
+**User**: What would a correct per-body STEP color system take (layers
+deferred)? And is group-by-color on demand just a bucket sweep?
+
+**Assistant**: Today colors reach STEP only via the assembly tree
+(`group()` -> Compound(children) of partitioned pieces; build123d colors
+nodes). Weak points: `difference()`/`intersection()` operate on the whole
+Compound and drop colors; `color()` relies on exporter inheritance (with
+build123d's cache quirk) for rule 5; a flat Compound is one leaf. Plan:
+(1) region invariant -- non-overlapping bodies, one resolved color each,
+after every op; (2) color-aware difference/intersection: cut each region
+body, re-attach its color, ignore cutter colors; (3) `color()` as a
+build-time fill of uncolored bodies; (4) flatten to a body list before
+export, tree independent; (5) own the XDE document via OCP (color on
+part labels, names, optional assembly nodes; layers later for free);
+(6) decide hull/minkowski ownership (suggest: enclosing color else none,
+with warning); (7) per-color volume verification against OpenSCAD 2025's
+colored 3MF/OBJ export. Group-by-color: yes, a bucket sweep over the
+flattened bodies (RGBA rounded ~1e-3 incl. alpha; uncolored bucket;
+transforms already baked; optional fuse per bucket), as an export mode
+since it discards the hierarchy. No code changes.
+
+**User**: Re-run the mismatch retry, generate a top-100 review directory,
+and leave a report of what is still failing plus the size of the changes.
+
+**Assistant**: Retried all 4,364 mismatches with scad123d
+`feature/debug-ornament-volume` plus merged solid123d main on PYTHONPATH.
+572 now ok (13.1%), 3,753 still mismatch, 39 moved to another failure
+(mostly memory/timeout at the 300 s / 3.6 GB limits). Corpus ok
+55,088 -> 55,660. All four magnitude buckets moved by a similar 7-20%,
+so no single cause dominates. `~/codecad-review` (the original worst 100,
+selection kept) reports 14 of 100 resolved and 28 changed, including the
+coins/ornament case which now reads `ok`; `~/codecad-review-2` holds a
+fresh worst 100. Report at `~/codecad-step/RETRY-REPORT.md`.
+
+Sharpest remaining finding: 21 files build to a volume of exactly 0 while
+OpenSCAD renders a real solid, and they are classed `mismatch` at 100%
+rather than `empty`, so they hide in the largest bucket. 13 used no mesh
+fallback and 15 carry no OpenSCAD warning, so the geometry is lost on our
+side. Only 71 of 3,753 differ by more than 100x; the rest is a long tail.
+2,351 memory/timeout files remain `deferred` and were never re-run.
 **Assistant** (scad123d side): `feature/per-body-color` (worktree
 `../scad123d-color`). `build.py` routes `difference`/`intersection`
 through solid123d's color-aware operations instead of raw `cut`/`&`, so
@@ -1244,3 +1922,42 @@ until solid123d#15 is merged and released; that is the normal order for
 this pair (geometry semantics land in solid123d first) and matches the
 weekly release cadence. Locally both suites pass together via
 `PYTHONPATH=~/Dropbox/Projects/solid123d/src`.
+
+**User**: Look at `codecad-review-3/008-2379645056_48-polyhedrons/polyhedrons.scad`.
+Then: research CGAL vs OCCT polyhedra rather than reverse-engineering.
+Then: should we just let OpenSCAD supply polyhedron meshes?
+
+**Assistant**: The model is malformed input, and the docs settle what to do
+about it. Its `polyhedron()` leaves 24 free edges even after merging
+coincident points, so it encloses no volume; OpenSCAD renders only the
+model's sphere (4.12).
+
+Documented behaviour, rather than inferred: OCCT's
+`BRepBuilderAPI_MakeSolid` performs no coherence check and explicitly
+permits converting a non-closed shell, while OCCT's validity criterion for
+a solid is "a closed shell and coherent faces orientation" -- so the
+arbitrary 306.63 volume is expected, as is the STEP that carries faces and
+no solid at all (every viewer reads it as empty). OpenSCAD uses an indexed
+mesh in which a repeated coordinate is a separate vertex, warns that the
+mesh may not be a valid 2-manifold, retries after merging very close
+vertices, and if it is still not manifold the conversion fails and the
+polyhedron contributes nothing.
+
+So scad123d now counts free edges on the built shape and, when there are
+any, warns and treats the polyhedron as no geometry. Free edges are
+counted after construction, so a mesh that lists a shared corner once per
+facet is unaffected -- OCCT sews those, which also means the vertex-weld
+I first wrote for solid123d was redundant and was dropped.
+
+On supplying every polyhedron from OpenSCAD: no, and measured both ways.
+Always would downgrade the exact BRep path (real planar faces, fillets and
+face selection) to a triangulated mesh import for the ~257 mismatched
+models whose polyhedra close fine, plus thousands of passing ones. Falling
+back only when open fails outright: OpenSCAD's own output for these meshes
+is empty or still non-manifold, so `mesh_import` cannot build a solid and
+the conversion dies (lib3mf exception, or "could not build a valid solid").
+
+Effect: `polyhedrons` 306.63 -> 4.19 against OpenSCAD's 4.12;
+`holding arms` 16,209 -> 15,257 against 15,252; `jak` and 9 others
+unchanged or slightly closer; no regressions among the 12 mismatched
+models that build an invalid polyhedron. 4 new tests; 371 pass.

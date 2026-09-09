@@ -31,6 +31,8 @@ scad2step = "scad123d.cli:main"
 scad123d-diff = "scad123d.diff:main"
 scad123d-batch = "scad123d.batch:main"
 scad123d-includes = "scad123d.includes:main"
+scad123d-artifacts = "scad123d.artifacts:main"
+scad123d-review = "scad123d.review:main"
 
 [project.optional-dependencies]
 batch = [
