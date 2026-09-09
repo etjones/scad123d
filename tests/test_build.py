@@ -818,7 +818,7 @@ class TestColor:
 
         # Confirmed directly: pure red/blue round-trip through OCCT's STEP
         # writer as named DRAUGHTING_PRE_DEFINED_COLOUR entities.
-        text = step_path.read_text().lower()
+        text = step_path.read_text(encoding="utf-8").lower()
         assert "draughting_pre_defined_colour('red')" in text
         assert "draughting_pre_defined_colour('blue')" in text
         # Labels ride along as STEP PRODUCT names: the parts under their

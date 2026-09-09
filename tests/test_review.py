@@ -30,14 +30,16 @@ def corpus(tmp_path: Path) -> tuple[Path, Path]:
     names = {"big": 60.0, "mid": 12.0, "small": 1.5, "fine": None}
     for name in names:
         (source / "thing").mkdir(parents=True, exist_ok=True)
-        (source / "thing" / f"{name}.scad").write_text(f"cube({name!r});")
+        (source / "thing" / f"{name}.scad").write_text(
+            f"cube({name!r});", encoding="utf-8"
+        )
     batch = Batch(source, out, jobs=1, timeout=1)
     batch.scan()
     for name, off in names.items():
         path = str(source / "thing" / f"{name}.scad")
         (out / "thing").mkdir(exist_ok=True)
-        (out / "thing" / f"{name}.step").write_text("ISO-10303-21;")
-        (out / "thing" / f"{name}.csg").write_text("cube();")
+        (out / "thing" / f"{name}.step").write_text("ISO-10303-21;", encoding="utf-8")
+        (out / "thing" / f"{name}.csg").write_text("cube();", encoding="utf-8")
         if name != "small":
             (out / "thing" / f"{name}.stl").write_bytes(b"\0" * 84)
         if off is None:
@@ -73,11 +75,11 @@ def test_selects_worst_first_and_builds_a_folder_per_case(corpus, tmp_path):
     assert (folder / "big.scad").resolve() == (source / "thing" / "big.scad").resolve()
     assert (folder / "stl.png").exists()
     assert not (folder / "step.png").exists()
-    readme = (folder / "README.md").read_text()
+    readme = (folder / "README.md").read_text(encoding="utf-8")
     assert "scad123d 160.00 vs OpenSCAD 100.00 (+60.0%)" in readme
     assert "hull() has no BRep equivalent" in readme
     assert "cube('big');" in readme
-    index = (tmp_path / "review" / INDEX_FILE).read_text()
+    index = (tmp_path / "review" / INDEX_FILE).read_text(encoding="utf-8")
     assert "resolved since selection:** 0 of 2" in index
     assert "| 1 | big.scad |" in index
 
@@ -89,7 +91,7 @@ def test_missing_outputs_are_reported_not_linked(corpus, tmp_path):
     r.ledger.close()
     folder = tmp_path / "review" / cases[2].dir  # small: no STL
     assert not (folder / "small.stl").exists()
-    assert "small.stl: none" in (folder / "README.md").read_text()
+    assert "small.stl: none" in (folder / "README.md").read_text(encoding="utf-8")
     assert not (folder / "stl.png").exists()
 
 
@@ -113,15 +115,16 @@ def test_rerun_keeps_the_set_and_records_what_a_fix_resolved(corpus, tmp_path):
     big = cases[0]
     assert big.first["status"] == CLASS_MISMATCH and big.latest["status"] == CLASS_OK
     assert big.latest["date"] == "2099-01-01"
-    index = (tmp_path / "review" / INDEX_FILE).read_text()
+    index = (tmp_path / "review" / INDEX_FILE).read_text(encoding="utf-8")
     assert "resolved since selection:** 1 of 2" in index
     assert "changed in this refresh:** 1" in index
-    recorded = json.loads((tmp_path / "review" / CASES_FILE).read_text())
-    assert len(recorded["cases"][0]["history"]) == 2
-    assert (
-        "**when selected**"
-        in (tmp_path / "review" / "001-thing-big" / "README.md").read_text()
+    recorded = json.loads(
+        (tmp_path / "review" / CASES_FILE).read_text(encoding="utf-8")
     )
+    assert len(recorded["cases"][0]["history"]) == 2
+    assert "**when selected**" in (
+        tmp_path / "review" / "001-thing-big" / "README.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_reselect_starts_over(corpus, tmp_path):
@@ -151,7 +154,9 @@ def test_cli(corpus, tmp_path, capsys, monkeypatch):
 def test_real_stl_thumbnail(tmp_path):
     stl = tmp_path / "cube.stl"
     stl.write_text(
-        "solid c\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid c\n"
+        "solid c\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\n"
+        "vertex 0 1 0\nendloop\nendfacet\nendsolid c\n",
+        encoding="utf-8",
     )
     assert thumbnail_stl(stl, tmp_path / "cube.png")
     assert (tmp_path / "cube.png").stat().st_size > 100

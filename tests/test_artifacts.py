@@ -47,7 +47,7 @@ def fake_renderer(
     if name.startswith("hollow"):
         raise EmptyModel("Current top level object is empty.")
     out.write_bytes(binary_stl(1))
-    out.with_suffix(".path").write_text(openscadpath or "")
+    out.with_suffix(".path").write_text(openscadpath or "", encoding="utf-8")
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def corpus(tmp_path: Path) -> tuple[Path, Path]:
         "hollow": "cube(4);",
         "lib": "module m() {}",
     }.items():
-        (source / "thing" / f"{name}.scad").write_text(text)
+        (source / "thing" / f"{name}.scad").write_text(text, encoding="utf-8")
     out = tmp_path / "out"
     batch = Batch(source, out, jobs=1, timeout=1)
     batch.scan()
@@ -82,7 +82,7 @@ def corpus(tmp_path: Path) -> tuple[Path, Path]:
     batch.ledger.record(str(source / "thing" / "lib.scad"), STATUS_EXCLUDED)
     batch.ledger.close()
     (out / "thing").mkdir()
-    (out / "thing" / "a.step").write_text("ISO-10303-21;")
+    (out / "thing" / "a.step").write_text("ISO-10303-21;", encoding="utf-8")
     return source, out
 
 
@@ -97,9 +97,9 @@ def test_places_source_and_stl_beside_step_for_every_non_excluded_input(corpus):
     p = run_pass(source, out, statuses={CLASS_OK, CLASS_ERROR})
     thing = out / "thing"
     for name in ("a", "dup", "b", "bad", "slow", "hollow"):
-        assert (thing / f"{name}.scad").read_text() == (
+        assert (thing / f"{name}.scad").read_text(encoding="utf-8") == (
             source / "thing" / f"{name}.scad"
-        ).read_text()
+        ).read_text(encoding="utf-8")
         assert not (thing / f"{name}.scad").is_symlink()
     assert not (thing / "lib.scad").exists()
     assert (thing / "a.stl").exists() and (thing / "b.stl").exists()
@@ -164,7 +164,7 @@ def test_symlink_option_links_the_source(corpus):
     p.ledger.close()
     # a later copy run replaces the link with a real file, and vice versa
     place_source(source / "thing" / "a.scad", link, symlink=False)
-    assert not link.is_symlink() and link.read_text() == "cube(1);"
+    assert not link.is_symlink() and link.read_text(encoding="utf-8") == "cube(1);"
     place_source(source / "thing" / "a.scad", link, symlink=True)
     assert link.is_symlink()
 
@@ -173,7 +173,9 @@ def test_include_overlay_reaches_the_renderer_as_openscadpath(corpus, tmp_path):
     source, out = corpus
     overlay = tmp_path / "overlay"
     p = run_pass(source, out, statuses={CLASS_OK}, include_overlay=overlay)
-    assert (out / "thing" / "a.path").read_text() == str(overlay / "thing")
+    assert (out / "thing" / "a.path").read_text(encoding="utf-8") == str(
+        overlay / "thing"
+    )
     p.ledger.close()
 
 
@@ -183,9 +185,11 @@ def test_classify_stl_sees_empty_binary_and_ascii_meshes(tmp_path):
     assert classify_stl(f) == CLASS_EMPTY
     f.write_bytes(binary_stl(2))
     assert classify_stl(f) == CLASS_OK
-    f.write_text("solid OpenSCAD_Model\nendsolid OpenSCAD_Model\n")
+    f.write_text("solid OpenSCAD_Model\nendsolid OpenSCAD_Model\n", encoding="utf-8")
     assert classify_stl(f) == CLASS_EMPTY
-    f.write_text("solid x\n facet normal 0 0 1\n endfacet\nendsolid x\n")
+    f.write_text(
+        "solid x\n facet normal 0 0 1\n endfacet\nendsolid x\n", encoding="utf-8"
+    )
     assert classify_stl(f) == CLASS_OK
 
 
@@ -246,13 +250,13 @@ def test_missing_ledger_is_an_error(tmp_path):
 @pytest.mark.needs_openscad
 def test_real_openscad_renders_a_binary_stl(tmp_path):
     scad = tmp_path / "cube.scad"
-    scad.write_text("cube(10);")
+    scad.write_text("cube(10);", encoding="utf-8")
     out = tmp_path / "cube.stl"
     render_stl(scad, out, timeout=120, openscadpath=None)
     assert classify_stl(out) == CLASS_OK
     assert not out.with_name("cube.stl.part").exists()
     assert out.stat().st_size == 84 + 50 * 12  # a cube is 12 triangles
 
-    scad.write_text("module m() {}")
+    scad.write_text("module m() {}", encoding="utf-8")
     with pytest.raises(EmptyModel):
         render_stl(scad, out, timeout=120, openscadpath=None)
