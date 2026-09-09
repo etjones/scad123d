@@ -1961,3 +1961,28 @@ Effect: `polyhedrons` 306.63 -> 4.19 against OpenSCAD's 4.12;
 `holding arms` 16,209 -> 15,257 against 15,252; `jak` and 9 others
 unchanged or slightly closer; no regressions among the 12 mismatched
 models that build an invalid polyhedron. 4 new tests; 371 pass.
+
+**User**: Merge that PR and re-run the mismatch retry; I'm going to sleep
+and will read the report in the morning.
+
+**Assistant**: Merged solid123d #18 as well (the retry needed it to be
+reproducible from main rather than an unmerged branch) and scad123d #29,
+seven CI jobs green. #29 was branched from `feature/debug-ornament-volume`,
+so merging it brought that whole branch to main -- the multmatrix
+reflection fix and both inspection tools included; the PR body was
+rewritten to say so before merging.
+
+CI caught two bugs of my own, both fixed in #29: `review.py` wrote a
+middle dot with the platform locale encoding (ASCII on the runner) so it
+raised UnicodeEncodeError, and once fixed the tests raised
+UnicodeDecodeError reading the file back -- both sides now name UTF-8,
+verified under `LC_ALL=C`; and a test compared raw symlink text, which
+Windows returns in extended-length form, so it now compares resolved
+paths.
+
+Retry: 160 of 3,342 now ok (4.8%), corpus mismatch 3,342 -> 3,160, ok
+56,023 -> 56,183. The tracked sets are the better measure, since they keep
+their original selections: the first worst-100 has gone 14 -> 29 -> 40
+resolved across the three retries; review-2 is at 33, review-3 at 16.
+Fresh worst 100 at `~/codecad-review-4`. Report at
+`~/codecad-step/RETRY-REPORT.md`.
