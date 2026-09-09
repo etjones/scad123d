@@ -52,9 +52,35 @@ def mesh_subtree(node: CsgNode, timeout: float = 600) -> Shape | None:
     """
     source = emit(node)
     if source not in _cache:
-        _cache[source] = _render(source, timeout)
+        _cache[source] = _normalised(_render(source, timeout))
     result = _cache[source]
     return None if result is None else copy.copy(result)
+
+
+def _normalised(shape: Shape | None) -> Shape | None:
+    """Clean an imported mesh before anyone builds on it.
+
+    OCCT's booleans handle a raw import badly: intersecting one against a
+    sphere returned the sphere. Cleaning it first is what makes them work
+    -- not by merging faces, which a twisted surface has none to merge
+    (3302 before and after), but by leaving the shape in the state a
+    boolean expects. Until this ran here, whether a model got a cleaned
+    mesh depended on *history*. The cached shape is shared by
+    every copy handed out (copy.copy is shallow, so the TopoDS is common),
+    so the first boolean to touch it updated the shared shape in place and
+    every later use of the same subtree behaved better than the first.
+
+    A bauble whose two twisted extrudes are meshed measured 87,144 built on
+    its own and 2,766 built in a process that had already built the same
+    subtree -- the same code, the same mesh, three orders of magnitude
+    apart, and the batch only ever sees the first. Cleaning once at import
+    makes the first use behave like the rest.
+
+    clean() is the guarded one from solid123d, which keeps the unclean
+    shape if the unify would not conserve volume, so this cannot lose
+    material to the seam defect it works around.
+    """
+    return None if shape is None else shape.clean()
 
 
 def _render(source: str, timeout: float) -> Shape | None:
