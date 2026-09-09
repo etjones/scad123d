@@ -52,7 +52,7 @@ from .errors import (
 )
 from .facets import DEFAULT_FACET_THRESHOLD
 from .mesh import clear_cache
-from .mesh_import import mesh_volume, unit_extrusion
+from .mesh_import import MeshReport, mesh_report, unit_extrusion
 from .openscad import export_csg_with_warnings, export_mesh
 from .parser import parse_csg
 
@@ -73,6 +73,7 @@ CLASS_EXPORT = "export-error"
 CLASS_TIMEOUT = "timeout"
 CLASS_MISSING = "missing"
 CLASS_MISMATCH = "mismatch"  # built, but disagrees with OpenSCAD's own render
+CLASS_UNCHECKED = "unchecked"  # built, but OpenSCAD's own render cannot adjudicate
 CLASS_ERROR = "error"
 
 # --verify: relative volume disagreement with OpenSCAD's own render that
@@ -391,21 +392,31 @@ def refine_tessellation(csg_text: str) -> str:
     return _TESSELLATION.sub("$fa = 1, $fs = 0.2", csg_text)
 
 
-def _openscad_volume(csg_text: str, timeout: float, two_d: bool = False) -> float:
-    """Volume of OpenSCAD's own full render of the model (0 if empty); for
-    a 2D model, its area, via a 1 mm extrusion."""
+EMPTY_REFERENCE = MeshReport(0.0, 0, 0, 0, 0)
+
+
+def _openscad_render(
+    csg_text: str, timeout: float, two_d: bool = False
+) -> MeshReport:
+    """OpenSCAD's own full render of the model, measured, with the evidence
+    for whether that measurement means anything (0 if empty); for a 2D
+    model, its area, via a 1 mm extrusion."""
     if two_d:
         csg_text = unit_extrusion(csg_text)
     try:
         path = export_mesh(csg_text, suffix=".3mf", timeout=timeout)
     except OpenSCADRunError as exc:
         if "Current top level object is empty" in str(exc):
-            return 0.0
+            return EMPTY_REFERENCE
         raise
     try:
-        return mesh_volume(path)
+        return mesh_report(path)
     finally:
         shutil.rmtree(path.parent, ignore_errors=True)
+
+
+def _openscad_volume(csg_text: str, timeout: float, two_d: bool = False) -> float:
+    return _openscad_render(csg_text, timeout, two_d).volume
 
 
 def measure(part: Shape, two_d: bool = False) -> float:
@@ -478,7 +489,10 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
     # check, and OpenSCAD's render of a 1 mm extrusion measures it.
     two_d = not conversion.part.solids()
     ours = measure(conversion.part, two_d)
-    fine = _openscad_volume(refine_tessellation(csg_text), conversion.timeout, two_d)
+    reference = _openscad_render(
+        refine_tessellation(csg_text), conversion.timeout, two_d
+    )
+    fine = reference.volume
     result["volume"] = round(ours, 6)
     result["scad_volume"] = round(fine, 6)
     if two_d:
@@ -500,6 +514,22 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
                 f"{fine:.6g}: mesh-fallback tessellation, not a bug"
             )
             return
+    if not reference.sound:
+        # OpenSCAD's own render is not a closed, positive-volume solid, so
+        # comparing volumes against it decides nothing -- and it is usually
+        # the model that is at fault, not either tool. Of the fifteen worst
+        # disagreements in the corpus, twelve were this: winding the author
+        # wrote inconsistently, self-intersecting hulls, meshes enclosing a
+        # negative volume. Saying so is honest where calling it our
+        # mismatch was not.
+        result["status"] = CLASS_UNCHECKED
+        result["message"] = (
+            f"volume {ours:.6g} vs OpenSCAD {fine:.6g} "
+            f"({100 * error:.1f}%), but OpenSCAD's own render is not a closed "
+            f"solid -- {reference.fault()} -- so the comparison decides "
+            "nothing; check this one by eye"
+        )
+        return
     # A magnitude bucket leads the message so --report groups mismatches by
     # severity rather than by their (unique) volumes. The 1-2% bucket is
     # where a known, deliberate divergence lands: a minkowski() whose ball

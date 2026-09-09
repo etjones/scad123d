@@ -467,3 +467,52 @@ def test_verify_checks_volume_per_color_and_says_when_it_cannot(tmp_path):
     assert second["colors"] == {"red": pytest.approx(500), "blue": pytest.approx(1000)}
     assert "colors overlap" in second["colors_unchecked"]
     assert "scad_colors" not in second
+
+
+class TestUnusableReference:
+    """A volume comparison is only as good as the mesh it compares against.
+
+    OpenSCAD's own render of a badly written model can be an open surface,
+    a self-intersecting one, or one that encloses a negative volume. None
+    of those has a definite inside, so a disagreement with it is not
+    evidence about our conversion. Of the fifteen worst disagreements in
+    the CodeCAD corpus, twelve were this.
+    """
+
+    @staticmethod
+    def report(**kwargs):
+        from scad123d.mesh_import import MeshReport
+
+        base = {
+            "volume": 100.0,
+            "triangles": 12,
+            "boundary_edges": 0,
+            "nonmanifold_edges": 0,
+            "flipped_edges": 0,
+        }
+        return MeshReport(**{**base, **kwargs})
+
+    def test_a_closed_positive_mesh_is_sound(self):
+        assert self.report().sound
+
+    @pytest.mark.parametrize(
+        "fault",
+        [
+            {"boundary_edges": 4},
+            {"nonmanifold_edges": 7216},
+            {"flipped_edges": 2},
+            {"volume": -1568.3},
+        ],
+    )
+    def test_each_defect_makes_it_unusable(self, fault):
+        assert not self.report(**fault).sound
+
+    def test_the_fault_names_what_is_wrong(self):
+        assert "three or more" in self.report(nonmanifold_edges=9).fault()
+        assert "open" in self.report(boundary_edges=4).fault()
+        assert "wind the same way" in self.report(flipped_edges=2).fault()
+        assert "negative volume" in self.report(volume=-5.0).fault()
+
+    def test_zero_volume_is_not_itself_a_defect(self):
+        """An empty render is a legitimate measurement of nothing."""
+        assert self.report(volume=0.0).sound

@@ -2099,3 +2099,37 @@ Found in the corpus among the models converting to exactly zero volume;
 five of the 3,049 remaining mismatches contain such a transform. The
 coin calibration test now converts to 1,682.00 against OpenSCAD's
 1,682.00, and the 80 sampled passing models show no regressions.
+
+---
+
+## When OpenSCAD's own render cannot adjudicate
+
+A volume comparison is only as good as the mesh it compares against. Of
+the fifteen worst disagreements in the corpus, **twelve** were models
+whose OpenSCAD render is not a closed solid: inconsistent face winding
+the author wrote, self-intersecting hulls, meshes enclosing a *negative*
+volume. Calling those our mismatches was not honest.
+
+`mesh_report` now returns the evidence alongside the volume -- boundary
+edges, non-manifold edges, edges whose two triangles wind the same way --
+and the verify step classifies a disagreement against such a render as
+`unchecked` rather than `mismatch`, saying which defect it found.
+
+The rule is narrow on purpose. It applies only when the volumes already
+disagree: 4 of 40 models that convert correctly have a few non-manifold
+edges and agree on volume anyway, so mesh quality alone must not
+disqualify anything. Zero volume is not a defect either -- an empty
+render is a legitimate measurement of nothing.
+
+Reach, measured on the 3,037 mismatches with a reference to check:
+
+| where | share with an unusable reference |
+|---|---|
+| the worst 15 | 12 |
+| the worst 100 | 51, plus 10 with no mesh at all |
+| all 3,037 | 512 (16.9%) |
+
+45 of those meshes enclose a negative volume, which an outward-facing
+closed surface cannot do. The concentration at the top is expected: a
+collapsed mesh measures near zero, so the relative error is enormous and
+it sorts first. Only 39 of the current top 100 are real disputes.
