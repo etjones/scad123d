@@ -2048,3 +2048,21 @@ Also dropped the `scad123d-artifacts` and `scad123d-review` paragraphs
 from the README (#31). Both tools stay; they are how the converter gets
 debugged against the corpus, not something a consumer of the project
 needs to read about.
+
+---
+
+## solid123d 0.8.1 released
+
+Published to PyPI. Carries the compound-operand decomposition (#16), the
+N-ary cut fold (#17), and the cut invariant (#19, which supersedes and
+reverts the blanket fuzzy cut of #18). Patch bump: bug fixes only, no API
+change.
+
+The corpus evidence in `RETRY-REPORT.md` is what made the release safe --
+3,160 known-wrong conversions re-run for 96 fixes, and 80 already-passing
+models re-checked with no regressions.
+
+This repo now requires `solid123d>=0.8.1`, so a plain `scad2step` needs no
+`PYTHONPATH` prefix to get the fixes. Verified on the release: saucer v2
+35,392.12, saucer v3 71,297.64, table-eq-wire_V2 88,590.69, tweezers
+7,802.73, and reversi still 118.80 rather than the 740.16 that #18 caused.
