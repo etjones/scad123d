@@ -2102,6 +2102,18 @@ coin calibration test now converts to 1,682.00 against OpenSCAD's
 
 ---
 
+## Retry a set, not the corpus
+
+Re-running all 3,000+ mismatches to measure a fix costs an hour and
+usually moves a few percent. A review set is a hundred of the worst
+cases, already chosen to be representative and already tracked
+before-and-after. `scad123d-batch --retry-set DIR` re-queues exactly the
+models a review directory holds (or a plain file of paths).
+
+Measured on `~/codecad-review-4`: **204 seconds** against roughly an hour
+for the whole corpus, for the same signal. The intended loop is now
+retry-set, refresh the review dir, read what a fix resolved, fix the next
+thing; and only run the whole corpus when the set is largely clean.
 ## When OpenSCAD's own render cannot adjudicate
 
 A volume comparison is only as good as the mesh it compares against. Of

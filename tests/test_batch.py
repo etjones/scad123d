@@ -23,6 +23,7 @@ from scad123d.batch import (
     Ledger,
     discover,
     main,
+    read_path_set,
 )
 
 FAKE_WORKER = textwrap.dedent(
@@ -140,6 +141,46 @@ def test_ledger_reset_requeues_only_the_named_classes(tmp_path):
         ledger.record(f"/x/{i}.scad", status)
     assert ledger.reset({CLASS_TIMEOUT}) == 1
     assert ledger.counts() == {CLASS_OK: 1, STATUS_PENDING: 1, CLASS_CRASH: 1}
+
+
+
+def test_ledger_reset_paths_requeues_just_those_models(tmp_path):
+    """The whole-corpus retry costs an hour to learn what one fix was
+    worth. Re-running a review set's hundred answers the same question in
+    a minute, so the ledger has to re-queue by path, not by class."""
+    ledger = Ledger(tmp_path / "l.sqlite")
+    for i in range(3):
+        ledger.discover(f"/x/{i}.scad", 1, 1.0, f"sha{i}")
+        ledger.record(f"/x/{i}.scad", CLASS_TIMEOUT)
+    assert ledger.reset_paths(["/x/0.scad", "/x/2.scad"]) == 2
+    assert ledger.counts() == {CLASS_TIMEOUT: 1, STATUS_PENDING: 2}
+    # already pending, and unknown paths: neither counts as re-queued
+    assert ledger.reset_paths(["/x/0.scad", "/x/nope.scad"]) == 0
+    assert ledger.reset_paths([]) == 0
+
+
+class TestReadPathSet:
+    def test_a_review_directory_gives_the_models_it_tracks(self, tmp_path):
+        review = tmp_path / "review"
+        review.mkdir()
+        (review / "cases.json").write_text(
+            json.dumps({"cases": [{"path": "/x/a.scad"}, {"path": "/x/b.scad"}]}),
+            encoding="utf-8",
+        )
+        assert read_path_set(review) == ["/x/a.scad", "/x/b.scad"]
+
+    def test_a_bare_list_of_cases_works_too(self, tmp_path):
+        cases = tmp_path / "cases.json"
+        cases.write_text(json.dumps([{"path": "/x/a.scad"}]), encoding="utf-8")
+        assert read_path_set(cases) == ["/x/a.scad"]
+
+    def test_a_plain_text_file_is_one_path_per_line(self, tmp_path):
+        listing = tmp_path / "paths.txt"
+        listing.write_text(
+            "# the ones I care about\n/x/a.scad\n\n  /x/b.scad  \n",
+            encoding="utf-8",
+        )
+        assert read_path_set(listing) == ["/x/a.scad", "/x/b.scad"]
 
 
 # --- planning ----------------------------------------------------------------

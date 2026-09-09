@@ -65,6 +65,27 @@ LEDGER_NAME = "ledger.sqlite"
 # --- ledger -----------------------------------------------------------------
 
 
+
+def read_path_set(source: Path) -> list[str]:
+    """The .scad paths named by a review directory or a plain list file.
+
+    A review directory keeps its selection in ``cases.json`` -- the same
+    hundred models across refreshes, which is what makes re-running them a
+    before-and-after rather than a fresh sample.
+    """
+    if source.is_dir():
+        source = source / "cases.json"
+    if source.suffix == ".json":
+        data = json.loads(source.read_text(encoding="utf-8"))
+        cases = data["cases"] if isinstance(data, dict) else data
+        return [case["path"] for case in cases]
+    return [
+        line.strip()
+        for line in source.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+
 class Ledger:
     """Per-file conversion state in SQLite, safe to share across threads.
 
@@ -133,6 +154,25 @@ class Ledger:
                     (size, mtime, sha256, STATUS_PENDING, time.time(), path),
                 )
             self._db.commit()
+
+    def reset_paths(self, paths: list[str]) -> int:
+        """Return these specific files to pending (for --retry-list).
+
+        The whole-corpus retry costs an hour to learn what one fix was
+        worth. A review set is a hundred of the worst cases, already
+        chosen to be representative, and re-running just those answers
+        the same question in a minute.
+        """
+        if not paths:
+            return 0
+        with self._lock:
+            cur = self._db.executemany(
+                "UPDATE files SET status=?, message=NULL, traceback=NULL"
+                " WHERE path=? AND status <> ?",
+                [(STATUS_PENDING, path, STATUS_PENDING) for path in paths],
+            )
+            self._db.commit()
+            return cur.rowcount
 
     def reset(self, statuses: set[str]) -> int:
         """Return files in the given statuses to pending (for --retry)."""
@@ -1092,6 +1132,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="comma-separated result classes to re-queue, e.g. timeout,crash",
     )
+    parser.add_argument(
+        "--retry-set",
+        metavar="DIR_OR_FILE",
+        default=None,
+        help="re-queue just the models a scad123d-review directory tracks "
+        "(or a file of one .scad path per line) -- a fix's worth in a "
+        "minute instead of a whole-corpus hour",
+    )
     parser.add_argument("--force", action="store_true", help="redo every file")
     parser.add_argument(
         "--limit", type=int, default=None, help="convert at most N files"
@@ -1215,6 +1263,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.retry:
         n = batch.ledger.reset({c.strip() for c in args.retry.split(",") if c.strip()})
         print(f"scad123d-batch: re-queued {n} files", file=sys.stderr)
+    if args.retry_set:
+        paths = read_path_set(Path(args.retry_set))
+        n = batch.ledger.reset_paths(paths)
+        print(
+            f"scad123d-batch: re-queued {n} of the {len(paths)} models in "
+            f"{args.retry_set}",
+            file=sys.stderr,
+        )
     if args.skip_unresolved_includes:
         n = exclude_unresolved(batch, apply=not args.dry_run)
         print(
