@@ -2148,3 +2148,22 @@ Reach, measured on the 3,037 mismatches with a reference to check:
 closed surface cannot do. The concentration at the top is expected: a
 collapsed mesh measures near zero, so the relative error is enormous and
 it sorts first. Only 39 of the current top 100 are real disputes.
+
+---
+
+## A 2D operation ignores its 3D children
+
+OpenSCAD refuses to extrude a solid. It warns "Ignoring 3D child object
+for 2D operation" and carries on with the 2D children alone. The CSG
+export keeps the 3D child in the tree, so the rule has to be applied when
+the tree is consumed.
+
+Found in `guitarwinder.scad`, one of the two genuine errors among the
+fifteen worst mismatches: a `linear_extrude()` handed both a cylinder and
+a hexagon. We extruded both and reported 70,844 where OpenSCAD renders
+the hexagon alone. That is the extra cylindrical volume visible in the
+STEP.
+
+Reproduced in five lines, and fixed for `linear_extrude` and
+`rotate_extrude` alike: 113,097 -> 1,178.56, matching OpenSCAD exactly.
+The whole model now converts at 6,046.31 against 6,045.95.

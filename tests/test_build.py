@@ -1402,3 +1402,57 @@ class TestSingularTransform:
                 "}\n"
             )
         assert shape is None or shape.volume == pytest.approx(0)
+
+
+class TestTwoDimensionalOperations:
+    """OpenSCAD refuses to extrude a solid: it warns "Ignoring 3D child
+    object for 2D operation" and carries on with the 2D children alone.
+    The CSG export keeps the 3D child, so the rule is applied here."""
+
+    @staticmethod
+    def build_csg(text: str):
+        from scad123d.build import build
+        from scad123d.parser import parse_csg
+
+        return build(parse_csg(text))
+
+    def test_linear_extrude_ignores_a_solid_child(self):
+        """The guitar winder, in miniature: a cylinder and a hexagon handed
+        to one extrude. OpenSCAD renders the hexagon alone, 1178.56."""
+        with pytest.warns(UserWarning, match="2D operation"):
+            shape = self.build_csg(
+                "linear_extrude(height = 20, $fn = 0, $fa = 12, $fs = 2) {\n"
+                "  cylinder($fn = 0, h = 7, r1 = 30, r2 = 10, center = false);\n"
+                "  circle($fn = 6, r = 4.7625);\n"
+                "}\n"
+            )
+        assert shape.volume == pytest.approx(1178.56, rel=1e-4)
+
+    def test_rotate_extrude_ignores_a_solid_child(self):
+        with pytest.warns(UserWarning, match="2D operation"):
+            shape = self.build_csg(
+                "rotate_extrude(angle = 360, $fn = 32) {\n"
+                "  cylinder($fn = 0, h = 5, r = 2, center = false);\n"
+                "  multmatrix([[1, 0, 0, 10], [0, 1, 0, 0], [0, 0, 1, 0],"
+                " [0, 0, 0, 1]]) { square(size = [2, 3], center = true); }\n"
+                "}\n"
+            )
+        # a 2x3 section at radius 10: Pappus gives 2*pi*10*6
+        assert shape.volume == pytest.approx(2 * 3.141592653589793 * 10 * 6, rel=0.02)
+
+    def test_an_all_2d_extrude_is_silent_and_unchanged(self):
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            shape = self.build_csg(
+                "linear_extrude(height = 4) { square(size = [10, 10], center = true); }"
+            )
+        assert shape.volume == pytest.approx(400)
+
+    def test_an_extrude_of_only_solids_yields_nothing(self):
+        with pytest.warns(UserWarning, match="2D operation"):
+            shape = self.build_csg(
+                "linear_extrude(height = 4) { cylinder($fn = 0, h = 5, r = 2); }"
+            )
+        assert shape is None
