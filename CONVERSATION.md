@@ -2024,3 +2024,27 @@ smaller gets all four right but performs two booleans per cut, which
 breaks `test_difference_of_many_is_one_operation` -- an invariant added
 deliberately in #13 to stop the corpus timing out. No safe fix shipped;
 solid123d left at main.
+
+---
+
+## Fifth mismatch retry: the cut invariant, and the first regression check
+
+`RETRY-REPORT.md` regenerated for run 5. All 3,160 mismatches re-ran with
+solid123d main (the cut invariant, #19, and the #18 revert) plus this
+repo's mesh-cache normalisation: **96 now convert cleanly**, 3,049 remain
+mismatches, 15 moved to another failure. Models building to exactly zero
+volume while OpenSCAD renders a solid fell 13 -> 8. The tracked review
+sets moved to 43 / 37 / 23 of 100 resolved.
+
+The new part is a **regression check on models that already passed**,
+which no earlier retry had. Eighty `ok` models were sampled at random and
+their volumes recorded *before* the run; re-converting them afterwards
+found **no regressions** -- 70 bit-identical, 10 moved, the largest by
+1.3e-5 relative and five of the ten toward OpenSCAD's own figure. That is
+the check that would have caught the #18 fuzzy-cut regression before it
+merged, and it is the evidence that releasing solid123d 0.8.1 is safe.
+
+Also dropped the `scad123d-artifacts` and `scad123d-review` paragraphs
+from the README (#31). Both tools stay; they are how the converter gets
+debugged against the corpus, not something a consumer of the project
+needs to read about.
