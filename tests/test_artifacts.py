@@ -156,9 +156,11 @@ def test_symlink_option_links_the_source(corpus):
     source, out = corpus
     p = run_pass(source, out, statuses={CLASS_OK}, symlink=True, no_stl=True)
     link = out / "thing" / "a.scad"
-    assert (
-        link.is_symlink() and link.readlink() == (source / "thing" / "a.scad").resolve()
-    )
+    # Compare resolved targets, not the raw link text: on Windows
+    # readlink() returns the extended-length form (//?/C:/...) where
+    # resolve() does not, though both name the same file.
+    assert link.is_symlink()
+    assert link.resolve() == (source / "thing" / "a.scad").resolve()
     assert not (out / "thing" / "a.stl").exists()
     assert p.ledger.counts() == {}
     p.ledger.close()
