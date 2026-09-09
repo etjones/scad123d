@@ -24,6 +24,8 @@ instead of returning a wrong shape.
 """
 
 import math
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from build123d import Compound, Mesher, Pos, Shape, Shell, Solid
@@ -309,8 +311,70 @@ def _nested(bboxes: list[tuple[Point, Point]], i: int, j: int) -> bool:
     return all(jmin[d] <= imin[d] and imax[d] <= jmax[d] for d in range(3))
 
 
+@dataclass(frozen=True)
+class MeshReport:
+    """What OpenSCAD's own render measures, and whether it can be trusted
+    to measure anything.
+
+    A closed, consistently oriented surface encloses a definite volume.
+    One with a boundary edge (used by a single triangle), a non-manifold
+    edge (used by three or more), or two triangles walking an edge the
+    same way has no well-defined inside, so the number the divergence
+    theorem returns over it is not a measurement. Neither is a negative
+    one: an outward-facing closed surface cannot enclose less than
+    nothing.
+    """
+
+    volume: float
+    triangles: int
+    boundary_edges: int
+    nonmanifold_edges: int
+    flipped_edges: int
+
+    @property
+    def sound(self) -> bool:
+        return not (
+            self.boundary_edges
+            or self.nonmanifold_edges
+            or self.flipped_edges
+            or self.volume < 0
+        )
+
+    def fault(self) -> str:
+        """Why this mesh cannot be measured, in the order worth reporting."""
+        for count, what in (
+            (self.nonmanifold_edges, "edges shared by three or more triangles"),
+            (self.boundary_edges, "edges with only one triangle (the surface is open)"),
+            (self.flipped_edges, "edges whose two triangles wind the same way"),
+        ):
+            if count:
+                return f"{count:,} {what}"
+        return f"it encloses a negative volume ({self.volume:.6g})"
+
+
+def _edge_faults(triangles: list[Triangle]) -> tuple[int, int, int]:
+    """(boundary, non-manifold, contradictory) edge counts of a mesh."""
+    undirected: Counter = Counter()
+    directed: Counter = Counter()
+    for a, b, c in triangles:
+        for u, v in ((a, b), (b, c), (c, a)):
+            undirected[frozenset((u, v))] += 1
+            directed[(u, v)] += 1
+    return (
+        sum(1 for n in undirected.values() if n == 1),
+        sum(1 for n in undirected.values() if n > 2),
+        sum(1 for n in directed.values() if n > 1),
+    )
+
+
 def mesh_volume(path: str | Path) -> float:
-    """Volume enclosed by every mesh in a 3MF file, without building a BRep.
+    """Volume enclosed by every mesh in a 3MF file (see ``mesh_report``)."""
+    return mesh_report(path).volume
+
+
+def mesh_report(path: str | Path) -> MeshReport:
+    """Volume enclosed by every mesh in a 3MF file, without building a BRep,
+    with the evidence for whether that volume means anything.
 
     For checking a build against OpenSCAD's own render, where the render
     may have tens of thousands of facets: pure arithmetic over the
@@ -330,12 +394,17 @@ def mesh_volume(path: str | Path) -> float:
     reader.ReadFromFile(str(path))
     iterator = mesher.model.GetMeshObjects()
     total = 0.0
+    faults = [0, 0, 0]
+    facets = 0
     for _ in range(iterator.Count()):
         iterator.MoveNext()
         mesh = iterator.GetCurrentMeshObject()
         vertices = [tuple(v.Coordinates[0:3]) for v in mesh.GetVertices()]
         triangles = [tuple(t.Indices[0:3]) for t in mesh.GetTriangleIndices()]
         points, tris = _dedupe(vertices, triangles)  # type: ignore[arg-type]
+        facets += len(tris)
+        for i, count in enumerate(_edge_faults(tris)):
+            faults[i] += count
         volumes: list[float] = []
         bboxes: list[tuple[Point, Point]] = []
         for members in _components(tris):
@@ -355,7 +424,7 @@ def mesh_volume(path: str | Path) -> float:
                 for j in range(len(volumes))
             )
             total += volume if enclosable else -volume
-    return total
+    return MeshReport(total, facets, faults[0], faults[1], faults[2])
 
 
 def unit_extrusion(csg_source: str) -> str:
