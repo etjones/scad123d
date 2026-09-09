@@ -50,6 +50,40 @@ def _determinant(m) -> float:
     )
 
 
+# Below this, the linear part of a 4x4 has no volume left to give: it maps
+# space onto a plane, a line or a point. OpenSCAD's own threshold is exact
+# zero, but a CSG export writes six significant figures, so a matrix that
+# was built as singular can arrive a few ulps off.
+SINGULAR_TOL = 1e-12
+
+
+def flattens(m: Sequence[Sequence[float]], two_d: bool = False) -> bool:
+    """Does this 4x4 collapse whatever it transforms?
+
+    True exactly when the part of its linear map that the object can feel
+    is singular -- what ``scale(v=[1, 1, 0])`` produces. OpenSCAD answers
+    such a transform by removing the object ("Scaling a 3D object with
+    0 - removing object"), which is why callers ask before applying it:
+    the alternative is a zero-thickness solid that OCCT will happily union
+    or subtract.
+
+    A 2D object feels only the x/y block, and OpenSCAD scales it by that
+    alone -- it has a separate "Scaling a 2D object with 0" message and
+    never consults z. So ``scale([0.9, 0.9, 0])`` on a polygon is an
+    ordinary shrink, kept, while the same factors on a cube are a
+    collapse, removed. Confirmed against OpenSCAD directly: the polygon
+    extrudes to 810, and ``scale([0, 0.9, 1])`` on the same polygon warns
+    and yields no geometry at all.
+    """
+    rows = [[float(v) for v in row][:3] for row in m][:3]
+    if len(rows) < 3 or any(len(row) < 3 for row in rows):
+        return False
+    if two_d:
+        planar = rows[0][0] * rows[1][1] - rows[0][1] * rows[1][0]
+        return abs(planar) <= SINGULAR_TOL
+    return abs(_determinant(rows)) <= SINGULAR_TOL
+
+
 def _orthonormalized(m: Sequence[Sequence[float]]) -> list[list[float]]:
     """Snap a near-rigid 4x4 to an exactly rigid one, preserving handedness.
 
