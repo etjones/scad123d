@@ -1226,3 +1226,90 @@ class TestColorThroughBooleans:
         )
         assert len(shape.solids()) == 1 and not shape.children
         assert shape.volume == pytest.approx(875)
+
+
+class TestOpenPolyhedron:
+    """A polyhedron whose faces do not close a volume.
+
+    OCCT will wrap an open shell in a "solid" anyway --
+    BRepBuilderAPI_MakeSolid documents that it performs no coherence check
+    -- and the result takes an arbitrary volume and exports to STEP as
+    faces with no solid at all. OpenSCAD warns that such a mesh is not a
+    valid 2-manifold, retries after merging very close vertices, and if it
+    is still not manifold the polyhedron contributes nothing. scad123d
+    matches that.
+    """
+
+    # A cube missing its top face: five faces, four free edges.
+    _OPEN = (
+        "polyhedron(points = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],"
+        "[0,0,1],[1,0,1],[1,1,1],[0,1,1]], "
+        "faces = [[0,1,2,3],[4,5,1,0],[5,6,2,1],[6,7,3,2],[7,4,0,3]]);"
+    )
+    _CLOSED = (
+        "polyhedron(points = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],"
+        "[0,0,1],[1,0,1],[1,1,1],[0,1,1]], "
+        "faces = [[0,1,2,3],[4,5,1,0],[5,6,2,1],[6,7,3,2],[7,4,0,3],[7,6,5,4]]);"
+    )
+
+    def test_a_closed_polyhedron_is_built(self):
+        shape = scad123d.import_csg(self._CLOSED)
+        assert shape.volume == pytest.approx(1.0)
+        assert shape.is_valid
+
+    def test_an_open_polyhedron_warns_and_contributes_nothing(self):
+        with (
+            pytest.warns(UserWarning, match="not a valid 2-manifold"),
+            pytest.raises(scad123d.UnsupportedNodeError),
+        ):
+            scad123d.import_csg(self._OPEN)
+
+    def test_the_rest_of_the_model_survives_an_open_polyhedron(self):
+        with pytest.warns(UserWarning, match="free edge"):
+            shape = scad123d.import_csg(
+                "group() {\n"
+                "  multmatrix([[1,0,0,10],[0,1,0,0],[0,0,1,0],[0,0,0,1]]) "
+                "{ cube(size = [2,2,2], center = false); }\n"
+                f"  {self._OPEN}\n"
+                "}"
+            )
+        assert shape.volume == pytest.approx(8.0)
+        assert shape.is_valid
+
+    def test_duplicate_corner_indices_are_not_free_edges(self):
+        """OCCT sews coincident vertices, so a mesh that lists a shared
+        corner once per facet still closes -- OpenSCAD's indexed-mesh rule
+        does not apply to how we build the shell."""
+        pts = []
+        faces = []
+        corners = [
+            (0, 0, 0),
+            (1, 0, 0),
+            (1, 1, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+            (1, 0, 1),
+            (1, 1, 1),
+            (0, 1, 1),
+        ]
+        quads = [
+            [0, 1, 2, 3],
+            [4, 5, 1, 0],
+            [5, 6, 2, 1],
+            [6, 7, 3, 2],
+            [7, 4, 0, 3],
+            [7, 6, 5, 4],
+        ]
+        for quad in quads:  # every face gets its own copy of each corner
+            faces.append([len(pts) + i for i in range(4)])
+            pts.extend(corners[i] for i in quad)
+        csg = (
+            "polyhedron(points = ["
+            + ", ".join(f"[{x}, {y}, {z}]" for x, y, z in pts)
+            + "], faces = ["
+            + ", ".join("[" + ", ".join(str(i) for i in f) + "]" for f in faces)
+            + "]);"
+        )
+        shape = scad123d.import_csg(csg)
+        assert shape.volume == pytest.approx(1.0)
+        assert shape.is_valid

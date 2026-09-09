@@ -1922,3 +1922,42 @@ until solid123d#15 is merged and released; that is the normal order for
 this pair (geometry semantics land in solid123d first) and matches the
 weekly release cadence. Locally both suites pass together via
 `PYTHONPATH=~/Dropbox/Projects/solid123d/src`.
+
+**User**: Look at `codecad-review-3/008-2379645056_48-polyhedrons/polyhedrons.scad`.
+Then: research CGAL vs OCCT polyhedra rather than reverse-engineering.
+Then: should we just let OpenSCAD supply polyhedron meshes?
+
+**Assistant**: The model is malformed input, and the docs settle what to do
+about it. Its `polyhedron()` leaves 24 free edges even after merging
+coincident points, so it encloses no volume; OpenSCAD renders only the
+model's sphere (4.12).
+
+Documented behaviour, rather than inferred: OCCT's
+`BRepBuilderAPI_MakeSolid` performs no coherence check and explicitly
+permits converting a non-closed shell, while OCCT's validity criterion for
+a solid is "a closed shell and coherent faces orientation" -- so the
+arbitrary 306.63 volume is expected, as is the STEP that carries faces and
+no solid at all (every viewer reads it as empty). OpenSCAD uses an indexed
+mesh in which a repeated coordinate is a separate vertex, warns that the
+mesh may not be a valid 2-manifold, retries after merging very close
+vertices, and if it is still not manifold the conversion fails and the
+polyhedron contributes nothing.
+
+So scad123d now counts free edges on the built shape and, when there are
+any, warns and treats the polyhedron as no geometry. Free edges are
+counted after construction, so a mesh that lists a shared corner once per
+facet is unaffected -- OCCT sews those, which also means the vertex-weld
+I first wrote for solid123d was redundant and was dropped.
+
+On supplying every polyhedron from OpenSCAD: no, and measured both ways.
+Always would downgrade the exact BRep path (real planar faces, fillets and
+face selection) to a triangulated mesh import for the ~257 mismatched
+models whose polyhedra close fine, plus thousands of passing ones. Falling
+back only when open fails outright: OpenSCAD's own output for these meshes
+is empty or still non-manifold, so `mesh_import` cannot build a solid and
+the conversion dies (lib3mf exception, or "could not build a valid solid").
+
+Effect: `polyhedrons` 306.63 -> 4.19 against OpenSCAD's 4.12;
+`holding arms` 16,209 -> 15,257 against 15,252; `jak` and 9 others
+unchanged or slightly closer; no regressions among the 12 mismatched
+models that build an invalid polyhedron. 4 new tests; 371 pass.
