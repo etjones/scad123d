@@ -116,6 +116,28 @@ def _union(shapes: list[Shape]) -> Shape | None:
     return s1.union()(shapes)
 
 
+def _flat_children(node: CsgNode, options: BuildOptions) -> list[Shape]:
+    """The children of a 2D operation, with any 3D ones dropped.
+
+    OpenSCAD refuses to extrude a solid: it warns "Ignoring 3D child
+    object for 2D operation" and carries on with the 2D children alone.
+    A CSG export keeps the 3D child in the tree, so the rule has to be
+    applied here. Without it a guitar winder's
+    ``linear_extrude() { cylinder(); circle(); }`` came out as 113,097
+    where OpenSCAD renders the hexagon alone, 1,178.56.
+    """
+    built = _children(node, options)
+    flat = [shape for shape in built if not shape.solids()]
+    if len(flat) != len(built):
+        warnings.warn(
+            f"scad123d: {node.name}() is a 2D operation, so the "
+            f"{len(built) - len(flat)} solid child(ren) it was given are "
+            "ignored, as OpenSCAD ignores them",
+            stacklevel=2,
+        )
+    return flat
+
+
 def _fallback(node: CsgNode, options: BuildOptions, reason: str) -> Shape | None:
     warn_meshed(node.name, reason)
     options.meshed_nodes.append(node.name)
@@ -350,7 +372,7 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
             return None
         if float(a.get("twist", 0) or 0):
             return _fallback(node, options, "linear_extrude(twist=...)")
-        shape = _union(_children(node, options))
+        shape = _union(_flat_children(node, options))
         if shape is None:
             return None
         scale = a.get("scale", 1)
@@ -361,7 +383,7 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         )(shape)
 
     if name == "rotate_extrude":
-        shape = _union(_children(node, options))
+        shape = _union(_flat_children(node, options))
         if shape is None:
             return None
         return s1.rotate_extrude(angle=float(a.get("angle", 360)))(shape)
