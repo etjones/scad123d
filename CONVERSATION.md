@@ -2114,6 +2114,9 @@ Measured on `~/codecad-review-4`: **204 seconds** against roughly an hour
 for the whole corpus, for the same signal. The intended loop is now
 retry-set, refresh the review dir, read what a fix resolved, fix the next
 thing; and only run the whole corpus when the set is largely clean.
+
+---
+
 ## When OpenSCAD's own render cannot adjudicate
 
 A volume comparison is only as good as the mesh it compares against. Of
