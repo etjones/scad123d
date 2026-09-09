@@ -119,7 +119,7 @@ def current(ledger: ArtifactLedger, path: str) -> Row | None:
 def _openscad_png(scad_text: str, png: Path) -> bool:
     with tempfile.TemporaryDirectory() as tmp:
         scad = Path(tmp) / "thumb.scad"
-        scad.write_text(scad_text)
+        scad.write_text(scad_text, encoding="utf-8")
         try:
             subprocess.run(
                 [
@@ -234,7 +234,10 @@ class Review:
         f = self.review_dir / CASES_FILE
         if not f.exists():
             return []
-        return [Case.from_json(d) for d in json.loads(f.read_text())["cases"]]
+        return [
+            Case.from_json(d)
+            for d in json.loads(f.read_text(encoding="utf-8"))["cases"]
+        ]
 
     def save(self, cases: list[Case], status: str) -> None:
         payload = {
@@ -243,7 +246,9 @@ class Review:
             "source": str(self.source),
             "cases": [c.to_json() for c in cases],
         }
-        (self.review_dir / CASES_FILE).write_text(json.dumps(payload, indent=1))
+        (self.review_dir / CASES_FILE).write_text(
+            json.dumps(payload, indent=1), encoding="utf-8"
+        )
 
     def select(self, status: str, top: int) -> list[Case]:
         cases = []
@@ -292,7 +297,9 @@ class Review:
                 stale.unlink()
         if self.thumbnails:
             self._thumbnails(folder, files)
-        (folder / "README.md").write_text(self.readme(case, row, files, folder))
+        (folder / "README.md").write_text(
+            self.readme(case, row, files, folder), encoding="utf-8"
+        )
         return row, files
 
     def _thumbnails(self, folder: Path, files: dict[str, Path]) -> None:
@@ -378,7 +385,7 @@ class Review:
 
     def _source(self, path: str, limit: int = 120) -> list[str]:
         try:
-            text = Path(path).read_text(errors="replace").splitlines()
+            text = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError as exc:
             return [f"// unreadable: {exc}"]
         if len(text) > limit:
@@ -432,7 +439,9 @@ class Review:
         with ThreadPoolExecutor(max_workers=self.jobs) as pool:
             list(pool.map(self.refresh, cases))
         self.save(cases, status)
-        (self.review_dir / INDEX_FILE).write_text(self.index(cases, status))
+        (self.review_dir / INDEX_FILE).write_text(
+            self.index(cases, status), encoding="utf-8"
+        )
         return cases
 
 
