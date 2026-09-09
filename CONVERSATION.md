@@ -1961,3 +1961,66 @@ Effect: `polyhedrons` 306.63 -> 4.19 against OpenSCAD's 4.12;
 `holding arms` 16,209 -> 15,257 against 15,252; `jak` and 9 others
 unchanged or slightly closer; no regressions among the 12 mismatched
 models that build an invalid polyhedron. 4 new tests; 371 pass.
+
+**User**: Merge that PR and re-run the mismatch retry; I'm going to sleep
+and will read the report in the morning.
+
+**Assistant**: Merged solid123d #18 as well (the retry needed it to be
+reproducible from main rather than an unmerged branch) and scad123d #29,
+seven CI jobs green. #29 was branched from `feature/debug-ornament-volume`,
+so merging it brought that whole branch to main -- the multmatrix
+reflection fix and both inspection tools included; the PR body was
+rewritten to say so before merging.
+
+CI caught two bugs of my own, both fixed in #29: `review.py` wrote a
+middle dot with the platform locale encoding (ASCII on the runner) so it
+raised UnicodeEncodeError, and once fixed the tests raised
+UnicodeDecodeError reading the file back -- both sides now name UTF-8,
+verified under `LC_ALL=C`; and a test compared raw symlink text, which
+Windows returns in extended-length form, so it now compares resolved
+paths.
+
+Retry: 160 of 3,342 now ok (4.8%), corpus mismatch 3,342 -> 3,160, ok
+56,023 -> 56,183. The tracked sets are the better measure, since they keep
+their original selections: the first worst-100 has gone 14 -> 29 -> 40
+resolved across the three retries; review-2 is at 33, review-3 at 16.
+Fresh worst 100 at `~/codecad-review-4`. Report at
+`~/codecad-step/RETRY-REPORT.md`.
+
+**User**: See about
+`codecad-review-4/005-1612505_0-another_bauble/another_bauble.scad`.
+
+**Assistant**: Found a nondeterminism bug and, chasing it, a regression in
+a fix merged earlier tonight.
+
+The bauble reported 87,144 against OpenSCAD's 2,723 -- almost exactly the
+volume of the r=27.5 sphere it is meant to be intersected with. But the
+intersection built in isolation was right (2,715.74), and so was the whole
+tree *if anything had already been built in the same process*: cold
+87,144.42, warm 2,766.79, and `mesh.clear_cache()` brought the bad answer
+back. The mesh cache hands out `copy.copy`, a shallow copy sharing one
+TopoDS, so the first boolean to touch a meshed subtree improved the shared
+shape in place and every later use behaved better than the first -- and a
+batch worker only ever sees the first. Cleaning the imported mesh once at
+render time makes the first use behave like the rest (87,144 -> 2,766.79,
+1.6% off, and the conversion drops from 34.6s to 11.7s). Validated on 45
+previously-ok mesh-fallback models: no regressions, 4 improvements.
+Branch `fix/normalise-imported-mesh`, 373 pass.
+
+Separately: sampling previously-ok models -- which no retry has ever
+re-run, since every retry targeted `mismatch` -- turned up two
+regressions from code merged earlier tonight. `reversi.scad` went 118.80
+-> 740.16 (OpenSCAD 121.21), bisected to `da8f04f`, the merge of #18 that
+made every cut fuzzy; and `rpi_bracket.scad` now converts to 0.00 where it
+was 5,703.56 (OpenSCAD 5,703.51), also on merged main and not yet
+diagnosed.
+
+Three ways to resolve the fuzzy-cut ambiguity were tried and all fail
+somewhere: always fuzzy (merged) fixes the saucers and a windscreen seal
+but breaks reversi; fuzzy only when the exact result comes back in more
+pieces holding all its volume fixes reversi but breaks the seal (exact
+9,568 vs fuzzy 8,008.98, OpenSCAD 8,005.31); running both and keeping the
+smaller gets all four right but performs two booleans per cut, which
+breaks `test_difference_of_many_is_one_operation` -- an invariant added
+deliberately in #13 to stop the corpus timing out. No safe fix shipped;
+solid123d left at main.
