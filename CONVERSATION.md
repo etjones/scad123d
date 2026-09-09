@@ -2085,7 +2085,17 @@ threshold is 1e-12 rather than exact zero because a CSG export writes six
 significant figures, so a matrix built as singular can arrive a few ulps
 off.
 
+What counts as flat depends on what is being transformed. A 2D object
+never feels the z factor: OpenSCAD has a separate "Scaling a 2D object
+with 0" message and scales a polygon by the x/y block alone. The first
+version of this change ignored that and removed a `scale([0.9, 0.9, 0])`
+polygon in `microscope.scad`, moving it from 0.107% off to 0.980% -- the
+one regression the 80-model check found, and the reason that check
+exists. Confirmed against OpenSCAD directly: that polygon extrudes to
+810, while `scale([0, 0.9, 1])` on the same polygon warns and yields no
+geometry at all.
+
 Found in the corpus among the models converting to exactly zero volume;
 five of the 3,049 remaining mismatches contain such a transform. The
 coin calibration test now converts to 1,682.00 against OpenSCAD's
-1,682.00.
+1,682.00, and the 80 sampled passing models show no regressions.

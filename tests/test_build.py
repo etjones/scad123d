@@ -1370,3 +1370,35 @@ class TestSingularTransform:
             " [0, 0, 0, 1]]) { cube(size = [10, 10, 10], center = true); }"
         )
         assert shape.volume == pytest.approx(1000)
+
+    def test_a_2d_object_never_feels_the_z_factor(self):
+        """OpenSCAD scales 2D geometry by the x/y block alone: it has a
+        separate "Scaling a 2D object with 0" message and never consults
+        z. Checked against OpenSCAD directly -- this extrudes to 810."""
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            shape = self.build_csg(
+                "linear_extrude(height = 10) {\n"
+                "  multmatrix([[0.9, 0, 0, 0], [0, 0.9, 0, 0], [0, 0, 0, 0],"
+                " [0, 0, 0, 1]]) {\n"
+                "    square(size = [10, 10], center = true);\n"
+                "  }\n"
+                "}\n"
+            )
+        assert shape.volume == pytest.approx(810)
+
+    def test_a_2d_object_flattened_in_the_plane_is_removed(self):
+        """The same polygon scaled by [0, 0.9, 1]: OpenSCAD warns and
+        produces no geometry at all."""
+        with pytest.warns(UserWarning, match="scales this object to nothing"):
+            shape = self.build_csg(
+                "linear_extrude(height = 10) {\n"
+                "  multmatrix([[0, 0, 0, 0], [0, 0.9, 0, 0], [0, 0, 1, 0],"
+                " [0, 0, 0, 1]]) {\n"
+                "    square(size = [10, 10], center = true);\n"
+                "  }\n"
+                "}\n"
+            )
+        assert shape is None or shape.volume == pytest.approx(0)

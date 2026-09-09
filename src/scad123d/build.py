@@ -280,13 +280,14 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         matrix = a.get("_0")
         if shape is None or matrix is None:
             return shape
-        if flattens(matrix):
+        if flattens(matrix, two_d=not shape.solids()):
             # OpenSCAD drops the object rather than flattening it:
             # "Scaling a 3D object with 0 - removing object". A CSG export
             # keeps the singular matrix, so the rule has to be applied
             # here; without it the collapsed shape goes on to be unioned
             # or, worse, subtracted, and a scale(v=[1, 1, 0]) cutter
-            # erases the whole model.
+            # erases the whole model. What counts as flat depends on what
+            # the object is: 2D geometry never feels the z factor.
             warnings.warn(
                 "scad123d: a transform scales this object to nothing "
                 "(the matrix is singular), so OpenSCAD removes it; "
