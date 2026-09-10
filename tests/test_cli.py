@@ -661,8 +661,9 @@ class TestRefusedGeometry:
         return MeshReport(**{**base, **kwargs})
 
     def test_a_flawless_mesh_of_an_incomplete_model_is_not_usable(self):
-        refused = ("ERROR: all points for rotate_extrude() must have the same X"
-                   " coordinate sign",)
+        refused = (
+            "ERROR: all points for rotate_extrude() must have the same X sign",
+        )
         report = self.report(refused=refused)
         assert not report.usable
         assert "refused part of the model" in report.fault()
