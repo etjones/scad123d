@@ -663,3 +663,53 @@ class TestSecondOpinion:
         )
         assert result["status"] == "mismatch"
         assert cli.EXACT_BACKEND not in asked
+
+
+class TestRefusedGeometry:
+    """OpenSCAD refuses some geometry, renders everything else, and exits 0.
+
+    What comes back is a clean mesh of an incomplete model, and nothing
+    about the mesh says so: closed, correctly wound, no self-intersection.
+    `solar_burner_tube.scad` has a profile point at -0.00, so OpenSCAD
+    refuses its rotate_extrude and renders the 3 mm lid alone, where the
+    model is a 40 mm reflector.
+    """
+
+    @staticmethod
+    def report(**kwargs):
+        from scad123d.mesh_import import MeshReport
+
+        base = {
+            "volume": 1961.09,
+            "triangles": 360,
+            "boundary_edges": 0,
+            "nonmanifold_edges": 0,
+            "flipped_edges": 0,
+        }
+        return MeshReport(**{**base, **kwargs})
+
+    def test_a_flawless_mesh_of_an_incomplete_model_is_not_usable(self):
+        refused = (
+            "ERROR: all points for rotate_extrude() must have the same X sign",
+        )
+        report = self.report(refused=refused)
+        assert not report.usable
+        assert "refused part of the model" in report.fault()
+        assert "rotate_extrude" in report.fault()
+
+    def test_the_same_mesh_without_a_refusal_is_usable(self):
+        assert self.report().usable
+
+    def test_only_error_lines_count_as_a_refusal(self):
+        from scad123d.cli import _refusals
+
+        stderr = (
+            "DEPRECATED: rotational extrusion without angle...\n"
+            "WARNING: unknown module\n"
+            "ERROR: all points for rotate_extrude() must have the same X sign\n"
+            "   Status:     NoError\n"
+        )
+        assert _refusals(stderr) == (
+            "ERROR: all points for rotate_extrude() must have the same X sign",
+        )
+        assert _refusals("WARNING: nothing to see\n") == ()

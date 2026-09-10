@@ -2273,3 +2273,32 @@ The tetrahedron now reports `unchecked`, because CGAL cannot build a Nef
 polyhedron from that winding either. Neither renderer can measure it, and
 saying so is the right answer for a model whose volume we can prove but
 OpenSCAD cannot render.
+
+---
+
+## A flawless mesh of an incomplete model
+
+`solar_burner_tube.scad` converts to 14,417 against OpenSCAD's 1,961, and
+its STL is not shredded at all: 360 triangles, closed, correctly wound,
+no self-intersection, volume matching the reference to three decimals.
+Every mesh test we have says it is fine.
+
+It is 3 mm tall. The model is a 40 mm parabolic reflector.
+
+OpenSCAD refuses the reflector outright -- *"all points for
+rotate_extrude() must have the same X coordinate sign (range is -0.00 ->
+43.57)"*, a profile point landing a hair below zero -- then renders the
+lid, and **exits 0**. What comes back is a perfect mesh of a model
+missing 86% of itself, and nothing about the mesh can reveal that.
+
+So the render's stderr is evidence in its own right.
+`export_mesh_with_errors` returns it alongside the file, following the
+`export_csg_with_warnings` convention already in openscad.py, and a
+reference carrying an `ERROR` line is not usable however clean it looks.
+The model now reports `unchecked` and names the refusal, instead of
+blaming a conversion that is right.
+
+Rare, and measured rather than assumed: of 40 mismatches sampled at
+random, none had OpenSCAD report an error while rendering. Worth catching
+because it costs nothing -- the stderr was already being read and thrown
+away -- and because no amount of mesh inspection would ever find it.

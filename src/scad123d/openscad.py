@@ -201,13 +201,19 @@ def export_csg(
     return export_csg_with_warnings(scad_path, overrides, timeout)[0]
 
 
-def export_mesh(
+def export_mesh_with_errors(
     source: str,
     suffix: str = ".stl",
     timeout: float = 600,
     backend: str | None = None,
-) -> Path:
-    """Render CSG or OpenSCAD source text to a mesh file, returning its path.
+) -> tuple[Path, str]:
+    """Like ``export_mesh``, but also returns OpenSCAD's stderr.
+
+    It matters here: OpenSCAD refuses some geometry with an ``ERROR``
+    line, renders everything else, and exits 0. What comes back is a clean
+    mesh of an incomplete model, and nothing about the mesh itself says
+    so -- the solar burner tube's reflector was refused for a profile
+    point at -0.00, leaving a 3 mm lid where the model is 40 mm tall.
 
     The caller owns the returned file and should unlink it. ``.csg`` is itself
     valid OpenSCAD input, which is what makes the subtree fallback possible.
@@ -221,10 +227,25 @@ def export_mesh(
     chosen = mesh_backend() if backend is None else backend
     if chosen:
         args.append(f"--backend={chosen}")
-    _run(args + [str(src)], timeout)
+    stderr = _run(args + [str(src)], timeout)
     if not out.exists():
         raise OpenSCADRunError("OpenSCAD produced no mesh output")
-    return out
+    return out, stderr
+
+
+def export_mesh(
+    source: str,
+    suffix: str = ".stl",
+    timeout: float = 600,
+    backend: str | None = None,
+) -> Path:
+    """Render CSG or OpenSCAD source text to a mesh file, returning its path.
+
+    The caller owns the returned file and should unlink it. ``.csg`` is
+    itself valid OpenSCAD input, which is what makes the subtree fallback
+    possible.
+    """
+    return export_mesh_with_errors(source, suffix, timeout, backend)[0]
 
 
 def scad_literal(value: object) -> str:

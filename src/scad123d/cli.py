@@ -33,6 +33,7 @@ import time
 import traceback
 import warnings
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -53,7 +54,7 @@ from .errors import (
 from .facets import DEFAULT_FACET_THRESHOLD
 from .mesh import clear_cache
 from .mesh_import import MeshReport, mesh_report, unit_extrusion
-from .openscad import export_csg_with_warnings, export_mesh
+from .openscad import export_csg_with_warnings, export_mesh_with_errors
 from .parser import parse_csg
 
 try:
@@ -73,6 +74,13 @@ CLASS_EXPORT = "export-error"
 CLASS_TIMEOUT = "timeout"
 CLASS_MISSING = "missing"
 CLASS_MISMATCH = "mismatch"  # built, but disagrees with OpenSCAD's own render
+def _refusals(stderr: str) -> tuple[str, ...]:
+    """OpenSCAD's ERROR lines, which it prints while exiting 0."""
+    return tuple(
+        line.strip() for line in stderr.splitlines() if line.startswith("ERROR")
+    )[:5]
+
+
 EXACT_BACKEND = "CGAL"
 CLASS_UNCHECKED = "unchecked"  # built, but OpenSCAD's own render cannot adjudicate
 CLASS_ERROR = "error"
@@ -405,7 +413,7 @@ def _openscad_render(
     if two_d:
         csg_text = unit_extrusion(csg_text)
     try:
-        path = export_mesh(
+        path, stderr = export_mesh_with_errors(
             csg_text, suffix=".3mf", timeout=timeout, backend=backend
         )
     except OpenSCADRunError as exc:
@@ -413,7 +421,7 @@ def _openscad_render(
             return EMPTY_REFERENCE
         raise
     try:
-        return mesh_report(path)
+        return replace(mesh_report(path), refused=_refusals(stderr))
     finally:
         shutil.rmtree(path.parent, ignore_errors=True)
 
