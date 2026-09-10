@@ -2198,3 +2198,44 @@ would reject ordinary geometry. When the fast render fails that test the
 pass re-renders with CGAL and keeps whichever is better, saying which it
 used. 18 seconds against 0.3 for the gear, paid only where the fast
 render was unusable.
+
+---
+
+## The verify rule, corrected: ask twice before blaming anyone
+
+Two defects in yesterday's `unchecked` rule, both found by looking at the
+involute gear cluster.
+
+**It was too strict.** It rejected any reference with a single
+non-manifold edge. That is what two solids touching along an edge exports
+as, and the volume is still exact. Measured over the corpus, **303 of the
+512** references it rejected had under 1% non-manifold edges -- real
+disagreements, quietly set aside -- while the renders that are visibly
+shredded run from 4% to 69%. The threshold is now 2%, with an open
+surface or a negative enclosed volume still disqualifying outright.
+
+**It gave up too early.** An unmeasurable fast render is not a verdict,
+it is a reason to ask again. OpenSCAD's default renderer here is
+Manifold, two orders of magnitude faster than CGAL and normally
+identical; on self-intersecting input it is not, because Manifold
+resolves an intersection by symbolic perturbation rather than CGAL's
+exact union. So when the fast render cannot be measured, the exact one is
+asked:
+
+| | before | after |
+|---|---|---|
+| `lib_involute.scad` (bevel gear) | `unchecked` | `ok` -- 702,711 against CGAL's 701,915 |
+| `tetra_ball.scad` | `unchecked` | `ok` -- 17.8272 against CGAL's 17.8272 |
+| `scarf_v1.scad` | `unchecked` | `mismatch` -- 10,734 against 20,148, a real bug |
+| `Quartz_birdhouse.scad` | `unchecked` | `mismatch` -- a real bug |
+
+Manifold said 165,211 for that gear and 0.049 for the ball. Both were
+wrong, and we were right all along.
+
+Cost is paid only where it is earned: on 14 models that already convert,
+none reached the second opinion and none took over 5 seconds.
+
+The two places that ask this question -- the verify step, of a reference
+render, and the artifacts pass, of the STL it puts beside a STEP -- now
+share one definition. `worth_looking_at()` delegates to
+`MeshReport.usable`, so the threshold cannot drift apart between them.

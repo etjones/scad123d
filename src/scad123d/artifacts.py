@@ -180,14 +180,6 @@ def check_source(ledger: ArtifactLedger, source: Path, out_dir: Path) -> None:
 # --- the work ---------------------------------------------------------------
 
 
-# Fractions of a mesh's edges that may be non-manifold before it stops
-# being worth looking at. A couple of solids meeting along an edge is
-# ordinary geometry and exports that way; a self-intersecting render is
-# mostly such edges. Measured on the corpus: correct renders sit at 0,
-# the models whose STL is visibly shredded run from 4% to 69%.
-SHREDDED_FRACTION = 0.02
-
-
 def read_stl_soup(path: Path) -> tuple[list, list]:
     """An STL's triangles as an indexed mesh, binary or ASCII."""
     raw = path.read_bytes()
@@ -217,11 +209,9 @@ def worth_looking_at(path: Path) -> tuple[bool, str]:
     """Is this mesh a fair picture of the model, and if not, why not?
 
     The STL that sits beside a STEP is there to be compared by eye, so
-    what matters is whether it represents the model -- not whether it is
-    flawless. An open surface, a negative enclosed volume, or a render
-    that is mostly self-intersections is not worth showing; a handful of
-    non-manifold edges, which is what two solids touching along an edge
-    exports as, is fine.
+    what matters is whether it represents the model, not whether it is
+    flawless. That is the same question the verify step asks of a
+    reference render, and the same answer: ``MeshReport.usable``.
     """
     try:
         points, triangles = read_stl_soup(path)
@@ -230,17 +220,7 @@ def worth_looking_at(path: Path) -> tuple[bool, str]:
     if not triangles:
         return False, "has no triangles"
     report = soup_report(points, triangles)
-    edges = max(report.triangles * 3 // 2, 1)
-    if report.boundary_edges:
-        return False, f"is an open surface ({report.boundary_edges:,} loose edges)"
-    if report.volume < 0:
-        return False, f"encloses a negative volume ({report.volume:.6g})"
-    if report.nonmanifold_edges > edges * SHREDDED_FRACTION:
-        return False, (
-            f"is {100 * report.nonmanifold_edges / edges:.0f}% self-intersecting "
-            f"({report.nonmanifold_edges:,} edges shared by three or more triangles)"
-        )
-    return True, ""
+    return (True, "") if report.usable else (False, report.fault())
 
 
 def render_stl(
