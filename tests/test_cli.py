@@ -517,10 +517,38 @@ class TestReferenceUsability:
         """An empty render is a legitimate measurement of nothing."""
         assert self.report(volume=0.0).usable
 
+    def test_triangles_that_disagree_about_which_way_is_out(self):
+        """A regular tetrahedron whose four faces were wound
+        inconsistently: OpenSCAD renders it as 0.000035 where its exact
+        volume is 41,666.67. Only orientation gives that away -- no edge
+        has three triangles on it, and the surface is closed."""
+        report = self.report(volume=3.5e-5, triangles=4, flipped_edges=4)
+        assert not report.usable
+        assert "which way is out" in report.fault()
+
+    def test_a_small_mesh_may_touch_itself(self):
+        """Two tetrahedra meeting along an edge. Six edges make the
+        percentage allowance zero, so without a floor one honest touching
+        edge would condemn them."""
+        assert self.report(
+            triangles=8, nonmanifold_edges=1, flipped_edges=1
+        ).usable
+
+    def test_the_two_counts_are_not_added_together(self):
+        """A touching edge appears in both counts, being shared by four
+        triangles and walked twice each way. Summing them would double
+        every legitimate touch."""
+        edges = self.report(triangles=1000).edges
+        near = int(edges * 0.02)
+        assert self.report(
+            triangles=1000, nonmanifold_edges=near, flipped_edges=near
+        ).usable
+
     def test_the_fault_names_what_is_wrong(self):
         assert "open surface" in self.report(boundary_edges=4).fault()
         assert "negative volume" in self.report(volume=-5.0).fault()
         assert "self-intersecting" in self.report(nonmanifold_edges=900).fault()
+        assert "which way is out" in self.report(flipped_edges=900).fault()
 
 
 class TestSecondOpinion:

@@ -2242,6 +2242,40 @@ share one definition. `worth_looking_at()` delegates to
 
 ---
 
+## What a four-triangle mesh taught the usability rule
+
+Loosening the rule dropped the orientation check with it, and the puzzle
+tetrahedron went straight back to `mismatch`: 41,666.67 against
+OpenSCAD's 0.000035, when 41,666.67 is that tetrahedron's exact volume,
+`8/3 x 25^3`. Its render is four triangles, closed, with no edge shared
+by three -- nothing the self-intersection test can see. What is wrong is
+that all four faces are wound inconsistently, so its triangles disagree
+about which way is out.
+
+So `usable` counts both kinds of defect edge. They overlap on the same
+geometry -- two solids touching along an edge give it four triangles
+*and* walk it twice each way -- so the measure is the larger of the two,
+never the sum.
+
+And a percentage alone cannot judge a small mesh: six edges make a 2%
+allowance zero, so one honest touching edge would condemn a pair of
+tetrahedra. Two defect edges are now tolerated however small the mesh,
+which is far below what any shredded render carries.
+
+| mesh | verdict |
+|---|---|
+| tetrahedron, 4 faces wound inconsistently | 67% disagree -- unusable |
+| two tetrahedra touching on an edge | usable |
+| `Quartz_birdhouse`, 524 triangles, 6 flipped | usable, so a real mismatch |
+| `tetra_ball`, 61% disagree | unusable, and CGAL settles it: `ok` |
+
+The tetrahedron now reports `unchecked`, because CGAL cannot build a Nef
+polyhedron from that winding either. Neither renderer can measure it, and
+saying so is the right answer for a model whose volume we can prove but
+OpenSCAD cannot render.
+
+---
+
 ## A flawless mesh of an incomplete model
 
 `solar_burner_tube.scad` converts to 14,417 against OpenSCAD's 1,961, and
