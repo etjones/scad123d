@@ -40,9 +40,11 @@ from typing import Any
 from .batch import LEDGER_NAME, STATUS_EXCLUDED
 from .cli import CLASS_EMPTY, CLASS_OK, CLASS_OPENSCAD, CLASS_TIMEOUT
 from .includes import overlay_dir
+from .mesh_import import soup_report
 from .openscad import mesh_backend, require_openscad
 
 STL_TABLE = "stl"
+EXACT_BACKEND = "CGAL"
 EMPTY_MARKER = "top level object is empty"
 
 
@@ -52,7 +54,7 @@ class EmptyModel(RuntimeError):
 
 BINARY_STL_HEADER = 84  # 80-byte header + uint32 triangle count
 
-Renderer = Callable[[Path, Path, float, str | None], None]
+Renderer = Callable[..., None]  # (scad, out, timeout, openscadpath, backend=None)
 
 
 # --- ledger -----------------------------------------------------------------
@@ -178,7 +180,76 @@ def check_source(ledger: ArtifactLedger, source: Path, out_dir: Path) -> None:
 # --- the work ---------------------------------------------------------------
 
 
-def render_stl(scad: Path, out: Path, timeout: float, openscadpath: str | None) -> None:
+# Fractions of a mesh's edges that may be non-manifold before it stops
+# being worth looking at. A couple of solids meeting along an edge is
+# ordinary geometry and exports that way; a self-intersecting render is
+# mostly such edges. Measured on the corpus: correct renders sit at 0,
+# the models whose STL is visibly shredded run from 4% to 69%.
+SHREDDED_FRACTION = 0.02
+
+
+def read_stl_soup(path: Path) -> tuple[list, list]:
+    """An STL's triangles as an indexed mesh, binary or ASCII."""
+    raw = path.read_bytes()
+    corners: list[tuple[float, float, float]] = []
+    if raw[:5].lower() == b"solid" and not _looks_binary(raw[:BINARY_STL_HEADER], path):
+        for line in raw.decode("utf-8", "replace").splitlines():
+            line = line.strip()
+            if line.startswith("vertex "):
+                corners.append(tuple(float(v) for v in line.split()[1:4]))
+    else:
+        (count,) = struct.unpack("<I", raw[80:84])
+        for i in range(count):
+            values = struct.unpack_from("<12f", raw, BINARY_STL_HEADER + 50 * i)
+            corners.extend((values[3:6], values[6:9], values[9:12]))
+    index: dict[tuple, int] = {}
+    points: list[tuple[float, float, float]] = []
+    for corner in corners:
+        key = tuple(round(c, 6) for c in corner)
+        if key not in index:
+            index[key] = len(points)
+            points.append(corner)
+    ids = [index[tuple(round(c, 6) for c in corner)] for corner in corners]
+    return points, [tuple(ids[i : i + 3]) for i in range(0, len(ids) - 2, 3)]
+
+
+def worth_looking_at(path: Path) -> tuple[bool, str]:
+    """Is this mesh a fair picture of the model, and if not, why not?
+
+    The STL that sits beside a STEP is there to be compared by eye, so
+    what matters is whether it represents the model -- not whether it is
+    flawless. An open surface, a negative enclosed volume, or a render
+    that is mostly self-intersections is not worth showing; a handful of
+    non-manifold edges, which is what two solids touching along an edge
+    exports as, is fine.
+    """
+    try:
+        points, triangles = read_stl_soup(path)
+    except Exception as exc:  # noqa: BLE001 -- unreadable is its own answer
+        return False, f"could not be read ({type(exc).__name__})"
+    if not triangles:
+        return False, "has no triangles"
+    report = soup_report(points, triangles)
+    edges = max(report.triangles * 3 // 2, 1)
+    if report.boundary_edges:
+        return False, f"is an open surface ({report.boundary_edges:,} loose edges)"
+    if report.volume < 0:
+        return False, f"encloses a negative volume ({report.volume:.6g})"
+    if report.nonmanifold_edges > edges * SHREDDED_FRACTION:
+        return False, (
+            f"is {100 * report.nonmanifold_edges / edges:.0f}% self-intersecting "
+            f"({report.nonmanifold_edges:,} edges shared by three or more triangles)"
+        )
+    return True, ""
+
+
+def render_stl(
+    scad: Path,
+    out: Path,
+    timeout: float,
+    openscadpath: str | None,
+    backend: str | None = None,
+) -> None:
     """OpenSCAD's own STL export of *scad* to *out*.
 
     Renders to a temporary name beside the target and moves it into place,
@@ -188,9 +259,9 @@ def render_stl(scad: Path, out: Path, timeout: float, openscadpath: str | None) 
     binary = require_openscad()
     tmp = out.with_name(out.name + ".part")
     args = [str(binary), "-o", str(tmp), "--export-format", "binstl"]
-    backend = mesh_backend()
-    if backend:
-        args.append(f"--backend={backend}")
+    chosen = mesh_backend() if backend is None else backend
+    if chosen:
+        args.append(f"--backend={chosen}")
     args.append(str(scad))
     env = dict(os.environ)
     if openscadpath:
@@ -297,6 +368,7 @@ class ArtifactPass:
         no_stl: bool = False,
         no_source: bool = False,
         renderer: Renderer | None = None,
+        exact_fallback: bool = True,
     ) -> None:
         self.source = source.resolve()
         self.out_dir = out_dir.resolve()
@@ -309,6 +381,7 @@ class ArtifactPass:
         self.no_stl = no_stl
         self.no_source = no_source
         self.renderer = renderer or render_stl
+        self.exact_fallback = exact_fallback
         self.ledger = ArtifactLedger(self.out_dir / LEDGER_NAME)
         self.stop = threading.Event()
         self.progress = Progress(time.time(), 0)
@@ -360,7 +433,43 @@ class ArtifactPass:
             return CLASS_EMPTY, "no top-level geometry"
         except Exception as exc:  # noqa: BLE001 - any failure is a row, not a crash
             return CLASS_OPENSCAD, str(exc)[:2000]
-        return classify_stl(job.stl), None
+        status = classify_stl(job.stl)
+        if status != CLASS_OK or self.exact_fallback is False:
+            return status, None
+        return self._exact_if_shredded(job, openscadpath)
+
+    def _exact_if_shredded(
+        self, job: Job, openscadpath: str | None
+    ) -> tuple[str, str | None]:
+        """Re-render with the exact kernel when the fast one produced a mesh
+        not worth looking at.
+
+        The default renderer is Manifold, chosen because it is two orders of
+        magnitude faster. On a self-intersecting model the two kernels do
+        not agree: Manifold resolves the intersection by symbolic
+        perturbation, and on a bevel gear from the corpus that came back as
+        165,211 where CGAL's exact arithmetic says 703,784. The STL beside
+        the STEP is there to be compared by eye, so when the fast render is
+        shredded it is worth the seconds to render one that is not.
+        """
+        fine, why = worth_looking_at(job.stl)
+        if fine:
+            return CLASS_OK, None
+        exact = job.stl.with_name(job.stl.stem + ".exact.stl")
+        try:
+            self.renderer(
+                Path(job.path), exact, self.timeout, openscadpath, EXACT_BACKEND
+            )
+        except Exception:  # noqa: BLE001 -- the fast render stands
+            exact.with_name(exact.name + ".part").unlink(missing_ok=True)
+            exact.unlink(missing_ok=True)
+            return CLASS_OK, f"{EXACT_BACKEND} render failed; kept the fast one, which {why}"
+        better, exact_why = worth_looking_at(exact)
+        if not better:
+            exact.unlink(missing_ok=True)
+            return CLASS_OK, f"both renders unusable: fast one {why}, {EXACT_BACKEND} {exact_why}"
+        exact.replace(job.stl)
+        return CLASS_OK, f"rendered with {EXACT_BACKEND}: the fast render {why}"
 
     def _do(self, job: Job) -> None:
         if self.stop.is_set():
