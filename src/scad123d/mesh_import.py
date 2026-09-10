@@ -313,6 +313,13 @@ def _nested(bboxes: list[tuple[Point, Point]], i: int, j: int) -> bool:
 
 SHREDDED_FRACTION = 0.02
 
+# Defect edges a mesh may carry however small it is. The fraction above
+# says nothing useful about a four-triangle tetrahedron, whose six edges
+# make the allowance zero -- so one legitimately touching edge would
+# condemn it. Two is enough for a small assembly that touches itself, and
+# far below the counts a shredded render carries.
+MIN_TOLERATED_DEFECTS = 2
+
 
 @dataclass(frozen=True)
 class MeshReport:
@@ -339,20 +346,26 @@ class MeshReport:
         """Does this mesh bound a definite region?
 
         An open surface has no inside. A closed one that encloses negative
-        volume is inside out. A render that is *mostly* self-intersections
-        is not a surface anyone can measure. But a handful of non-manifold
-        edges is ordinary: two solids touching along an edge exports as an
-        edge with four triangles on it, and the volume is still exact.
+        volume is inside out. A render that is *mostly* self-intersections,
+        or whose triangles mostly disagree about which way is out, is not
+        a surface anyone can measure.
 
-        The threshold matters more than it looks. Measured over the
-        corpus, 303 of the 512 references a stricter rule rejected had
-        under 1% non-manifold edges -- real disagreements, wrongly set
-        aside -- while the renders that are visibly shredded run from 4%
-        to 69%.
+        But a few such edges are ordinary. Two solids touching along an
+        edge exports as an edge with four triangles on it, and those four
+        also walk it twice in each direction -- so the same geometry shows
+        up in both counts, and neither can be a hard disqualifier. What
+        separates them is proportion: measured over the corpus, 303 of the
+        512 references a stricter rule rejected carried under 1% of them,
+        while visibly shredded renders run from 4% to 69%. A regular
+        tetrahedron whose faces were wound inconsistently sits at 67%.
         """
         if self.boundary_edges or self.volume < 0:
             return False
-        return self.nonmanifold_edges <= self.edges * SHREDDED_FRACTION
+        # The two counts overlap on the same edges, so the larger of them
+        # is the measure, not the sum.
+        defects = max(self.nonmanifold_edges, self.flipped_edges)
+        allowed = max(MIN_TOLERATED_DEFECTS, self.edges * SHREDDED_FRACTION)
+        return defects <= allowed
 
     @property
     def edges(self) -> int:
@@ -367,6 +380,12 @@ class MeshReport:
             )
         if self.volume < 0:
             return f"it encloses a negative volume ({self.volume:.6g})"
+        if self.flipped_edges > self.nonmanifold_edges:
+            return (
+                f"{100 * self.flipped_edges / self.edges:.0f}% of its edges are "
+                f"walked twice the same way ({self.flipped_edges:,} of them), so "
+                "its triangles disagree about which way is out"
+            )
         return (
             f"it is {100 * self.nonmanifold_edges / self.edges:.0f}% "
             f"self-intersecting ({self.nonmanifold_edges:,} edges shared by "
