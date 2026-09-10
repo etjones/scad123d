@@ -333,6 +333,10 @@ class MeshReport:
     boundary_edges: int
     nonmanifold_edges: int
     flipped_edges: int
+    # OpenSCAD's own ERROR lines from the render that produced this mesh.
+    # It refuses some geometry, builds everything else, and exits 0, so a
+    # clean mesh of an incomplete model is indistinguishable without them.
+    refused: tuple[str, ...] = ()
 
     @property
     def usable(self) -> bool:
@@ -350,7 +354,7 @@ class MeshReport:
         aside -- while the renders that are visibly shredded run from 4%
         to 69%.
         """
-        if self.boundary_edges or self.volume < 0:
+        if self.refused or self.boundary_edges or self.volume < 0:
             return False
         return self.nonmanifold_edges <= self.edges * SHREDDED_FRACTION
 
@@ -360,6 +364,11 @@ class MeshReport:
 
     def fault(self) -> str:
         """Why this mesh cannot be measured, in the order worth reporting."""
+        if self.refused:
+            return (
+                f"OpenSCAD refused part of the model and rendered the rest: "
+                f"{self.refused[0]}"
+            )
         if self.boundary_edges:
             return (
                 f"it is an open surface ({self.boundary_edges:,} edges have "
