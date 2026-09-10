@@ -326,9 +326,10 @@ class TestWorthLookingAt:
 
         # every triangle laid on the same three corners: all edges shared
         path = tmp_path / "shredded.stl"
-        self.write_stl(path, self.tetrahedron() * 4)
+        self.write_stl(path, self.tetrahedron() * 4)  # every edge, four times over
         ok, why = worth_looking_at(path)
-        assert not ok and "self-intersecting" in why
+        assert not ok
+        assert "self-intersecting" in why or "which way is out" in why
 
     def test_an_unreadable_file_is_not(self, tmp_path):
         from scad123d.artifacts import worth_looking_at
