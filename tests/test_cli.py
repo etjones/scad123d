@@ -8,6 +8,7 @@ import argparse
 import io
 import json
 import subprocess
+import types
 
 import pytest
 
@@ -469,14 +470,17 @@ def test_verify_checks_volume_per_color_and_says_when_it_cannot(tmp_path):
     assert "scad_colors" not in second
 
 
-class TestUnusableReference:
-    """A volume comparison is only as good as the mesh it compares against.
+class TestReferenceUsability:
+    """A volume comparison is only as good as the mesh it compares against,
+    but "flawless" is the wrong bar.
 
-    OpenSCAD's own render of a badly written model can be an open surface,
-    a self-intersecting one, or one that encloses a negative volume. None
-    of those has a definite inside, so a disagreement with it is not
-    evidence about our conversion. Of the fifteen worst disagreements in
-    the CodeCAD corpus, twelve were this.
+    An open surface has no inside and a closed one enclosing negative
+    volume is inside out; neither can be measured. A handful of
+    non-manifold edges can: that is what two solids touching along an edge
+    exports as. Measured over the corpus, 303 of the 512 references a
+    stricter rule rejected had under 1% non-manifold edges -- real
+    disagreements, wrongly set aside -- while visibly shredded renders run
+    from 4% to 69%.
     """
 
     @staticmethod
@@ -485,34 +489,149 @@ class TestUnusableReference:
 
         base = {
             "volume": 100.0,
-            "triangles": 12,
+            "triangles": 1000,
             "boundary_edges": 0,
             "nonmanifold_edges": 0,
             "flipped_edges": 0,
         }
         return MeshReport(**{**base, **kwargs})
 
-    def test_a_closed_positive_mesh_is_sound(self):
-        assert self.report().sound
+    def test_a_closed_positive_mesh_is_usable(self):
+        assert self.report().usable
 
-    @pytest.mark.parametrize(
-        "fault",
-        [
-            {"boundary_edges": 4},
-            {"nonmanifold_edges": 7216},
-            {"flipped_edges": 2},
-            {"volume": -1568.3},
-        ],
-    )
-    def test_each_defect_makes_it_unusable(self, fault):
-        assert not self.report(**fault).sound
+    def test_an_open_surface_is_not(self):
+        assert not self.report(boundary_edges=4).usable
+
+    def test_an_inside_out_mesh_is_not(self):
+        assert not self.report(volume=-1568.3).usable
+
+    def test_a_shredded_mesh_is_not(self):
+        """1,000 triangles is about 1,500 edges; 21% of them was the corpus
+        bevel gear, whose reference volume was wrong by a factor of four."""
+        assert not self.report(nonmanifold_edges=315).usable
+
+    def test_a_few_touching_edges_are_still_usable(self):
+        assert self.report(nonmanifold_edges=9).usable
+
+    def test_zero_volume_is_not_a_defect(self):
+        """An empty render is a legitimate measurement of nothing."""
+        assert self.report(volume=0.0).usable
 
     def test_the_fault_names_what_is_wrong(self):
-        assert "three or more" in self.report(nonmanifold_edges=9).fault()
-        assert "open" in self.report(boundary_edges=4).fault()
-        assert "wind the same way" in self.report(flipped_edges=2).fault()
+        assert "open surface" in self.report(boundary_edges=4).fault()
         assert "negative volume" in self.report(volume=-5.0).fault()
+        assert "self-intersecting" in self.report(nonmanifold_edges=900).fault()
 
-    def test_zero_volume_is_not_itself_a_defect(self):
-        """An empty render is a legitimate measurement of nothing."""
-        assert self.report(volume=0.0).sound
+
+class TestSecondOpinion:
+    """When the fast renderer cannot be measured, ask the exact one.
+
+    OpenSCAD's default here is Manifold, two orders of magnitude faster
+    than CGAL and normally identical. On self-intersecting input it is
+    not: a corpus bevel gear came back from Manifold as 165,211, from a
+    mesh 21% self-intersecting, where CGAL says 703,784 and this
+    converter says 702,711.
+    """
+
+    @staticmethod
+    def run(monkeypatch, ours, fast, exact):
+        """_verify with both renderers stubbed; returns the result dict."""
+        from scad123d import cli
+
+        def render(csg_text, timeout, two_d=False, backend=None):
+            report = exact if backend == cli.EXACT_BACKEND else fast
+            if isinstance(report, Exception):
+                raise report
+            return report
+
+        monkeypatch.setattr(cli, "_openscad_render", render)
+        monkeypatch.setattr(cli, "measure", lambda part, two_d=False: ours)
+        monkeypatch.setattr(cli, "refine_tessellation", lambda text: text)
+
+        class Part:
+            def solids(self):
+                return [object()]
+
+        conversion = types.SimpleNamespace(part=Part(), timeout=30, meshed=None)
+        result: dict = {}
+        cli._verify(conversion, "cube(1);", result)
+        return result
+
+    @staticmethod
+    def report(volume, nonmanifold=0, boundary=0):
+        from scad123d.mesh_import import MeshReport
+
+        return MeshReport(volume, 1000, boundary, nonmanifold, 0)
+
+    def test_the_exact_render_clears_us_when_it_agrees(self, monkeypatch):
+        result = self.run(
+            monkeypatch,
+            ours=702711.0,
+            fast=self.report(165211.0, nonmanifold=315),
+            exact=self.report(703784.0),
+        )
+        assert result.get("status") is None  # not a mismatch
+        assert "matches CGAL's exact render" in result["message"]
+        assert result["exact_volume"] == 703784.0
+
+    def test_the_exact_render_convicts_us_when_it_agrees_with_the_fast_one(
+        self, monkeypatch
+    ):
+        result = self.run(
+            monkeypatch,
+            ours=10734.0,
+            fast=self.report(20148.0, nonmanifold=315),
+            exact=self.report(20147.8),
+        )
+        assert result["status"] == "mismatch"
+        assert "off by >20%" in result["message"]
+
+    def test_neither_measurable_is_unchecked(self, monkeypatch):
+        result = self.run(
+            monkeypatch,
+            ours=100.0,
+            fast=self.report(1.0, nonmanifold=315),
+            exact=self.report(2.0, boundary=40),
+        )
+        assert result["status"] == "unchecked"
+        assert "neither of OpenSCAD's renderers" in result["message"]
+
+    def test_an_exact_render_that_fails_is_unchecked(self, monkeypatch):
+        from scad123d.errors import OpenSCADRunError
+
+        result = self.run(
+            monkeypatch,
+            ours=100.0,
+            fast=self.report(1.0, nonmanifold=315),
+            exact=OpenSCADRunError("CGAL fell over"),
+        )
+        assert result["status"] == "unchecked"
+        assert "CGAL fell over" in result["message"]
+
+    def test_a_usable_fast_render_never_asks_twice(self, monkeypatch):
+        """The exact renderer is 30x slower; it must not run on the path
+        every conversion takes."""
+        from scad123d import cli
+
+        asked: list = []
+
+        def render(csg_text, timeout, two_d=False, backend=None):
+            asked.append(backend)
+            return self.report(100.0, nonmanifold=9)
+
+        monkeypatch.setattr(cli, "_openscad_render", render)
+        monkeypatch.setattr(cli, "measure", lambda part, two_d=False: 50.0)
+        monkeypatch.setattr(cli, "refine_tessellation", lambda text: text)
+
+        class Part:
+            def solids(self):
+                return [object()]
+
+        result: dict = {}
+        cli._verify(
+            types.SimpleNamespace(part=Part(), timeout=30, meshed=None),
+            "cube(1);",
+            result,
+        )
+        assert result["status"] == "mismatch"
+        assert cli.EXACT_BACKEND not in asked

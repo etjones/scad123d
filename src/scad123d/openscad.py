@@ -205,6 +205,7 @@ def export_mesh(
     source: str,
     suffix: str = ".stl",
     timeout: float = 600,
+    backend: str | None = None,
 ) -> Path:
     """Render CSG or OpenSCAD source text to a mesh file, returning its path.
 
@@ -217,9 +218,9 @@ def export_mesh(
     src.write_text(source)
     out = tmpdir / f"subtree{suffix}"
     args = [str(binary), "-o", str(out)]
-    backend = mesh_backend()
-    if backend:
-        args.append(f"--backend={backend}")
+    chosen = mesh_backend() if backend is None else backend
+    if chosen:
+        args.append(f"--backend={chosen}")
     _run(args + [str(src)], timeout)
     if not out.exists():
         raise OpenSCADRunError("OpenSCAD produced no mesh output")

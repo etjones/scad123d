@@ -311,6 +311,9 @@ def _nested(bboxes: list[tuple[Point, Point]], i: int, j: int) -> bool:
     return all(jmin[d] <= imin[d] and imax[d] <= jmax[d] for d in range(3))
 
 
+SHREDDED_FRACTION = 0.02
+
+
 @dataclass(frozen=True)
 class MeshReport:
     """What OpenSCAD's own render measures, and whether it can be trusted
@@ -332,24 +335,43 @@ class MeshReport:
     flipped_edges: int
 
     @property
-    def sound(self) -> bool:
-        return not (
-            self.boundary_edges
-            or self.nonmanifold_edges
-            or self.flipped_edges
-            or self.volume < 0
-        )
+    def usable(self) -> bool:
+        """Does this mesh bound a definite region?
+
+        An open surface has no inside. A closed one that encloses negative
+        volume is inside out. A render that is *mostly* self-intersections
+        is not a surface anyone can measure. But a handful of non-manifold
+        edges is ordinary: two solids touching along an edge exports as an
+        edge with four triangles on it, and the volume is still exact.
+
+        The threshold matters more than it looks. Measured over the
+        corpus, 303 of the 512 references a stricter rule rejected had
+        under 1% non-manifold edges -- real disagreements, wrongly set
+        aside -- while the renders that are visibly shredded run from 4%
+        to 69%.
+        """
+        if self.boundary_edges or self.volume < 0:
+            return False
+        return self.nonmanifold_edges <= self.edges * SHREDDED_FRACTION
+
+    @property
+    def edges(self) -> int:
+        return max(self.triangles * 3 // 2, 1)
 
     def fault(self) -> str:
         """Why this mesh cannot be measured, in the order worth reporting."""
-        for count, what in (
-            (self.nonmanifold_edges, "edges shared by three or more triangles"),
-            (self.boundary_edges, "edges with only one triangle (the surface is open)"),
-            (self.flipped_edges, "edges whose two triangles wind the same way"),
-        ):
-            if count:
-                return f"{count:,} {what}"
-        return f"it encloses a negative volume ({self.volume:.6g})"
+        if self.boundary_edges:
+            return (
+                f"it is an open surface ({self.boundary_edges:,} edges have "
+                "only one triangle)"
+            )
+        if self.volume < 0:
+            return f"it encloses a negative volume ({self.volume:.6g})"
+        return (
+            f"it is {100 * self.nonmanifold_edges / self.edges:.0f}% "
+            f"self-intersecting ({self.nonmanifold_edges:,} edges shared by "
+            "three or more triangles)"
+        )
 
 
 def _edge_faults(triangles: list[Triangle]) -> tuple[int, int, int]:

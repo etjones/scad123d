@@ -73,6 +73,7 @@ CLASS_EXPORT = "export-error"
 CLASS_TIMEOUT = "timeout"
 CLASS_MISSING = "missing"
 CLASS_MISMATCH = "mismatch"  # built, but disagrees with OpenSCAD's own render
+EXACT_BACKEND = "CGAL"
 CLASS_UNCHECKED = "unchecked"  # built, but OpenSCAD's own render cannot adjudicate
 CLASS_ERROR = "error"
 
@@ -396,7 +397,7 @@ EMPTY_REFERENCE = MeshReport(0.0, 0, 0, 0, 0)
 
 
 def _openscad_render(
-    csg_text: str, timeout: float, two_d: bool = False
+    csg_text: str, timeout: float, two_d: bool = False, backend: str | None = None
 ) -> MeshReport:
     """OpenSCAD's own full render of the model, measured, with the evidence
     for whether that measurement means anything (0 if empty); for a 2D
@@ -404,7 +405,9 @@ def _openscad_render(
     if two_d:
         csg_text = unit_extrusion(csg_text)
     try:
-        path = export_mesh(csg_text, suffix=".3mf", timeout=timeout)
+        path = export_mesh(
+            csg_text, suffix=".3mf", timeout=timeout, backend=backend
+        )
     except OpenSCADRunError as exc:
         if "Current top level object is empty" in str(exc):
             return EMPTY_REFERENCE
@@ -482,6 +485,82 @@ def _verify_colors(
         result["message"] = message
 
 
+def _second_opinion(
+    conversion: _Conversion,
+    csg_text: str,
+    result: dict[str, Any],
+    ours: float,
+    reference: MeshReport,
+    two_d: bool,
+) -> None:
+    """Ask the exact kernel when the fast one cannot be measured.
+
+    OpenSCAD's default renderer here is Manifold, two orders of magnitude
+    faster than CGAL and normally identical. On self-intersecting input it
+    is not: Manifold resolves the intersection by symbolic perturbation,
+    which is well defined but is not CGAL's exact union. A corpus bevel
+    gear came back from Manifold as 165,211 -- from a mesh 21%
+    self-intersecting -- where CGAL says 703,784 and this converter says
+    702,711.
+
+    So an unmeasurable fast render is not a verdict, it is a reason to ask
+    again. If the exact render agrees with us, the fast one was wrong and
+    there was never a defect here. If it agrees with the fast one, the
+    defect is ours and this is a real mismatch. If it cannot be measured
+    either, nothing here can decide, and saying so is the honest answer.
+    """
+    try:
+        exact = _openscad_render(
+            refine_tessellation(csg_text),
+            conversion.timeout,
+            two_d,
+            backend=EXACT_BACKEND,
+        )
+    except (OpenSCADRunError, subprocess.TimeoutExpired) as exc:
+        exact, failure = None, str(exc).splitlines()[0][:120]
+    else:
+        failure = ""
+    if exact is None or not exact.usable:
+        why = failure or (exact.fault() if exact else "it produced nothing")
+        result["status"] = CLASS_UNCHECKED
+        result["message"] = (
+            f"volume {ours:.6g} vs OpenSCAD {reference.volume:.6g}, but neither "
+            f"of OpenSCAD's renderers can be measured here: the fast one, "
+            f"{reference.fault()}; {EXACT_BACKEND}, {why}. Nothing decides "
+            "this one but your eyes"
+        )
+        return
+    result["exact_volume"] = round(exact.volume, 6)
+    error = _relative_error(ours, exact.volume)
+    if error <= VERIFY_TOLERANCE:
+        result["message"] = (
+            f"volume {ours:.6g} matches {EXACT_BACKEND}'s exact render "
+            f"{exact.volume:.6g} ({100 * error:.1f}%); OpenSCAD's default "
+            f"renderer said {reference.volume:.6g} from a mesh that "
+            f"{reference.fault()}"
+        )
+        return
+    result["status"] = CLASS_MISMATCH
+    result["message"] = (
+        f"volume off by {_bucket(error)}: {ours:.6g} vs {EXACT_BACKEND}'s exact "
+        f"render {exact.volume:.6g} ({100 * error:.1f}%); OpenSCAD's default "
+        f"renderer was not measurable here, {reference.fault()}"
+    )
+
+
+def _bucket(error: float) -> str:
+    return next(
+        label
+        for limit, label in (
+            (0.02, "1-2%"),
+            (0.05, "2-5%"),
+            (0.2, "5-20%"),
+            (1e9, ">20%"),
+        )
+        if error <= limit
+    )
+
+
 def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> None:
     """Cross-check the built part against OpenSCAD's render; sets status."""
     assert conversion.part is not None
@@ -514,37 +593,15 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
                 f"{fine:.6g}: mesh-fallback tessellation, not a bug"
             )
             return
-    if not reference.sound:
-        # OpenSCAD's own render is not a closed, positive-volume solid, so
-        # comparing volumes against it decides nothing -- and it is usually
-        # the model that is at fault, not either tool. Of the fifteen worst
-        # disagreements in the corpus, twelve were this: winding the author
-        # wrote inconsistently, self-intersecting hulls, meshes enclosing a
-        # negative volume. Saying so is honest where calling it our
-        # mismatch was not.
-        result["status"] = CLASS_UNCHECKED
-        result["message"] = (
-            f"volume {ours:.6g} vs OpenSCAD {fine:.6g} "
-            f"({100 * error:.1f}%), but OpenSCAD's own render is not a closed "
-            f"solid -- {reference.fault()} -- so the comparison decides "
-            "nothing; check this one by eye"
-        )
+    if not reference.usable:
+        _second_opinion(conversion, csg_text, result, ours, reference, two_d)
         return
     # A magnitude bucket leads the message so --report groups mismatches by
     # severity rather than by their (unique) volumes. The 1-2% bucket is
     # where a known, deliberate divergence lands: a minkowski() whose ball
     # is a faceted polyhedron (BOSL2's cuboid(rounding=)) is built as an
     # exact sphere, slightly larger than OpenSCAD's inscribed facets.
-    bucket = next(
-        label
-        for limit, label in (
-            (0.02, "1-2%"),
-            (0.05, "2-5%"),
-            (0.2, "5-20%"),
-            (1e9, ">20%"),
-        )
-        if error <= limit
-    )
+    bucket = _bucket(error)
     result["status"] = CLASS_MISMATCH
     result["message"] = (
         f"volume off by {bucket}: {ours:.6g} vs OpenSCAD {fine:.6g} "
