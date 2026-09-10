@@ -2170,6 +2170,37 @@ The whole model now converts at 6,046.31 against 6,045.95.
 
 ---
 
+## The STL beside the STEP should be worth looking at
+
+The artifacts pass renders OpenSCAD's STL next to each STEP so the two can
+be compared by eye. It renders with Manifold, chosen because it is two
+orders of magnitude faster than CGAL, on the documented assumption that
+the two kernels give "the same geometry". For self-intersecting input
+that is false.
+
+A bevel gear from the corpus, rendered three ways:
+
+| | volume | mesh |
+|---|---:|---|
+| Manifold (the default) | 158,732 | 21% of edges self-intersecting |
+| CGAL (exact arithmetic) | 703,784 | closed, consistently oriented |
+| scad123d | 702,711 | |
+
+Manifold resolves a self-intersection by symbolic perturbation. That is
+well defined, but it is not the same set as CGAL's exact union, and here
+it is wrong by a factor of four.
+
+`worth_looking_at()` now asks whether a render represents the model: an
+open surface, a negative enclosed volume, or a mesh that is mostly
+self-intersections does not. A handful of non-manifold edges does -- that
+is what two solids touching along an edge exports as, and condemning it
+would reject ordinary geometry. When the fast render fails that test the
+pass re-renders with CGAL and keeps whichever is better, saying which it
+used. 18 seconds against 0.3 for the gear, paid only where the fast
+render was unusable.
+
+---
+
 ## The verify rule, corrected: ask twice before blaming anyone
 
 Two defects in yesterday's `unchecked` rule, both found by looking at the
@@ -2203,3 +2234,8 @@ wrong, and we were right all along.
 
 Cost is paid only where it is earned: on 14 models that already convert,
 none reached the second opinion and none took over 5 seconds.
+
+The two places that ask this question -- the verify step, of a reference
+render, and the artifacts pass, of the STL it puts beside a STEP -- now
+share one definition. `worth_looking_at()` delegates to
+`MeshReport.usable`, so the threshold cannot drift apart between them.
