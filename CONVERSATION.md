@@ -2167,3 +2167,34 @@ STEP.
 Reproduced in five lines, and fixed for `linear_extrude` and
 `rotate_extrude` alike: 113,097 -> 1,178.56, matching OpenSCAD exactly.
 The whole model now converts at 6,046.31 against 6,045.95.
+
+---
+
+## The STL beside the STEP should be worth looking at
+
+The artifacts pass renders OpenSCAD's STL next to each STEP so the two can
+be compared by eye. It renders with Manifold, chosen because it is two
+orders of magnitude faster than CGAL, on the documented assumption that
+the two kernels give "the same geometry". For self-intersecting input
+that is false.
+
+A bevel gear from the corpus, rendered three ways:
+
+| | volume | mesh |
+|---|---:|---|
+| Manifold (the default) | 158,732 | 21% of edges self-intersecting |
+| CGAL (exact arithmetic) | 703,784 | closed, consistently oriented |
+| scad123d | 702,711 | |
+
+Manifold resolves a self-intersection by symbolic perturbation. That is
+well defined, but it is not the same set as CGAL's exact union, and here
+it is wrong by a factor of four.
+
+`worth_looking_at()` now asks whether a render represents the model: an
+open surface, a negative enclosed volume, or a mesh that is mostly
+self-intersections does not. A handful of non-manifold edges does -- that
+is what two solids touching along an edge exports as, and condemning it
+would reject ordinary geometry. When the fast render fails that test the
+pass re-renders with CGAL and keeps whichever is better, saying which it
+used. 18 seconds against 0.3 for the gear, paid only where the fast
+render was unusable.

@@ -262,3 +262,152 @@ def test_real_openscad_renders_a_binary_stl(tmp_path):
     scad.write_text("module m() {}", encoding="utf-8")
     with pytest.raises(EmptyModel):
         render_stl(scad, out, timeout=120, openscadpath=None)
+
+
+class TestWorthLookingAt:
+    """The STL beside a STEP is there to be compared by eye, so what
+    matters is whether it represents the model, not whether it is
+    flawless."""
+
+    @staticmethod
+    def write_stl(path, triangles):
+        import struct
+
+        with open(path, "wb") as fh:
+            fh.write(b"\0" * 80 + struct.pack("<I", len(triangles)))
+            for tri in triangles:
+                flat = [c for corner in tri for c in corner]
+                fh.write(struct.pack("<12fH", 0, 0, 0, *flat, 0))
+
+    @staticmethod
+    def tetrahedron(scale=1.0):
+        a, b, c, d = (0, 0, 0), (scale, 0, 0), (0, scale, 0), (0, 0, scale)
+        return [(a, c, b), (a, b, d), (a, d, c), (b, c, d)]
+
+    def test_a_closed_positive_mesh_is_worth_looking_at(self, tmp_path):
+        from scad123d.artifacts import worth_looking_at
+
+        path = tmp_path / "t.stl"
+        self.write_stl(path, self.tetrahedron())
+        assert worth_looking_at(path) == (True, "")
+
+    def test_an_open_surface_is_not(self, tmp_path):
+        from scad123d.artifacts import worth_looking_at
+
+        path = tmp_path / "open.stl"
+        self.write_stl(path, self.tetrahedron()[:3])  # a face missing
+        ok, why = worth_looking_at(path)
+        assert not ok and "open surface" in why
+
+    def test_an_inside_out_mesh_is_not(self, tmp_path):
+        from scad123d.artifacts import worth_looking_at
+
+        path = tmp_path / "flipped.stl"
+        self.write_stl(path, [tuple(reversed(t)) for t in self.tetrahedron()])
+        ok, why = worth_looking_at(path)
+        assert not ok and "negative volume" in why
+
+    def test_a_few_touching_edges_are_fine(self, tmp_path):
+        """Two solids meeting along an edge is ordinary geometry, and it
+        exports as edges shared by four triangles. That must not condemn
+        an otherwise good render."""
+        from scad123d.artifacts import worth_looking_at
+
+        big = self.tetrahedron(scale=40.0)
+        touching = [
+            tuple((x, y, -z) for x, y, z in reversed(tri)) for tri in self.tetrahedron()
+        ]
+        path = tmp_path / "touch.stl"
+        self.write_stl(path, big + touching)
+        assert worth_looking_at(path)[0], worth_looking_at(path)[1]
+
+    def test_a_shredded_mesh_is_not(self, tmp_path):
+        from scad123d.artifacts import worth_looking_at
+
+        # every triangle laid on the same three corners: all edges shared
+        path = tmp_path / "shredded.stl"
+        self.write_stl(path, self.tetrahedron() * 4)
+        ok, why = worth_looking_at(path)
+        assert not ok and "self-intersecting" in why
+
+    def test_an_unreadable_file_is_not(self, tmp_path):
+        from scad123d.artifacts import worth_looking_at
+
+        path = tmp_path / "junk.stl"
+        path.write_bytes(b"not an stl")
+        ok, why = worth_looking_at(path)
+        assert not ok and "could not be read" in why
+
+
+class TestExactFallback:
+    """When the fast kernel shreds a model, re-render with the exact one.
+
+    Manifold is the default because it is two orders of magnitude faster,
+    but on self-intersecting input the two kernels disagree: a corpus
+    bevel gear came back as 165,211 from Manifold where CGAL's exact
+    arithmetic says 703,784.
+    """
+
+    @staticmethod
+    def fake_pass(tmp_path, renders):
+        """A pass whose renderer writes whatever *renders* says for the
+        backend it is given."""
+        from scad123d.artifacts import EXACT_BACKEND
+
+        calls = []
+
+        def renderer(scad, out, timeout, openscadpath, backend=None):
+            calls.append(backend)
+            body = renders[backend]
+            if body is None:
+                raise RuntimeError("render failed")
+            TestWorthLookingAt.write_stl(out, body)
+
+        return renderer, calls, EXACT_BACKEND
+
+    def run(self, tmp_path, renders):
+        from scad123d.artifacts import ArtifactPass, Job
+
+        renderer, calls, _exact = self.fake_pass(tmp_path, renders)
+        job = Job(str(tmp_path / "m.scad"), tmp_path / "m.stl", None)
+        (tmp_path / "m.scad").write_text("cube(1);", encoding="utf-8")
+        run = ArtifactPass.__new__(ArtifactPass)
+        run.renderer = renderer
+        run.timeout = 30
+        run.exact_fallback = True
+        run.include_overlay = None
+        run.source = tmp_path
+        status, message = run._render(job)
+        return status, message, calls, job.stl
+
+    def test_a_good_fast_render_is_kept_and_the_exact_one_never_runs(self, tmp_path):
+        good = TestWorthLookingAt.tetrahedron()
+        _status, message, calls, _ = self.run(tmp_path, {None: good})
+        assert calls == [None] and message is None
+
+    def test_a_shredded_render_is_replaced_by_the_exact_one(self, tmp_path):
+        shredded = TestWorthLookingAt.tetrahedron() * 4
+        good = TestWorthLookingAt.tetrahedron(scale=2.0)
+        _status, message, calls, stl = self.run(
+            tmp_path, {None: shredded, "CGAL": good}
+        )
+        assert calls == [None, "CGAL"]
+        assert "rendered with CGAL" in message
+        from scad123d.artifacts import worth_looking_at
+
+        assert worth_looking_at(stl)[0]
+
+    def test_a_failed_exact_render_leaves_the_fast_one(self, tmp_path):
+        shredded = TestWorthLookingAt.tetrahedron() * 4
+        _status, message, calls, stl = self.run(
+            tmp_path, {None: shredded, "CGAL": None}
+        )
+        assert calls == [None, "CGAL"]
+        assert "render failed" in message and stl.exists()
+
+    def test_two_bad_renders_say_so(self, tmp_path):
+        shredded = TestWorthLookingAt.tetrahedron() * 4
+        _status, message, _calls, _ = self.run(
+            tmp_path, {None: shredded, "CGAL": shredded}
+        )
+        assert "both renders unusable" in message

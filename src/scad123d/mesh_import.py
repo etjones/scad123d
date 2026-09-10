@@ -367,6 +367,18 @@ def _edge_faults(triangles: list[Triangle]) -> tuple[int, int, int]:
     )
 
 
+def soup_report(points: list, triangles: list) -> MeshReport:
+    """A MeshReport for a triangle soup that is already indexed."""
+    boundary, nonmanifold, flipped = _edge_faults(triangles)
+    return MeshReport(
+        signed_volume(points, triangles),
+        len(triangles),
+        boundary,
+        nonmanifold,
+        flipped,
+    )
+
+
 def mesh_volume(path: str | Path) -> float:
     """Volume enclosed by every mesh in a 3MF file (see ``mesh_report``)."""
     return mesh_report(path).volume
