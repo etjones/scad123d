@@ -57,6 +57,36 @@ def _determinant(m) -> float:
 SINGULAR_TOL = 1e-12
 
 
+def _in_plane(m: Sequence[Sequence[float]]) -> list[list[float]]:
+    """*m* reduced to the part OpenSCAD would apply to a flat shape.
+
+    OpenSCAD's 2D geometry is its own kind of object, a polygon in a plane
+    with no z coordinate at all, so a 4x4 matrix acting on one is reduced
+    to its x/y block: the z row and column address a coordinate that does
+    not exist. Measured against OpenSCAD, all of these leave a circle
+    exactly where it was -- ``translate([0, 0, 5])``, ``scale([1, 1,
+    1.5])`` -- and tipping one out of plane deletes it outright rather
+    than standing it on edge.
+
+    OCCT means something else by 2D: a face embedded in 3-space, which
+    moves and tilts like anything else. That is the better model and
+    solid123d keeps it. But this package's promise is to be OpenSCAD, and
+    the two readings are not cosmetic. A circle lifted to z = 5 no longer
+    shares a plane with one at z = 0, so a 2D union leaves two disjoint
+    faces where OpenSCAD merges them, and a 2D difference removes nothing
+    at all -- a cookie cutter's letters came out as solid blocks, 126,015
+    against OpenSCAD's 19,590, because its inner text was translated
+    0.1 mm in z.
+    """
+    rows = [[float(v) for v in row] for row in m]
+    return [
+        [rows[0][0], rows[0][1], 0.0, rows[0][3]],
+        [rows[1][0], rows[1][1], 0.0, rows[1][3]],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
 def flattens(m: Sequence[Sequence[float]], two_d: bool = False) -> bool:
     """Does this 4x4 collapse whatever it transforms?
 
@@ -187,6 +217,8 @@ def apply_matrix(shape: Shape, m: Sequence[Sequence[float]]) -> Shape:
             row.append(0.0)
     rows = [row[:4] for row in rows[:4]]
     rows[3] = [0.0, 0.0, 0.0, 1.0]
+    if not shape.solids():
+        rows = _in_plane(rows)
 
     decomposed = _decompose(rows)
     if decomposed is not None:

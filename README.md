@@ -380,6 +380,37 @@ result per line, if you'd rather drive it from your own tooling.
 
 ## A few other things to know
 
+- **2D shapes never leave the XY plane, however you transform them.** This is
+  OpenSCAD's rule, not ours, and it surprises people: a 2D shape there is a
+  polygon with no z coordinate at all, so the z part of any transform acts on
+  a coordinate that does not exist. You might reasonably expect this to make
+  two circles at different heights:
+
+  ```openscad
+  union() {
+      circle(10);
+      translate([0, 0, 5]) circle(20);   // looks like it lifts the circle
+  }
+  ```
+
+  It does not. Both circles stay at z = 0 and merge into one region of
+  the area of the larger alone. The same goes for `scale([1, 1,
+  1.5])`, which changes nothing, and for tipping a shape out of plane with
+  `rotate([90, 0, 0])`, which OpenSCAD refuses outright: it warns *"Scaling a
+  2D object with 0 - removing object"* and the shape disappears.
+
+  The sharp edge is what this does to a boolean. A subtrahend written as
+  `translate([0, 0, 0.1]) text(...)` is still in the same plane as its
+  minuend, so it cuts — and a cookie cutter built that way gets its letter
+  outlines. Read it the other way and the two operands are in different
+  planes, the subtraction quietly removes nothing, and every letter comes out
+  a solid block.
+
+  scad123d matches OpenSCAD here, because being OpenSCAD is the point.
+  [solid123d](https://github.com/etjones/solid123d) deliberately does not: it
+  is a bridge to build123d rather than an OpenSCAD reimplementation, and
+  there a 2D shape is a face in 3-space that moves and tilts like any other
+  object. If you want a circle at z = 5, that is where to get one.
 - **Cylinders and circles you deliberately made low-poly** (a hexagon nut, a
   6-sided bolt head) are preserved as the actual polygon you asked for — not
   smoothed out into a circle. This is a heuristic based on how many sides you

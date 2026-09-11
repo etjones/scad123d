@@ -2302,3 +2302,45 @@ Rare, and measured rather than assumed: of 40 mismatches sampled at
 random, none had OpenSCAD report an error while rendering. Worth catching
 because it costs nothing -- the stderr was already being read and thrown
 away -- and because no amount of mesh inspection would ever find it.
+
+---
+
+## 2D shapes stay in the XY plane, as OpenSCAD has them
+
+Settled a question this project had been straddling. OpenSCAD's 2D
+geometry is a polygon with no z coordinate at all, so the z part of any
+transform acts on a coordinate that does not exist. OCCT means something
+else: a face embedded in 3-space, which moves and tilts like anything
+else.
+
+Measured on both, each shape extruded 1 mm so the volume is the area:
+
+| | OpenSCAD | OCCT |
+|---|---|---|
+| `circle(10)` | 313.66 | 314.16 |
+| translated z 5 | 313.66, still at z=0 | 314.16, now at z=5 |
+| union of two, one at z=5 | 1254.62, merged | 1570.80, two loose faces |
+| difference, subtrahend at z=5 | 940.97, it cut | 1256.64, nothing removed |
+| `rotate([90,0,0])` | removed, with a warning | 200.00, standing on edge |
+
+Rows three and four are the whole story: in OpenSCAD everything is in one
+plane, so booleans work; in OCCT a translated operand leaves the plane and
+the boolean silently finds nothing.
+
+**scad123d now matches OpenSCAD**; solid123d deliberately does not, since
+it is a bridge to build123d rather than an OpenSCAD reimplementation, and
+a face in 3-space is the better model there. The split needs no flag: the
+multmatrix handler lives here.
+
+`text_cookie_v2.1.scad` built its letter outlines as a difference whose
+subtrahend was translated 0.1 mm in z. It went from **126,015 to 28,239**
+against OpenSCAD's 26,303 -- from 379% wrong to 7.4%, the remainder being
+its `projection()` mesh fallbacks.
+
+**The cost, stated plainly.** `lense.scad` stacks 22 concentric circles at
+`$fn = 500` and relies on z translation to separate them. Flattened, as
+OpenSCAD flattens them, the union is genuinely enormous: over 18 minutes
+of CPU without finishing. Before, it converted in seconds to 27,480 --
+fast, and 19x away from OpenSCAD's 1,438.69. Under the batch runner it
+becomes a `timeout` rather than a hang. Faithful and slow beat fast and
+wrong here, but it is a real trade and not a free one.
