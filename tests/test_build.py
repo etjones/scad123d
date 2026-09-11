@@ -1456,3 +1456,80 @@ class TestTwoDimensionalOperations:
                 "linear_extrude(height = 4) { cylinder($fn = 0, h = 5, r = 2); }"
             )
         assert shape is None
+
+
+class TestTwoDimensionalStaysInPlane:
+    """OpenSCAD's 2D geometry is a polygon with no z coordinate, so the z
+    part of a transform acts on a coordinate that does not exist.
+
+    Every figure here is OpenSCAD's own render, each shape extruded 1 mm
+    so that the volume reported is the area. $fn = 8 on purpose: below the
+    faceting threshold both sides build the same octagon, so the numbers
+    are exact and the test is about the z rule alone.
+    """
+
+    @staticmethod
+    def build_csg(text: str):
+        from scad123d.build import build
+        from scad123d.parser import parse_csg
+
+        return build(parse_csg(text))
+
+    def test_a_translated_circle_does_not_move(self):
+        """OpenSCAD renders both of these to 282.8427."""
+        plain = self.build_csg(
+            "linear_extrude(height = 1) { circle($fn = 8, r = 10); }"
+        )
+        lifted = self.build_csg(
+            "linear_extrude(height = 1) {\n"
+            "  multmatrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 5],"
+            " [0, 0, 0, 1]]) { circle($fn = 8, r = 10); }\n"
+            "}\n"
+        )
+        assert lifted.volume == pytest.approx(plain.volume, rel=1e-9)
+        assert lifted.volume == pytest.approx(282.8427, rel=1e-4)
+
+    def test_a_union_across_heights_still_merges(self):
+        """The surprising one: the larger circle
+        alone, because both are in the same plane. OpenSCAD: 1131.3708."""
+        shape = self.build_csg(
+            "linear_extrude(height = 1) {\n"
+            "  group() {\n"
+            "    circle($fn = 8, r = 10);\n"
+            "    multmatrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 5],"
+            " [0, 0, 0, 1]]) { circle($fn = 8, r = 20); }\n"
+            "  }\n"
+            "}\n"
+        )
+        assert shape.volume == pytest.approx(1131.3708, rel=1e-4)
+
+    def test_a_difference_across_heights_still_cuts(self):
+        """The one that matters: a cookie cutter's letter outlines are
+        written this way. OpenSCAD gives 848.5281."""
+        shape = self.build_csg(
+            "linear_extrude(height = 1) {\n"
+            "  difference() {\n"
+            "    circle($fn = 8, r = 20);\n"
+            "    multmatrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 5],"
+            " [0, 0, 0, 1]]) { circle($fn = 8, r = 10); }\n"
+            "  }\n"
+            "}\n"
+        )
+        assert shape.volume == pytest.approx(848.5281, rel=1e-4)
+
+    def test_a_z_scale_changes_nothing(self):
+        shape = self.build_csg(
+            "linear_extrude(height = 1) {\n"
+            "  multmatrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1.5, 0],"
+            " [0, 0, 0, 1]]) { circle($fn = 8, r = 10); }\n"
+            "}\n"
+        )
+        assert shape.volume == pytest.approx(282.8427, rel=1e-4)
+
+    def test_a_solid_still_feels_every_part_of_the_matrix(self):
+        """The rule is about 2D geometry alone; a solid moves as asked."""
+        shape = self.build_csg(
+            "multmatrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 5],"
+            " [0, 0, 0, 1]]) { cube(size = [2, 2, 2], center = false); }"
+        )
+        assert shape.bounding_box().min.Z == pytest.approx(5)
