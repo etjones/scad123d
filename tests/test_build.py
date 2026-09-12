@@ -1072,6 +1072,20 @@ class TestReflectionOrientation:
         assert mirrored.volume == pytest.approx(1000)
         assert mirrored.is_valid
 
+    def test_a_reflection_keeps_its_color(self):
+        """Reorienting builds a new solid from reversed faces, which starts
+        with no color. Losing it is silent -- right volume, right STEP --
+        and showed up only as a per-color verification failure."""
+        from build123d import Color
+
+        cube = scad123d.import_csg("cube(size = [10, 10, 10], center = false);")
+        cube.color = Color(0, 0, 1)
+        cube.label = "blue"
+        mirrored = apply_matrix(cube, _MIRROR_X_AT_12)
+        assert mirrored.color is not None
+        assert tuple(mirrored.color)[:3] == pytest.approx((0.0, 0.0, 1.0))
+        assert mirrored.label == "blue"
+
     def test_mirrored_solid_survives_an_nary_fuse(self):
         from build123d import Box, Pos
 
