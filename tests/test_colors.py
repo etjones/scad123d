@@ -15,7 +15,9 @@ from scad123d.colors import (
     NS,
     UNCOLORED,
     compare,
+    openscad_channel,
     openscad_color_volumes,
+    openscad_key,
     parse_3mf_color_volumes,
 )
 
@@ -96,7 +98,7 @@ def test_disjoint_colors_measure_their_own_volumes():
         ],
         palette=["#f9d72c", "#ff0000", "#0000ff"],
     )
-    assert parse_3mf_color_volumes(data) == {"red": 8.0, "blue": 27.0}
+    assert parse_3mf_color_volumes(data) == {"#ff0000": 8.0, "#0000ff": 27.0}
 
 
 def test_openscads_default_color_reads_as_uncolored():
@@ -121,7 +123,7 @@ def test_two_colors_on_one_mesh_are_measured_separately():
         ],
         palette=["#f9d72c", "#ff0000", "#008000"],
     )
-    assert parse_3mf_color_volumes(data) == {"red": 8.0, "green": 8.0}
+    assert parse_3mf_color_volumes(data) == {"#ff0000": 8.0, "#008000": 8.0}
 
 
 def test_an_open_color_group_is_reported_as_undefined():
@@ -165,8 +167,8 @@ def test_real_render_measures_disjoint_colors():
     )
     volumes = openscad_color_volumes(csg, timeout=120)
     assert volumes is not None
-    assert volumes["red"] == pytest.approx(1000, rel=1e-6)
-    assert volumes["blue"] == pytest.approx(125, rel=1e-6)
+    assert volumes["#ff0000"] == pytest.approx(1000, rel=1e-6)
+    assert volumes["#0000ff"] == pytest.approx(125, rel=1e-6)
 
 
 @pytest.mark.needs_openscad
@@ -179,3 +181,44 @@ def test_real_render_of_overlapping_colors_is_undefined():
         "\t\t\tcube(size = [10, 10, 10], center = false);\n\t\t}\n\t}\n}"
     )
     assert openscad_color_volumes(csg, timeout=120) is None
+
+
+def test_the_export_convention_matches_openscad_for_every_channel():
+    """The whole point: OpenSCAD's byte is reproduced, not approximated.
+    Ground truth came from rendering all 256 values through OpenSCAD; these
+    are the cases where truncation, the 32-bit narrowing, or both matter."""
+    assert openscad_channel(1.0) == 255
+    assert openscad_channel(0.0) == 0
+    assert openscad_channel(0.933333) == 237  # lightgreen's 238, truncated
+    assert openscad_channel(0.501961) == 128  # green's 128, exact
+    assert openscad_channel(0.0117647) == 2  # 3, truncated
+    # 0.972549 * 255 is 247.999995 as a double but 248.00000x once narrowed
+    # to 32 bits, which is what OpenSCAD stores. Rounding gets this right by
+    # luck; truncating the double does not.
+    assert openscad_channel(0.972549) == 248
+
+
+def test_a_key_is_openscads_bytes_not_ours():
+    assert openscad_key((0.564706, 0.933333, 0.564706)) == "#90ed90"
+    assert openscad_key((0.823529, 0.411765, 0.117647)) == "#d1691d"
+    assert openscad_key((1.0, 0.0, 0.0, 1.0)) == "#ff0000"
+
+
+def test_a_color_openscad_truncated_still_compares_equal():
+    """Keyed OpenSCAD's way, the two sides are the same string."""
+    assert compare({"#90ed90": 100.0}, {"#90ed90": 100.0}, 0.001) is None
+
+
+def test_a_genuinely_different_color_still_fails():
+    assert compare({"#ff0000": 100.0}, {"#0000ff": 100.0}, 0.001) is not None
+    # One unit apart is a different color, not a tolerance to absorb.
+    assert compare({"#ff0000": 100.0}, {"#fe0000": 100.0}, 0.001) is not None
+
+
+def test_the_message_names_the_color_a_reader_knows():
+    message = compare({"#90ed90": 100.0}, {"#90ed90": 50.0}, 0.001)
+    assert message is not None and message.startswith("color volume off by lightgreen")
+
+
+def test_uncolored_never_absorbs_a_colored_bucket():
+    assert compare({UNCOLORED: 100.0}, {"#ff0000": 100.0}, 0.001) is not None

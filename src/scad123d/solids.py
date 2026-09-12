@@ -267,9 +267,26 @@ def _reoriented(shape: Shape) -> Shape:
     """
     solids = shape.solids()
     if not solids:  # 2D: a reversed face is a fine face
-        return _rewrap(shape.wrapped.Reversed())
-    rebuilt = [_right_side_out(s) for s in solids]
-    return rebuilt[0] if len(rebuilt) == 1 else Compound(rebuilt)
+        return _keeping(shape, _rewrap(shape.wrapped.Reversed()))
+    rebuilt = [_keeping(s, _right_side_out(s)) for s in solids]
+    out = rebuilt[0] if len(rebuilt) == 1 else Compound(rebuilt)
+    return _keeping(shape, out)
+
+
+def _keeping(source: Shape, rebuilt: Shape) -> Shape:
+    """Carry *source*'s color and label onto the shape rebuilt from it.
+
+    Reorienting a reflection builds a new solid out of reversed faces, and
+    a shape built from raw OCCT parts starts with neither. Losing the color
+    is silent -- the volume is right and the STEP is right -- so it only
+    showed up as a per-color verification failure: every mirrored or
+    negatively scaled color() came back uncolored.
+    """
+    if source.color is not None:
+        rebuilt.color = source.color
+    if source.label:
+        rebuilt.label = source.label
+    return rebuilt
 
 
 def _right_side_out(solid: Solid) -> Solid:

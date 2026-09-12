@@ -74,6 +74,8 @@ CLASS_EXPORT = "export-error"
 CLASS_TIMEOUT = "timeout"
 CLASS_MISSING = "missing"
 CLASS_MISMATCH = "mismatch"  # built, but disagrees with OpenSCAD's own render
+
+
 def _refusals(stderr: str) -> tuple[str, ...]:
     """OpenSCAD's ERROR lines, which it prints while exiting 0."""
     return tuple(
@@ -446,13 +448,32 @@ def measure(part: Shape, two_d: bool = False) -> float:
 
 def color_volumes(part: Shape) -> dict[str, float] | None:
     """Volume per resolved color, keyed by the color's label (``uncolored``
-    for bodies without one); None when nothing is colored."""
+    for bodies without one); None when nothing is colored.
+
+    This is the human-facing breakdown -- what the ledger records and what
+    a reader wants to see. Verification compares ``exported_color_volumes``
+    instead, which states the same thing in OpenSCAD's own terms."""
     totals: dict[str, float] = {}
     for body in region_bodies(part):
         key = color_label(body.rgba) if body.rgba else "uncolored"
         totals[key] = totals.get(key, 0.0) + body.volume
     if set(totals) <= {"uncolored"}:
         return None
+    return {k: round(v, 6) for k, v in totals.items()}
+
+
+def exported_color_volumes(part: Shape) -> dict[str, float]:
+    """Volume per color, keyed the way OpenSCAD's 3MF exporter would key it.
+
+    Our label for a color and OpenSCAD's byte for it are not the same
+    string -- we round the float channel where OpenSCAD truncates a 32-bit
+    narrowing of it -- so a comparison has to be stated in one side's terms
+    or the other's. OpenSCAD's are the ones that can be reproduced exactly.
+    """
+    totals: dict[str, float] = {}
+    for body in region_bodies(part):
+        key = _colors.openscad_key(body.rgba) if body.rgba else _colors.UNCOLORED
+        totals[key] = totals.get(key, 0.0) + body.volume
     return {k: round(v, 6) for k, v in totals.items()}
 
 
@@ -471,9 +492,9 @@ def _verify_colors(
     perfectly. Only reached once the total already agrees, so a
     disagreement here is about assignment, not geometry.
     """
-    ours = result.get("colors")
-    if not ours:
+    if not result.get("colors"):
         return
+    ours = exported_color_volumes(conversion.part)
     try:
         theirs = _colors.openscad_color_volumes(csg_text, conversion.timeout)
     except (OpenSCADRunError, subprocess.TimeoutExpired, KeyError, ET.ParseError):
@@ -486,7 +507,9 @@ def _verify_colors(
             "colors overlap: OpenSCAD assigns no volume to a color there"
         )
         return
-    result["scad_colors"] = theirs
+    # Recorded under the names a reader knows, not OpenSCAD's truncated
+    # bytes; the bytes have done their job by the time this is stored.
+    result["scad_colors"] = {_colors.label_for(k): v for k, v in theirs.items()}
     message = _colors.compare(ours, theirs, VERIFY_TOLERANCE)
     if message:
         result["status"] = CLASS_MISMATCH
