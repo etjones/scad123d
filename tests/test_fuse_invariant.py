@@ -89,9 +89,7 @@ class TestRetry:
         assert len(fused.solids()) == 1
         assert seen[0] is None and seen[1] is not None
 
-    def test_a_fuse_that_cannot_be_repaired_warns_rather_than_hiding(
-        self, monkeypatch
-    ):
+    def test_a_fuse_that_cannot_be_repaired_warns_rather_than_hiding(self, monkeypatch):
         import solid123d._common as common
 
         def always_unmerged(bodies, fuzz=None):

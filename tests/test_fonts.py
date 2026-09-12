@@ -89,14 +89,22 @@ class TestTextSize:
     """
 
     def test_the_conversion_is_applied(self):
-        """Font-independent: whatever font OCCT resolves, our size must
-        reach it scaled by the em-to-point ratio and nothing else."""
+        """Whatever font OCCT resolves, our size must reach it scaled by
+        the em-to-point ratio and nothing else. The reference has to name
+        the same font we default to -- build123d's own default is a
+        different family, and the point here is the size, not the face."""
         from build123d import Text as BdText
 
+        from solid123d.fonts import fallback_font_path
         from solid123d.primitives import EM_PER_POINT
 
         ours = text("H", size=20, halign="center", valign="center")
-        scaled = BdText("H", font_size=20 * EM_PER_POINT, align=ours.align)
+        scaled = BdText(
+            "H",
+            font_size=20 * EM_PER_POINT,
+            font_path=str(fallback_font_path()),
+            align=ours.align,
+        )
         assert ours.area == pytest.approx(scaled.area, rel=1e-9)
         assert ours.bounding_box().size.Y == pytest.approx(
             scaled.bounding_box().size.Y, rel=1e-9
@@ -163,8 +171,7 @@ class TestFallbackFont:
         """OpenSCAD renders `text("\\u00ef", size=20, font="fontawesome")`
         to 46.925 of area in a box 7.55 x 19.03, having silently fallen
         back. Ours must land on the same glyph."""
-        shape = text("ï", size=20, font="fontawesome",
-                     halign="center", valign="center")
+        shape = text("ï", size=20, font="fontawesome", halign="center", valign="center")
         box = shape.bounding_box()
         assert shape.area == pytest.approx(46.925, rel=0.001)
         assert box.size.X == pytest.approx(7.55, abs=0.02)
@@ -212,8 +219,9 @@ class TestTextPlacement:
 
     @pytest.mark.parametrize(("halign", "valign"), sorted(OPENSCAD))
     def test_every_alignment_lands_where_openscad_puts_it(self, halign, valign):
-        shape = text("Wg", size=20, font="Liberation Sans",
-                     halign=halign, valign=valign)
+        shape = text(
+            "Wg", size=20, font="Liberation Sans", halign=halign, valign=valign
+        )
         box = shape.bounding_box()
         expected = self.OPENSCAD[(halign, valign)]
         got = (box.min.X, box.max.X, box.min.Y, box.max.Y)
@@ -233,7 +241,59 @@ class TestTextPlacement:
     def test_horizontal_and_vertical_are_independent(self):
         """Changing valign must not move the string sideways."""
         widths = {
-            v: text("Wg", size=20, font="Liberation Sans", valign=v).bounding_box().min.X
+            v: text("Wg", size=20, font="Liberation Sans", valign=v)
+            .bounding_box()
+            .min.X
             for v in ("baseline", "top", "center", "bottom")
         }
         assert len({round(w, 6) for w in widths.values()}) == 1
+
+
+class TestFontIsolation:
+    """OCCT's font database is process-global and caches a face under its
+    family name, so a styled lookup changes what a later plain one gets.
+    The poisoning outlives the model: in a batch worker it silently drew
+    the next model's text in the previous model's font, 45% wrong with no
+    warning and no way to see it in the result.
+    """
+
+    def test_the_guard_resets_only_when_a_style_would_change(self):
+        """A reset costs 118 ms, so it must not fire on every lookup --
+        only when this family was last asked for under another style.
+        Families resolved to a path never reach the guard at all; it is
+        the collection branch (.ttc), where a path cannot name a face,
+        that has to ask OCCT by name.
+        """
+        from solid123d import fonts
+
+        calls = []
+        original = fonts.reset_font_database
+        fonts.reset_font_database = lambda: (calls.append(1), fonts._ASKED.clear())
+        try:
+            fonts._ASKED.clear()
+            fonts.isolate_family("Helvetica", None)
+            fonts.isolate_family("Helvetica", None)
+            fonts.isolate_family("Futura", "Bold")
+            assert calls == []  # nothing contradicted yet
+            fonts.isolate_family("Helvetica", "Bold")
+            assert len(calls) == 1
+            fonts.isolate_family("Helvetica", "Bold")
+            assert len(calls) == 1
+        finally:
+            fonts.reset_font_database = original
+            fonts._ASKED.clear()
+
+    def test_a_styled_lookup_does_not_change_the_default_font(self):
+        alone = text("HELLO", size=10).area
+        text("HELLO", size=10, font="Arial:style=Bold")
+        assert text("HELLO", size=10).area == pytest.approx(alone, rel=1e-9)
+
+    def test_the_default_font_is_the_one_openscad_uses(self):
+        """OpenSCAD defaults to Liberation Sans. Drawing in build123d's
+        default instead was a silent 6.7% volume error on every text()
+        that named no font."""
+        from solid123d.fonts import FALLBACK_FAMILY
+
+        assert text("HELLO", size=10).area == pytest.approx(
+            text("HELLO", size=10, font=FALLBACK_FAMILY).area, rel=1e-9
+        )

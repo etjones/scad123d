@@ -30,6 +30,7 @@ from ._common import vec3
 from .fonts import (
     fallback_font_path,
     find_font_path,
+    isolate_family,
     known_family,
     parse_font_spec,
 )
@@ -207,7 +208,15 @@ def text(
         "align": None,
         "text_align": (_HALIGN[halign], TextAlign.BOTTOM),
     }
-    if font is not None:
+    if font is None:
+        # OpenSCAD's default is Liberation Sans, and drawing in anything
+        # else is a silent 6.7% volume error on every unstyled text().
+        # A path, not a family: a family lookup would take whatever face
+        # OCCT has cached under that name (see fonts.isolate_family).
+        default = fallback_font_path()
+        if default is not None:
+            kwargs["font_path"] = str(default)
+    else:
         family, style = parse_font_spec(font)
         font_path = find_font_path(font)
         if font_path is not None and not _is_collection(font_path):
@@ -220,6 +229,7 @@ def text(
             # always come back Regular. Asking by family and style gets
             # the right one: Helvetica Bold is 44% larger in area than
             # its regular weight, and matches OpenSCAD.
+            isolate_family(family, style)
             kwargs["font"] = family
             if style is not None:
                 kwargs["font_style"] = _FONT_STYLES.get(
@@ -234,6 +244,7 @@ def text(
             if fallback is not None:
                 kwargs["font_path"] = str(fallback)
             else:
+                isolate_family(family, style)
                 kwargs["font"] = family
                 if style is not None:
                     kwargs["font_style"] = _FONT_STYLES.get(

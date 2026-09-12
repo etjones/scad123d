@@ -14,6 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from fontTools.ttLib import TTCollection, TTFont
+from OCP.Font import Font_FontMgr
 
 _FONT_SUFFIXES = (".ttf", ".otf", ".ttc", ".otc")
 _DEFAULT_STYLES = ("regular", "plain", "normal", "book", "roman", "medium")
@@ -161,3 +162,35 @@ def known_family(family: str) -> bool:
     separates "this font is missing" from "this style has no file".
     """
     return family.strip().lower() in _font_index()
+
+
+# OCCT's font database is process-global and caches a face under its family
+# name: once "Arial:style=Bold" has been drawn, a later request for plain
+# Arial comes back bold. Nothing in the request says so -- the volume is
+# simply wrong, by 45% in the case that found this -- and the poisoning
+# outlives the model, so in a batch worker the *next* model's text is drawn
+# in the previous model's font. Rebuilding the database is the only reset
+# OCCT offers; at 118 ms it is far too costly to run per model, so it runs
+# only when a lookup is about to contradict an earlier one.
+_ASKED: dict[str, str] = {}
+
+
+def reset_font_database() -> None:
+    """Rebuild OCCT's font database, dropping every cached family->face."""
+    manager = Font_FontMgr.GetInstance_s()
+    manager.ClearFontDataBase()
+    manager.InitFontDataBase()
+    _ASKED.clear()
+
+
+def isolate_family(family: str, style: str | None) -> None:
+    """Keep a family lookup from inheriting an earlier lookup's style.
+
+    Call before asking OCCT for a font *by name*. Asking by path is not
+    affected and needs no reset.
+    """
+    key = family.strip().lower()
+    wanted = (style or "regular").strip().lower()
+    if _ASKED.get(key, wanted) != wanted:
+        reset_font_database()
+    _ASKED[key] = wanted

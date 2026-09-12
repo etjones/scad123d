@@ -105,10 +105,9 @@ class TestImplausibleBooleanRetry:
             calls.append(operation.FuzzyValue())
             # build123d's own + already carries a small fuzzy value (1e-6);
             # only the guard's larger retry value counts as the retry.
-            if (
-                isinstance(operation, BRepAlgoAPI_Fuse)
-                and operation.FuzzyValue() not in _retry_fuzz(a, b)
-            ):
+            if isinstance(
+                operation, BRepAlgoAPI_Fuse
+            ) and operation.FuzzyValue() not in _retry_fuzz(a, b):
                 return Box(1, 1, 1)  # "valid", but 1 mm^3 of a 1500 mm^3 union
             return real(self, args, tools, operation)
 

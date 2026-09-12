@@ -659,8 +659,7 @@ def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
     warnings.warn(
         "solid123d: this cut kept material inside the shapes it was cutting "
         "with, and neither a fuzzy retry nor cutting one tool at a time "
-        "fixed it; the result is probably wrong"
-        + why_occt_struggled([*args, *tools]),
+        "fixed it; the result is probably wrong" + why_occt_struggled([*args, *tools]),
         stacklevel=4,
     )
     return at_once
