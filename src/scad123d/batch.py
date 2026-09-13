@@ -65,7 +65,6 @@ LEDGER_NAME = "ledger.sqlite"
 # --- ledger -----------------------------------------------------------------
 
 
-
 def read_path_set(source: Path) -> list[str]:
     """The .scad paths named by a review directory or a plain list file.
 

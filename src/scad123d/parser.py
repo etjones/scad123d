@@ -35,7 +35,7 @@ def _value(tree: Tree) -> Any:
         )
     if kind == "string":
         raw = str(tree.children[0])[1:-1]
-        return raw.encode().decode("unicode_escape")
+        return _unescaped(raw)
     if kind == "true":
         return True
     if kind == "false":
@@ -45,6 +45,20 @@ def _value(tree: Tree) -> Any:
     if kind == "vector":
         return [_value(c) for c in tree.children if c is not None]
     raise ValueError(f"unhandled value node {kind!r}")
+
+
+def _unescaped(raw: str) -> str:
+    """A CSG string literal with its backslash escapes resolved.
+
+    ``unicode_escape`` decodes its input as Latin-1, so feeding it UTF-8
+    bytes turns every non-ASCII character into the two or three characters
+    its bytes happen to spell: a model reading text("\u2665") drew three
+    glyphs, and its STEP ran three times as wide as OpenSCAD's. Encoding to
+    Latin-1 first, with anything outside it escaped rather than mangled,
+    hands ``unicode_escape`` only what it can read and leaves the rest to
+    come back through the \\uXXXX form it does understand.
+    """
+    return raw.encode("latin-1", "backslashreplace").decode("unicode_escape")
 
 
 def _node(tree: Tree) -> CsgNode:
