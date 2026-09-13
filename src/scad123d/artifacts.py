@@ -443,11 +443,17 @@ class ArtifactPass:
         except Exception:  # noqa: BLE001 -- the fast render stands
             exact.with_name(exact.name + ".part").unlink(missing_ok=True)
             exact.unlink(missing_ok=True)
-            return CLASS_OK, f"{EXACT_BACKEND} render failed; kept the fast one, which {why}"
+            return (
+                CLASS_OK,
+                f"{EXACT_BACKEND} render failed; kept the fast one, which {why}",
+            )
         better, exact_why = worth_looking_at(exact)
         if not better:
             exact.unlink(missing_ok=True)
-            return CLASS_OK, f"both renders unusable: fast one {why}, {EXACT_BACKEND} {exact_why}"
+            return (
+                CLASS_OK,
+                f"both renders unusable: fast one {why}, {EXACT_BACKEND} {exact_why}",
+            )
         exact.replace(job.stl)
         return CLASS_OK, f"rendered with {EXACT_BACKEND}: the fast render {why}"
 

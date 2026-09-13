@@ -530,9 +530,7 @@ class TestReferenceUsability:
         """Two tetrahedra meeting along an edge. Six edges make the
         percentage allowance zero, so without a floor one honest touching
         edge would condemn them."""
-        assert self.report(
-            triangles=8, nonmanifold_edges=1, flipped_edges=1
-        ).usable
+        assert self.report(triangles=8, nonmanifold_edges=1, flipped_edges=1).usable
 
     def test_the_two_counts_are_not_added_together(self):
         """A touching edge appears in both counts, being shared by four
@@ -689,9 +687,7 @@ class TestRefusedGeometry:
         return MeshReport(**{**base, **kwargs})
 
     def test_a_flawless_mesh_of_an_incomplete_model_is_not_usable(self):
-        refused = (
-            "ERROR: all points for rotate_extrude() must have the same X sign",
-        )
+        refused = ("ERROR: all points for rotate_extrude() must have the same X sign",)
         report = self.report(refused=refused)
         assert not report.usable
         assert "refused part of the model" in report.fault()

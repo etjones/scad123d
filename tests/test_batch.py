@@ -143,7 +143,6 @@ def test_ledger_reset_requeues_only_the_named_classes(tmp_path):
     assert ledger.counts() == {CLASS_OK: 1, STATUS_PENDING: 1, CLASS_CRASH: 1}
 
 
-
 def test_ledger_reset_paths_requeues_just_those_models(tmp_path):
     """The whole-corpus retry costs an hour to learn what one fix was
     worth. Re-running a review set's hundred answers the same question in

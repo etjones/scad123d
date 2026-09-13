@@ -97,3 +97,28 @@ def test_emit_round_trips(source):
     once = parse_csg(source)
     twice = parse_csg(emit(once))
     assert twice == once
+
+
+class TestStringEncoding:
+    """CSG arrives as UTF-8 and its strings carry backslash escapes, so the
+    unescaping has to handle both without trading one for the other."""
+
+    def test_a_non_ascii_character_survives_unescaping(self):
+        """unicode_escape decodes as Latin-1, so UTF-8 bytes came back as
+        the two or three characters they happen to spell: text("♥")
+        drew three glyphs and ran three times as wide as OpenSCAD's."""
+        node = parse_csg('text(text = "♥", size = 10);')
+        assert node.args["text"] == "♥"
+
+    def test_accents_and_cjk_survive(self):
+        for literal in ("café", "Größe", "日本語"):
+            node = parse_csg(f'text(text = "{literal}", size = 10);')
+            assert node.args["text"] == literal
+
+    def test_escapes_are_still_resolved(self):
+        node = parse_csg('text(text = "a\\nb\\t\\"c\\"", size = 10);')
+        assert node.args["text"] == 'a\nb\t"c"'
+
+    def test_a_backslash_u_escape_still_becomes_its_character(self):
+        node = parse_csg('text(text = "\\u2665", size = 10);')
+        assert node.args["text"] == "♥"
