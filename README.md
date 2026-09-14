@@ -8,6 +8,12 @@ Python's native CAD kernel. Keep your existing OpenSCAD models and libraries;
 get fillets, exact STEP export, and everything else that comes from working
 in a solid-modeling kernel instead of a mesh renderer.
 
+> **scad123d** converts OpenSCAD models to STEP. **solid123d** is the
+> geometry engine underneath it — OpenSCAD's semantics on build123d — usable
+> on its own if you're writing [SolidPython](https://github.com/jeff-dh/SolidPython)
+> rather than converting `.scad` files. Both ship in this one package:
+> `pip install scad123d` gives you `import scad123d` and `import solid123d`.
+
 ```python
 import scad123d
 from build123d import export_step, export_stl
@@ -407,10 +413,10 @@ result per line, if you'd rather drive it from your own tooling.
   a solid block.
 
   scad123d matches OpenSCAD here, because being OpenSCAD is the point.
-  [solid123d](https://github.com/etjones/solid123d) deliberately does not: it
-  is a bridge to build123d rather than an OpenSCAD reimplementation, and
-  there a 2D shape is a face in 3-space that moves and tilts like any other
-  object. If you want a circle at z = 5, that is where to get one.
+  `solid123d` deliberately does not: it is a bridge to build123d rather than
+  an OpenSCAD reimplementation, and there a 2D shape is a face in 3-space
+  that moves and tilts like any other object. If you want a circle at z = 5,
+  that is where to get one.
 - **Cylinders and circles you deliberately made low-poly** (a hexagon nut, a
   6-sided bolt head) are preserved as the actual polygon you asked for — not
   smoothed out into a circle. This is a heuristic based on how many sides you
