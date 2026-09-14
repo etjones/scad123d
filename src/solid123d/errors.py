@@ -26,3 +26,23 @@ class NeedsTessellation(Solid123dError, ValueError):
 
     Subclasses ValueError, which is what OCCT's own failure arrives as.
     """
+
+
+class BooleanFailed(Solid123dError, ValueError):
+    """A boolean OCCT could not compute, after every retry we have.
+
+    Raised only where the result is known to be wrong, not merely
+    suspicious: a cut whose material is still sitting inside the tool that
+    was supposed to remove it, or a result whose volume falls outside what
+    its own operands allow. Both conditions are checked after the fuzzy
+    retry and the one-tool-at-a-time fold have already failed.
+
+    Until now these warned and returned the bad shape anyway, which is the
+    worst of the options: the caller gets a confident answer that a printer
+    will happily make. tyrant180-motorguard.scad measured 19,622 where
+    OpenSCAD renders 4,483, and said so only in a warning nobody reads.
+
+    A caller that can reach OpenSCAD should render the subtree there, which
+    is exact; one that cannot should report the failure. Either beats
+    returning a shape we have already proved wrong.
+    """

@@ -75,7 +75,9 @@ class TestItRunsOnlyAfterAFailure:
         monkeypatch.setattr(common, "why_occt_struggled", explain)
         # a cut whose result always keeps material inside its tool
         monkeypatch.setattr(common, "material_left_in_tools", lambda r, t: True)
-        with pytest.warns(UserWarning, match="because of reasons"):
+        from solid123d.errors import BooleanFailed
+
+        with pytest.raises(BooleanFailed, match="because of reasons"):
             cut_all([Box(10, 10, 10)], [Pos(2, 0, 0) * Box(4, 4, 20)])
         assert asked, "the analyzer should have been consulted"
 

@@ -132,14 +132,18 @@ class TestImplausibleBooleanRetry:
         assert len(calls) == 2
         assert not set(calls) & set(_retry_fuzz(a, b))
 
-    def test_unfixable_result_warns_rather_than_hiding(self, monkeypatch) -> None:
+    def test_unfixable_result_raises_rather_than_hiding(self, monkeypatch) -> None:
+        """A sliver where the operands imply 1500 is not a near miss, and
+        returning it hands the caller a shape a printer will make. The
+        caller renders the subtree in OpenSCAD instead."""
+        from solid123d.errors import BooleanFailed
+
         def always_sliver(self, args, tools, operation):
             return Box(1, 1, 1)
 
         monkeypatch.setattr(occt_workarounds, "_original_bool_op", always_sliver)
-        with pytest.warns(UserWarning, match="implausible volume"):
-            fused = Box(10, 10, 10) + Pos(5, 0, 0) * Box(10, 10, 10)
-        assert fused.volume == pytest.approx(1)  # the sliver, kept but warned about
+        with pytest.raises(BooleanFailed, match="implausible volume"):
+            Box(10, 10, 10) + Pos(5, 0, 0) * Box(10, 10, 10)
 
 
 def _retry_fuzz(*shapes) -> list[float]:

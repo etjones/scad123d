@@ -105,7 +105,6 @@ mangling faces would pass the guard.
 
 import copy
 import math
-import warnings
 
 from build123d import Shape
 from build123d.topology.shape_core import SkipClean
@@ -244,13 +243,12 @@ def _guarded_bool_op(self: Shape, args, tools, operation) -> Shape:
             result = candidate
         else:
             from ._common import why_occt_struggled
+            from .errors import BooleanFailed
 
-            warnings.warn(
-                "solid123d: OCCT boolean returned an implausible volume "
+            raise BooleanFailed(
+                "OCCT boolean returned an implausible volume "
                 f"({volume:.6g}, inputs imply {bounds[0]:.6g}..{bounds[1]:.6g}) "
-                "and no fuzzy retry helped; the result is probably wrong"
-                + why_occt_struggled([*args, *tools]),
-                stacklevel=4,
+                "and no fuzzy retry helped" + why_occt_struggled([*args, *tools])
             )
     return _volume_guarded_clean(result)
 

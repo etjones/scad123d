@@ -21,6 +21,8 @@ from OCP.TopAbs import TopAbs_COMPOUND, TopAbs_IN, TopAbs_SOLID
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS_Shape
 
+from .errors import BooleanFailed
+
 Vec3 = tuple[float, float, float]
 
 # A region body smaller than this is boolean dust, not material.
@@ -656,13 +658,11 @@ def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
             return candidate
         del description
 
-    warnings.warn(
-        "solid123d: this cut kept material inside the shapes it was cutting "
-        "with, and neither a fuzzy retry nor cutting one tool at a time "
-        "fixed it; the result is probably wrong" + why_occt_struggled([*args, *tools]),
-        stacklevel=4,
+    raise BooleanFailed(
+        "this cut kept material inside the shapes it was cutting with, and "
+        "neither a fuzzy retry nor cutting one tool at a time fixed it"
+        + why_occt_struggled([*args, *tools])
     )
-    return at_once
 
 
 def own_rgba(shape: Shape) -> tuple | None:
