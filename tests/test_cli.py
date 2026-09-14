@@ -14,6 +14,7 @@ import pytest
 
 from scad123d.cli import (
     _build_parser,
+    _exceeds_a_coarse_mesh,
     _override,
     _parse_value,
     classify,
@@ -709,3 +710,28 @@ class TestRefusedGeometry:
             "ERROR: all points for rotate_extrude() must have the same X sign",
         )
         assert _refusals("WARNING: nothing to see\n") == ()
+
+
+class TestAnalyticTolerance:
+    """A tessellated curve is inscribed in the true one, so OpenSCAD's mesh
+    can only fall short of the exact volume -- 0.73% under at 30 facets,
+    1.64% at 20, 2.55% at 16. Exceeding it by a couple of percent is what
+    computing the exact answer looks like, not a defect."""
+
+    def test_exceeding_a_coarse_mesh_is_accepted(self):
+        # a default-faceted sphere: OpenSCAD renders 4112.86 where the true
+        # volume is 4188.79, measured
+        assert _exceeds_a_coarse_mesh(4188.790, 4112.862, 0.01846)
+
+    def test_falling_short_is_never_accepted(self):
+        """A mesh cannot report more volume than the shape it approximates,
+        so our being smaller has no benign explanation at any magnitude."""
+        assert not _exceeds_a_coarse_mesh(4112.862, 4188.790, 0.01813)
+        assert not _exceeds_a_coarse_mesh(99.0, 100.0, 0.01)
+
+    def test_exceeding_by_more_than_tessellation_is_not_accepted(self):
+        assert not _exceeds_a_coarse_mesh(103.0, 100.0, 0.03)
+
+    def test_the_boundary_is_two_percent(self):
+        assert _exceeds_a_coarse_mesh(102.0, 100.0, 0.02)
+        assert not _exceeds_a_coarse_mesh(102.1, 100.0, 0.021)
