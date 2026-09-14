@@ -1,6 +1,6 @@
 [project]
 name = "solid123d"
-version = "0.8.2"
+version = "0.9.0"
 description = "Drop-in bridge from SolidPython to build123d: change one import, get native BRep geometry"
 readme = "README.md"
 license = "MIT"
