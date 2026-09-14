@@ -3,6 +3,7 @@
 import pytest
 
 from solid123d import polygon, polyhedron
+from solid123d.errors import NeedsTessellation
 
 
 class TestNonPlanarPolyhedronFaces:
@@ -11,8 +12,11 @@ class TestNonPlanarPolyhedronFaces:
     bent wire. Such a model produced no STEP at all -- 259 of the 274
     corpus models failing with "wires not planar" are polyhedra."""
 
-    def test_a_bent_quad_face_builds(self):
-        # A unit cube with one top corner lifted, so two side quads bend.
+    def test_a_bent_quad_face_raises(self):
+        """A bent quad has no face OCCT will build, and no triangulation of
+        it reproduces OpenSCAD: splitting on the first diagonal was still
+        0.016% out on daniel1.scad, because libtess2 refines toward
+        Delaunay afterwards. The caller renders the subtree in OpenSCAD."""
         points = [
             [0, 0, 0],
             [1, 0, 0],
@@ -31,9 +35,8 @@ class TestNonPlanarPolyhedronFaces:
             [6, 7, 3, 2],
             [7, 4, 0, 3],
         ]
-        solid = polyhedron(points, faces)
-        assert solid.volume > 0
-        assert solid.is_valid
+        with pytest.raises(NeedsTessellation):
+            polyhedron(points, faces)
 
     def test_a_flat_face_is_still_one_face(self):
         """The fan is only for bent loops: a cube keeps six faces, not
@@ -67,14 +70,27 @@ class TestNonPlanarPolyhedronFaces:
         lays triangles outside the polygon. Raising keeps a wrong answer
         from being believed."""
         points = [
-            [0, 0, 0], [10, 0, 0], [13, 8, 0], [5, 13, 0], [-3, 8, 0],
-            [0, 0, 5], [10, 0, 5], [13, 8, 9], [5, 13, 5], [-3, 8, 5],
+            [0, 0, 0],
+            [10, 0, 0],
+            [13, 8, 0],
+            [5, 13, 0],
+            [-3, 8, 0],
+            [0, 0, 5],
+            [10, 0, 5],
+            [13, 8, 9],
+            [5, 13, 5],
+            [-3, 8, 5],
         ]
         faces = [
-            [0, 1, 2, 3, 4], [9, 8, 7, 6, 5],
-            [5, 6, 1, 0], [6, 7, 2, 1], [7, 8, 3, 2], [8, 9, 4, 3], [9, 5, 0, 4],
+            [0, 1, 2, 3, 4],
+            [9, 8, 7, 6, 5],
+            [5, 6, 1, 0],
+            [6, 7, 2, 1],
+            [7, 8, 3, 2],
+            [8, 9, 4, 3],
+            [9, 5, 0, 4],
         ]
-        with pytest.raises(ValueError, match="not planar"):
+        with pytest.raises(NeedsTessellation):
             polyhedron(points, faces)
 
 
@@ -119,3 +135,9 @@ class TestPolygonEvenOdd:
         nothing."""
         pts = self.square(5) + self.square(5, cx=20)
         assert self.area(pts, [[0, 1, 2, 3], [4, 5, 6, 7]]) == pytest.approx(200)
+
+    def test_a_self_crossing_outline_raises(self):
+        """A bowtie built a shape of area 0 where OpenSCAD fills both lobes
+        and measures 50 -- a whole region gone, with nothing said."""
+        with pytest.raises(NeedsTessellation):
+            polygon([[0, 0], [10, 10], [10, 0], [0, 10]])

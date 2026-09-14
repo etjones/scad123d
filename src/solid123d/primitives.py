@@ -27,6 +27,7 @@ from build123d import Sphere as _BdSphere
 from build123d import Text as _BdText
 
 from ._common import vec3
+from .errors import NeedsTessellation
 from .fonts import (
     fallback_font_path,
     find_font_path,
@@ -115,7 +116,13 @@ def polyhedron(
         if len(face) < 3:
             continue
         loop = [verts[i] for i in face]
-        built.extend(_faces_of_loop(loop))
+        try:
+            built.append(Face(Wire.make_polygon(loop, close=True)))
+        except ValueError as exc:  # OCCT decides what is flat enough
+            raise NeedsTessellation(
+                f"polyhedron() face {list(face)} is not planar; OpenSCAD "
+                f"tessellates it and OCCT cannot build it directly"
+            ) from exc
     if not built:
         raise ValueError("polyhedron() needs at least one face")
 
@@ -125,41 +132,6 @@ def polyhedron(
     return solid
 
 
-def _faces_of_loop(loop: list[Vector]) -> list[Face]:
-    """One face for a loop OCCT accepts; two triangles for a bent quad.
-
-    OpenSCAD's polyhedron() accepts a face whose vertices are not coplanar
-    and tessellates it, where OCCT refuses to build a planar face from a
-    bent wire and raises "wires not planar" -- so the model produced no
-    STEP at all, and 259 of the 274 corpus models failing that way are
-    polyhedra.
-
-    OCCT decides, not a tolerance of ours: what counts as flat enough is
-    its own criterion, and a model whose faces sit just inside it was
-    still being rejected when we guessed at the threshold ourselves.
-
-    Only a quad is split here. OpenSCAD tessellates with libtess2 asking
-    for TESS_CONSTRAINED_DELAUNAY_TRIANGLES, which chooses a diagonal by
-    the Delaunay criterion rather than by vertex order; for a quad the two
-    agree, verified against OpenSCAD for every winding, and beyond a quad
-    they do not -- a bent pentagon came out 11% different, and on a
-    non-convex face a fan is not merely a different triangulation but an
-    invalid one, laying triangles outside the polygon. A larger bent face
-    keeps raising until that tessellation is implemented properly: a
-    missing STEP is a worse result than a wrong one only until the wrong
-    one is believed.
-    """
-    try:
-        return [Face(Wire.make_polygon(loop, close=True))]
-    except ValueError:
-        if len(loop) != 4:
-            raise
-        return [
-            Face(Wire.make_polygon([loop[0], loop[1], loop[2]], close=True)),
-            Face(Wire.make_polygon([loop[0], loop[2], loop[3]], close=True)),
-        ]
-
-
 def polygon(
     points: Sequence[Sequence[float]],
     paths: Sequence[Sequence[int]] | None = None,
@@ -167,9 +139,34 @@ def polygon(
 ) -> Shape:
     pts = [(float(p[0]), float(p[1])) for p in points]
     if paths is None:
-        return _BdPolygon(*pts, align=None)
-    faces = [_BdPolygon(*[pts[i] for i in path], align=None) for path in paths]
+        return _simple(_BdPolygon(*pts, align=None), pts)
+    faces = [
+        _simple(_BdPolygon(*[pts[i] for i in path], align=None), [pts[i] for i in path])
+        for path in paths
+    ]
     return _even_odd(faces)
+
+
+def _simple(face: Shape, pts: list[tuple[float, float]]) -> Shape:
+    """*face*, or NeedsTessellation if its outline crosses itself.
+
+    A path that crosses itself has no face in OCCT's sense: the wire is not
+    simple, and what comes back encloses nothing. It used to be returned
+    anyway -- a bowtie outline built a shape of area 0 where OpenSCAD fills
+    both lobes and measures 50, with nothing to say an entire region of the
+    model had silently vanished. OpenSCAD splits the outline at its
+    crossings and keeps the regions with an odd winding number; saying so
+    is better than answering zero.
+    """
+    if face.is_valid and abs(face.area) > 0:
+        return face
+    span = max((max(c[i] for c in pts) - min(c[i] for c in pts)) for i in (0, 1))
+    if span <= 0:  # genuinely degenerate input, not a crossing
+        return face
+    raise NeedsTessellation(
+        "polygon() outline crosses itself; OpenSCAD splits it at the "
+        "crossings and fills by the even-odd rule, which OCCT cannot do"
+    )
 
 
 def _even_odd(faces: list[Shape]) -> Shape:
