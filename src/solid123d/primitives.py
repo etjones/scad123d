@@ -115,7 +115,7 @@ def polyhedron(
         if len(face) < 3:
             continue
         loop = [verts[i] for i in face]
-        built.append(Face(Wire.make_polygon(loop, close=True)))
+        built.extend(_faces_of_loop(loop))
     if not built:
         raise ValueError("polyhedron() needs at least one face")
 
@@ -123,6 +123,41 @@ def polyhedron(
     if solid.volume < 0:
         solid = Solid(solid.wrapped.Complemented())
     return solid
+
+
+def _faces_of_loop(loop: list[Vector]) -> list[Face]:
+    """One face for a loop OCCT accepts; two triangles for a bent quad.
+
+    OpenSCAD's polyhedron() accepts a face whose vertices are not coplanar
+    and tessellates it, where OCCT refuses to build a planar face from a
+    bent wire and raises "wires not planar" -- so the model produced no
+    STEP at all, and 259 of the 274 corpus models failing that way are
+    polyhedra.
+
+    OCCT decides, not a tolerance of ours: what counts as flat enough is
+    its own criterion, and a model whose faces sit just inside it was
+    still being rejected when we guessed at the threshold ourselves.
+
+    Only a quad is split here. OpenSCAD tessellates with libtess2 asking
+    for TESS_CONSTRAINED_DELAUNAY_TRIANGLES, which chooses a diagonal by
+    the Delaunay criterion rather than by vertex order; for a quad the two
+    agree, verified against OpenSCAD for every winding, and beyond a quad
+    they do not -- a bent pentagon came out 11% different, and on a
+    non-convex face a fan is not merely a different triangulation but an
+    invalid one, laying triangles outside the polygon. A larger bent face
+    keeps raising until that tessellation is implemented properly: a
+    missing STEP is a worse result than a wrong one only until the wrong
+    one is believed.
+    """
+    try:
+        return [Face(Wire.make_polygon(loop, close=True))]
+    except ValueError:
+        if len(loop) != 4:
+            raise
+        return [
+            Face(Wire.make_polygon([loop[0], loop[1], loop[2]], close=True)),
+            Face(Wire.make_polygon([loop[0], loop[2], loop[3]], close=True)),
+        ]
 
 
 def polygon(
