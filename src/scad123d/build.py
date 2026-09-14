@@ -18,6 +18,7 @@ from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCP.TopExp import TopExp
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 from solid123d import polyhedron
+from solid123d.errors import NeedsTessellation
 from solid123d.hull import analytic_hull
 from solid123d.minkowski import analytic_minkowski
 
@@ -203,7 +204,14 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         points, faces = a.get("points", []), a.get("faces", [])
         if not points or not faces:
             return None
-        solid = polyhedron(points, faces)
+        try:
+            solid = polyhedron(points, faces)
+        except NeedsTessellation as exc:
+            # OpenSCAD tessellates a face OCCT will not build. Rendering
+            # this node there is exact by construction, where any
+            # triangulation of our own is a different valid answer that
+            # nothing downstream would flag.
+            return _fallback(node, options, str(exc))
         # A polyhedron whose faces leave free edges is an open surface, not
         # a volume, and OCCT will still hand back a "solid" made of it:
         # BRepBuilderAPI_MakeSolid documents that it performs no coherence
@@ -257,7 +265,10 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         points = a.get("points", [])
         if len(points) < 3:
             return None
-        return s1.polygon(points, paths=a.get("paths"))
+        try:
+            return s1.polygon(points, paths=a.get("paths"))
+        except NeedsTessellation as exc:
+            return _fallback(node, options, str(exc))
 
     if name == "text":
         return s1.text(

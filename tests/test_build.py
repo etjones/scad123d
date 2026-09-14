@@ -10,6 +10,7 @@ from OCP.TopAbs import TopAbs_State
 from scipy.spatial import ConvexHull
 
 import scad123d
+from scad123d.errors import MeshFallbackWarning
 from scad123d.solids import apply_matrix
 
 from .conftest import FIXTURES, assert_close, shape_metrics
@@ -1547,3 +1548,35 @@ class TestTwoDimensionalStaysInPlane:
             " [0, 0, 0, 1]]) { cube(size = [2, 2, 2], center = false); }"
         )
         assert shape.bounding_box().min.Z == pytest.approx(5)
+
+
+class TestTessellationFallback:
+    """OpenSCAD tessellates geometry OCCT will not build -- a polyhedron
+    face whose vertices are not coplanar, a polygon outline that crosses
+    itself -- by computing the planar arrangement of the edges and keeping
+    the odd-winding regions. Guessing at that ourselves was 0.016% out on
+    the model it was written for, so the node is rendered in OpenSCAD,
+    which is exact by construction."""
+
+    @pytest.mark.needs_openscad
+    def test_a_bent_polyhedron_face_falls_back(self):
+        csg = (
+            "polyhedron(points = [[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], "
+            "[0, 0, 10], [10, 0, 10], [10, 10, 12], [0, 10, 10]], "
+            "faces = [[0, 1, 2, 3], [4, 5, 1, 0], [7, 6, 5, 4], [5, 6, 2, 1], "
+            "[6, 7, 3, 2], [7, 4, 0, 3]]);"
+        )
+        with pytest.warns(MeshFallbackWarning, match="not planar"):
+            shape = scad123d.import_csg(csg)
+        assert shape.volume == pytest.approx(1033.333, rel=1e-4)
+
+    @pytest.mark.needs_openscad
+    def test_a_self_crossing_polygon_falls_back(self):
+        """A bowtie built nothing at all before: area 0 against OpenSCAD's 50."""
+        csg = (
+            "linear_extrude(height = 1) { polygon(points = "
+            "[[0, 0], [10, 10], [10, 0], [0, 10]]); }"
+        )
+        with pytest.warns(MeshFallbackWarning, match="crosses itself"):
+            shape = scad123d.import_csg(csg)
+        assert shape.volume == pytest.approx(50.0, rel=1e-6)
