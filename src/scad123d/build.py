@@ -11,7 +11,6 @@ mesh fallback.
 
 import warnings
 from dataclasses import dataclass, field
-from typing import Self
 
 import solid123d as s1
 from build123d import Shape
@@ -163,7 +162,9 @@ class _openscad_instead:
         self.options = options
         self.shape: Shape | None = None
 
-    def __enter__(self) -> Self:
+    # Not typing.Self: this package supports Python 3.10, where it does
+    # not exist.
+    def __enter__(self) -> "_openscad_instead":  # noqa: PYI034
         return self
 
     def __exit__(self, kind, value, tb) -> bool:
