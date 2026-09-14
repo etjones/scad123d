@@ -96,6 +96,10 @@ CLASS_ERROR = "error"
 # is allowed a looser bar.
 VERIFY_TOLERANCE = 0.01
 VERIFY_TOLERANCE_COARSE = 0.05
+# How far our volume may exceed OpenSCAD's before it stops being the
+# tessellation and starts being a disagreement. Asymmetric on purpose: see
+# _exceeds_a_coarse_mesh.
+ANALYTIC_TOLERANCE = 0.02
 _TESSELLATION = re.compile(r"\$fa = [0-9.eE+-]+, \$fs = [0-9.eE+-]+")
 
 
@@ -627,17 +631,48 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
     if not reference.usable:
         _second_opinion(conversion, csg_text, result, ours, reference, two_d)
         return
+    if _exceeds_a_coarse_mesh(ours, fine, error):
+        result["message"] = (
+            f"volume {ours:.6g} exceeds OpenSCAD's {fine:.6g} by "
+            f"{100 * error:.2f}%, within what this model's own tessellation "
+            f"explains: a mesh inscribes a curve and can only fall short"
+        )
+        return
     # A magnitude bucket leads the message so --report groups mismatches by
-    # severity rather than by their (unique) volumes. The 1-2% bucket is
-    # where a known, deliberate divergence lands: a minkowski() whose ball
-    # is a faceted polyhedron (BOSL2's cuboid(rounding=)) is built as an
-    # exact sphere, slightly larger than OpenSCAD's inscribed facets.
+    # severity rather than by their (unique) volumes.
     bucket = _bucket(error)
     result["status"] = CLASS_MISMATCH
     result["message"] = (
         f"volume off by {bucket}: {ours:.6g} vs OpenSCAD {fine:.6g} "
         f"({100 * error:.1f}%)"
     )
+
+
+def _exceeds_a_coarse_mesh(ours: float, theirs: float, error: float) -> bool:
+    """Is our volume larger than OpenSCAD's by no more than tessellation?
+
+    A tessellated curve is inscribed in the true one, so OpenSCAD's mesh is
+    always *short* of the exact volume, by an amount its facet count
+    decides: an n-sided prism holds (n/2pi)*sin(2pi/n) of the cylinder it
+    approximates -- 0.73% under at 30 facets, 1.64% at 20, 2.55% at 16.
+    Measured against OpenSCAD, a default cylinder came back 0.729% under
+    and a default sphere 1.85%, while our analytic answers were exactly
+    pi*r^2*h and 4/3*pi*r^3. The reference render is already refined where
+    it can be (refine_tessellation), so what remains is models that pin
+    their own $fn and get the coarse mesh they asked for.
+
+    Exceeding that mesh by a couple of percent is therefore the expected
+    result of computing the exact answer, not a defect -- solid123d's
+    analytic operations are allowed to be better than OpenSCAD's.
+
+    One-directional, which is the whole point. A mesh cannot report *more*
+    volume than the shape it approximates, so our being smaller has no
+    benign explanation at any magnitude and stays a mismatch. In the
+    corpus's 1-2% band that distinction separates 587 models whose sign
+    fits tessellation from 172 whose sign does not, and a symmetric
+    tolerance would have hidden the second group.
+    """
+    return ours > theirs and error <= ANALYTIC_TOLERANCE
 
 
 def _batch_task(task: dict[str, Any], defaults: argparse.Namespace) -> dict[str, Any]:
