@@ -1580,3 +1580,54 @@ class TestTessellationFallback:
         with pytest.warns(MeshFallbackWarning, match="crosses itself"):
             shape = scad123d.import_csg(csg)
         assert shape.volume == pytest.approx(50.0, rel=1e-6)
+
+
+class TestFailedBooleanFallback:
+    """solid123d raises BooleanFailed only where the answer is known to be
+    wrong -- material still inside the tool meant to remove it, or a volume
+    outside what the operands allow -- and only after its retries are
+    exhausted. It used to warn and return the bad shape, which hands the
+    caller something a printer will happily make."""
+
+    @pytest.mark.needs_openscad
+    def test_a_failed_cut_is_rendered_in_openscad(self, monkeypatch):
+        import solid123d._common as common
+
+        # force the invariant to report the cut as unrepairable
+        monkeypatch.setattr(common, "material_left_in_tools", lambda r, t: True)
+        csg = (
+            "difference() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tmultmatrix([[1, 0, 0, 2], [0, 1, 0, 2], [0, 0, 1, -1], [0, 0, 0, 1]]) "
+            "{ cube(size = [4, 4, 12], center = false); }\n}"
+        )
+        with pytest.warns(MeshFallbackWarning, match="cut kept material"):
+            shape = scad123d.import_csg(csg)
+        assert shape.volume == pytest.approx(1000 - 4 * 4 * 10, rel=1e-4)
+
+    @pytest.mark.needs_openscad
+    def test_a_healthy_boolean_is_untouched(self, monkeypatch):
+        """The fallback must not fire on ordinary geometry: an OpenSCAD
+        render per boolean would be a heavy tax on every model."""
+        calls = []
+        import importlib
+
+        # scad123d.build is a function in the package namespace, so the
+        # module has to be fetched explicitly
+        build = importlib.import_module("scad123d.build")
+        real = build._fallback
+
+        def spy(node, options, reason):
+            calls.append(reason)
+            return real(node, options, reason)
+
+        monkeypatch.setattr(build, "_fallback", spy)
+        csg = (
+            "difference() {\n"
+            "\tcube(size = [10, 10, 10], center = false);\n"
+            "\tmultmatrix([[1, 0, 0, 2], [0, 1, 0, 2], [0, 0, 1, -1], [0, 0, 0, 1]]) "
+            "{ cube(size = [4, 4, 12], center = false); }\n}"
+        )
+        shape = scad123d.import_csg(csg)
+        assert shape.volume == pytest.approx(1000 - 4 * 4 * 10, rel=1e-6)
+        assert calls == []

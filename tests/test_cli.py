@@ -13,6 +13,7 @@ import types
 import pytest
 
 from scad123d.cli import (
+    SECOND_OPINION_ERROR,
     _build_parser,
     _exceeds_a_coarse_mesh,
     _override,
@@ -637,7 +638,9 @@ class TestSecondOpinion:
 
     def test_a_usable_fast_render_never_asks_twice(self, monkeypatch):
         """The exact renderer is 30x slower; it must not run on the path
-        every conversion takes."""
+        every conversion takes. An ordinary disagreement -- the few percent
+        a coarse tessellation explains -- stays with the fast render; only
+        a large one is worth asking about."""
         from scad123d import cli
 
         asked: list = []
@@ -647,7 +650,7 @@ class TestSecondOpinion:
             return self.report(100.0, nonmanifold=9)
 
         monkeypatch.setattr(cli, "_openscad_render", render)
-        monkeypatch.setattr(cli, "measure", lambda part, two_d=False: 50.0)
+        monkeypatch.setattr(cli, "measure", lambda part, two_d=False: 95.0)
         monkeypatch.setattr(cli, "refine_tessellation", lambda text: text)
 
         class Part:
@@ -735,3 +738,18 @@ class TestAnalyticTolerance:
     def test_the_boundary_is_two_percent(self):
         assert _exceeds_a_coarse_mesh(102.0, 100.0, 0.02)
         assert not _exceeds_a_coarse_mesh(102.1, 100.0, 0.021)
+
+
+class TestSecondOpinionGate:
+    """A clean mesh of the wrong shape passes every topological test there
+    is. Manifold collapsed Quartz_birdhouse.scad to 0.00282 where CGAL and
+    this converter both say 1.35653, and the mesh had no boundary,
+    non-manifold or flipped edges to give it away."""
+
+    def test_a_large_disagreement_asks_the_exact_kernel(self):
+        assert 0.90 >= SECOND_OPINION_ERROR
+
+    def test_the_ordinary_tessellation_gap_does_not(self):
+        """CGAL is two orders of magnitude slower; a 1-2% gap is the
+        expected tessellation difference and must not pay for it."""
+        assert 0.02 < SECOND_OPINION_ERROR
