@@ -11,6 +11,7 @@ mesh fallback.
 
 import warnings
 from dataclasses import dataclass, field
+from typing import Self
 
 import solid123d as s1
 from build123d import Shape
@@ -18,7 +19,7 @@ from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCP.TopExp import TopExp
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 from solid123d import polyhedron
-from solid123d.errors import NeedsTessellation
+from solid123d.errors import BooleanFailed, NeedsTessellation
 from solid123d.hull import analytic_hull
 from solid123d.minkowski import analytic_minkowski
 
@@ -137,6 +138,39 @@ def _flat_children(node: CsgNode, options: BuildOptions) -> list[Shape]:
             stacklevel=2,
         )
     return flat
+
+
+class _openscad_instead:
+    """Render this node in OpenSCAD if the boolean inside proves it failed.
+
+    solid123d raises BooleanFailed only where the answer is known to be
+    wrong rather than merely suspicious -- material still sitting inside
+    the tool meant to remove it, or a volume outside what the operands
+    allow -- and only after its fuzzy retry and one-tool-at-a-time fold
+    have both failed. Before this, it warned and returned the bad shape,
+    which is the worst option available: tyrant180-motorguard.scad measured
+    19,622 against OpenSCAD's 4,483 and said so only in a warning.
+
+    Meshing the node is exact, and it stays counted: the node lands in
+    ``meshed`` with a MeshFallbackWarning, so these remain a population we
+    can come back to rather than becoming invisible OpenSCAD renders. That
+    matters -- a boolean bug we silently route around is a boolean bug we
+    stop finding.
+    """
+
+    def __init__(self, node: CsgNode, options: BuildOptions) -> None:
+        self.node = node
+        self.options = options
+        self.shape: Shape | None = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, kind, value, tb) -> bool:
+        if not isinstance(value, BooleanFailed):
+            return False
+        self.shape = _fallback(self.node, self.options, str(value))
+        return True
 
 
 def _fallback(node: CsgNode, options: BuildOptions, reason: str) -> Shape | None:
@@ -282,7 +316,9 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
 
     # --- booleans and grouping ------------------------------------------
     if name in ("group", "union", "render"):
-        return _union(_children(node, options))
+        with _openscad_instead(node, options) as fallback:
+            return _union(_children(node, options))
+        return fallback.shape
 
     # difference and intersection care WHERE an empty child sat, so they
     # cannot use _children's empties-dropped list: an empty first
@@ -299,13 +335,19 @@ def _build(node: CsgNode, options: BuildOptions) -> Shape | None:
         # solid123d cuts every subtrahend in one OCCT operation and, when
         # the minuend carries color() regions, cuts each region on its own
         # so the retained material keeps its colors.
-        return s1.difference()(shapes[0], *rest) if rest else shapes[0]
+        if not rest:
+            return shapes[0]
+        with _openscad_instead(node, options) as fallback:
+            return s1.difference()(shapes[0], *rest)
+        return fallback.shape
 
     if name == "intersection":
         shapes = _children_positional(node, options)
         if not shapes or any(s is None for s in shapes):
             return None
-        return s1.intersection()(*shapes)
+        with _openscad_instead(node, options) as fallback:
+            return s1.intersection()(*shapes)
+        return fallback.shape
 
     # --- transforms -----------------------------------------------------
     if name == "multmatrix":

@@ -100,6 +100,9 @@ VERIFY_TOLERANCE_COARSE = 0.05
 # tessellation and starts being a disagreement. Asymmetric on purpose: see
 # _exceeds_a_coarse_mesh.
 ANALYTIC_TOLERANCE = 0.02
+# Disagree with the fast kernel by this much and the exact one is worth its
+# cost, even when the fast render looks perfectly well formed.
+SECOND_OPINION_ERROR = 0.25
 _TESSELLATION = re.compile(r"\$fa = [0-9.eE+-]+, \$fs = [0-9.eE+-]+")
 
 
@@ -628,7 +631,16 @@ def _verify(conversion: _Conversion, csg_text: str, result: dict[str, Any]) -> N
                 f"{fine:.6g}: mesh-fallback tessellation, not a bug"
             )
             return
-    if not reference.usable:
+    if not reference.usable or error >= SECOND_OPINION_ERROR:
+        # A clean mesh of the wrong shape passes every topological test
+        # there is: Manifold collapsed Quartz_birdhouse.scad to 0.00282
+        # where CGAL and this converter both say 1.35653, and the mesh it
+        # produced had no boundary, non-manifold or flipped edges to give
+        # it away. Measured over a hundred corpus mismatches, 12 in 87 were
+        # that -- our answer right, the fast kernel's wrong -- so a large
+        # disagreement is worth a second opinion whether or not the mesh
+        # looks broken. Small ones are not: they are the ordinary
+        # tessellation gap, and CGAL is two orders of magnitude slower.
         _second_opinion(conversion, csg_text, result, ours, reference, two_d)
         return
     if _exceeds_a_coarse_mesh(ours, fine, error):
