@@ -396,6 +396,7 @@ class TestPairHull:
 
     def test_three_unequal_spheres_decline(self):
         from build123d import Pos, Sphere
+
         from solid123d.hull import _hull_of_spheres
 
         shapes = [
@@ -563,12 +564,14 @@ class TestPolyhedralHull:
 
     def test_curved_child_declines(self):
         from build123d import Box, Sphere
+
         from solid123d.hull import _hull_of_polyhedra
 
         assert _hull_of_polyhedra([Box(10, 10, 10), Sphere(5)]) is None
 
     def test_2d_child_declines(self):
         from build123d import Box, Rectangle
+
         from solid123d.hull import _hull_of_polyhedra
 
         assert _hull_of_polyhedra([Box(10, 10, 10), Rectangle(5, 5)]) is None

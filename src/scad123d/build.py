@@ -12,11 +12,12 @@ mesh fallback.
 import warnings
 from dataclasses import dataclass, field
 
-import solid123d as s1
 from build123d import Shape
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCP.TopExp import TopExp
 from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
+
+import solid123d as s1
 from solid123d import polyhedron
 from solid123d.errors import BooleanFailed, NeedsTessellation
 from solid123d.hull import analytic_hull

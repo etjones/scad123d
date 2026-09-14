@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from build123d import Shape
+
 from solid123d import color_label, export_step, region_bodies
 from solid123d.customizer import resolve_param_set
 
