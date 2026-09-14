@@ -1,8 +1,8 @@
-"""Primitives: polyhedron faces that OpenSCAD tolerates."""
+"""Primitives: the face and fill rules OpenSCAD applies."""
 
 import pytest
 
-from solid123d import polyhedron
+from solid123d import polygon, polyhedron
 
 
 class TestNonPlanarPolyhedronFaces:
@@ -76,3 +76,46 @@ class TestNonPlanarPolyhedronFaces:
         ]
         with pytest.raises(ValueError, match="not planar"):
             polyhedron(points, faces)
+
+
+class TestPolygonEvenOdd:
+    """OpenSCAD tessellates 2D geometry with libtess2 under
+    TESS_WINDING_ODD, so a path is solid when an odd number of paths
+    enclose it. Treating paths[0] as the outline and subtracting the rest
+    got everything but the simple ring wrong."""
+
+    @staticmethod
+    def square(half, cx=0.0):
+        return [
+            [cx - half, -half],
+            [cx + half, -half],
+            [cx + half, half],
+            [cx - half, half],
+        ]
+
+    def area(self, points, paths):
+        return polygon(points, paths).area
+
+    def test_a_plain_ring_is_unchanged(self):
+        pts = self.square(10) + self.square(5)
+        assert self.area(pts, [[0, 1, 2, 3], [4, 5, 6, 7]]) == pytest.approx(300)
+
+    def test_a_path_nested_in_a_hole_is_solid_again(self):
+        """Three nested squares measured 500 against OpenSCAD's 600."""
+        pts = self.square(15) + self.square(10) + self.square(5)
+        area = self.area(pts, [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]])
+        assert area == pytest.approx(900 - 400 + 100)
+
+    def test_nesting_keeps_alternating(self):
+        pts = self.square(20) + self.square(15) + self.square(10) + self.square(5)
+        area = self.area(
+            pts, [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]]
+        )
+        assert area == pytest.approx(1600 - 900 + 400 - 100)
+
+    def test_two_paths_side_by_side_are_both_solid(self):
+        """Neither encloses the other, so neither is a hole: 100 against
+        OpenSCAD's 200, where the second was subtracted and cancelled
+        nothing."""
+        pts = self.square(5) + self.square(5, cx=20)
+        assert self.area(pts, [[0, 1, 2, 3], [4, 5, 6, 7]]) == pytest.approx(200)

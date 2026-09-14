@@ -169,10 +169,29 @@ def polygon(
     if paths is None:
         return _BdPolygon(*pts, align=None)
     faces = [_BdPolygon(*[pts[i] for i in path], align=None) for path in paths]
-    outer = faces[0]
-    for hole in faces[1:]:
-        outer -= hole
-    return outer
+    return _even_odd(faces)
+
+
+def _even_odd(faces: list[Shape]) -> Shape:
+    """Fill the paths the way OpenSCAD does: a point is inside when an odd
+    number of paths enclose it.
+
+    OpenSCAD tessellates 2D geometry with libtess2 under TESS_WINDING_ODD,
+    so a path's role follows from how deeply it nests, not from its
+    position in the list. Treating paths[0] as the outline and subtracting
+    every other path got three cases wrong: a third path nested inside a
+    hole is solid again (three nested squares measured 500 against
+    OpenSCAD's 600), a fourth is a hole again, and two paths side by side
+    are both solid (100 against 200) rather than one cancelling the other.
+
+    Even-odd over a set of closed paths is their symmetric difference,
+    which needs no containment test: nested paths alternate and disjoint
+    ones simply add.
+    """
+    result = faces[0]
+    for face in faces[1:]:
+        result = (result + face) - (result & face)
+    return result
 
 
 def _is_collection(path: object) -> bool:
