@@ -11,11 +11,13 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from scad123d.batch import (
     CLASS_CRASH,
+    CLASS_MEMORY,
     CLASS_OK,
     CLASS_TIMEOUT,
     STATUS_PENDING,
@@ -547,3 +549,53 @@ def test_requeued_files_come_before_never_seen_ones(fake_batch):
     tasks = batch.plan(order="shuffle", limit=2)
     assert tasks[0].path.endswith("bad.scad") and tasks[0].retry
     assert not tasks[1].retry
+
+
+def _task_stub():
+    return SimpleNamespace(path="/tmp/x.scad", siblings=())
+
+
+class TestKilledWorkersAreStillTimed:
+    """A conversion killed for time or memory is exactly the one worth
+    timing, and those were the rows with no duration at all: of 2,261
+    timeouts in the corpus 2,202 recorded nothing, and every memory kill
+    and crash recorded nothing. The supervisor knows when it dispatched
+    the task, so it can answer even when the worker cannot."""
+
+    @staticmethod
+    def _state(reason, detail=""):
+        state = SimpleNamespace(
+            index=1,
+            started=time.time() - 12.5,
+            proc=None,
+            kill_reason=reason,
+            kill_detail=detail,
+        )
+        return state
+
+    @staticmethod
+    def _runner():
+        return Batch.__new__(Batch)
+
+    @pytest.mark.parametrize(
+        ("reason", "status"),
+        [("timeout", CLASS_TIMEOUT), ("memory", CLASS_MEMORY), (None, CLASS_CRASH)],
+    )
+    def test_a_killed_worker_records_its_elapsed_time(self, reason, status):
+        result = self._runner()._interpret(
+            self._state(reason, "4.0 GB"), _task_stub(), ""
+        )
+        assert result["status"] == status
+        assert result["seconds"] == pytest.approx(12.5, abs=1.0)
+
+    def test_an_aborted_task_is_not_timed(self):
+        """Requeued rather than finished: it gets timed when it runs."""
+        result = self._runner()._interpret(self._state("abort"), _task_stub(), "")
+        assert result["status"] == STATUS_PENDING
+        assert "seconds" not in result
+
+    def test_a_worker_that_answered_keeps_its_own_timing(self):
+        result = self._runner()._interpret(
+            self._state(None), _task_stub(), '{"status": "ok", "seconds": 0.25}'
+        )
+        assert result["seconds"] == 0.25

@@ -688,6 +688,14 @@ class Batch:
         self._retire(state)
 
     def _interpret(self, state: WorkerState, task: Task, line: str) -> dict[str, Any]:
+        # Every outcome carries how long it took, including the ones where
+        # the worker never got to say so. A conversion killed for time or
+        # memory is exactly the one worth timing, and those were the rows
+        # that had no duration at all: of 2,261 timeouts in the corpus,
+        # 2,202 recorded nothing, and every memory kill and crash recorded
+        # nothing. The supervisor knows when it dispatched the task, so it
+        # can answer even when the worker cannot.
+        elapsed = round(time.time() - state.started, 3)
         if line:
             try:
                 return json.loads(line)
@@ -695,6 +703,7 @@ class Batch:
                 return {
                     "status": CLASS_ERROR,
                     "message": f"unparseable result: {line[:200]}",
+                    "seconds": elapsed,
                 }
         # EOF: the worker is gone. Either we killed it or it crashed.
         proc = state.proc
@@ -704,11 +713,13 @@ class Batch:
             return {
                 "status": CLASS_TIMEOUT,
                 "message": (
-                    f"killed after {time.time() - state.started:.0f}s; Python stack "
+                    f"killed after {elapsed:.0f}s; Python stack "
                     f"at the hang is in logs/worker-{state.index}.log"
                 ),
+                "seconds": elapsed,
             }
         if state.kill_reason == "abort":
+            # Requeued, not finished: it will be timed when it runs.
             return {"status": STATUS_PENDING}
         if state.kill_reason == "memory":
             return {
@@ -717,6 +728,7 @@ class Batch:
                     f"killed for memory: {state.kill_detail}. Retry with fewer "
                     "workers (-j) or a higher --max-rss-gb"
                 ),
+                "seconds": elapsed,
             }
         detail = f"signal {-code}" if code is not None and code < 0 else f"exit {code}"
         return {
@@ -725,6 +737,7 @@ class Batch:
                 f"worker died ({detail}); faulthandler stack, if any, is in "
                 f"logs/worker-{state.index}.log"
             ),
+            "seconds": elapsed,
         }
 
     def _record(self, task: Task, result: dict[str, Any]) -> None:
