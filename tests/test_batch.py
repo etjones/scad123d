@@ -11,11 +11,13 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from scad123d.batch import (
     CLASS_CRASH,
+    CLASS_MEMORY,
     CLASS_OK,
     CLASS_TIMEOUT,
     STATUS_PENDING,
@@ -547,3 +549,85 @@ def test_requeued_files_come_before_never_seen_ones(fake_batch):
     tasks = batch.plan(order="shuffle", limit=2)
     assert tasks[0].path.endswith("bad.scad") and tasks[0].retry
     assert not tasks[1].retry
+
+
+def _task_stub():
+    return SimpleNamespace(path="/tmp/x.scad", siblings=())
+
+
+class TestKilledWorkersAreStillTimed:
+    """A conversion killed for time or memory is exactly the one worth
+    timing, and those were the rows with no duration at all: of 2,261
+    timeouts in the corpus 2,202 recorded nothing, and every memory kill
+    and crash recorded nothing. The supervisor knows when it dispatched
+    the task, so it can answer even when the worker cannot."""
+
+    @staticmethod
+    def _state(reason, detail=""):
+        state = SimpleNamespace(
+            index=1,
+            started=time.time() - 12.5,
+            proc=None,
+            kill_reason=reason,
+            kill_detail=detail,
+        )
+        return state
+
+    @staticmethod
+    def _runner():
+        return Batch.__new__(Batch)
+
+    @pytest.mark.parametrize(
+        ("reason", "status"),
+        [("timeout", CLASS_TIMEOUT), ("memory", CLASS_MEMORY), (None, CLASS_CRASH)],
+    )
+    def test_a_killed_worker_records_its_elapsed_time(self, reason, status):
+        result = self._runner()._interpret(
+            self._state(reason, "4.0 GB"), _task_stub(), ""
+        )
+        assert result["status"] == status
+        assert result["seconds"] == pytest.approx(12.5, abs=1.0)
+
+    def test_an_aborted_task_is_not_timed(self):
+        """Requeued rather than finished: it gets timed when it runs."""
+        result = self._runner()._interpret(self._state("abort"), _task_stub(), "")
+        assert result["status"] == STATUS_PENDING
+        assert "seconds" not in result
+
+    def test_a_worker_that_answered_keeps_its_own_timing(self):
+        result = self._runner()._interpret(
+            self._state(None), _task_stub(), '{"status": "ok", "seconds": 0.25}'
+        )
+        assert result["seconds"] == 0.25
+
+
+def test_the_cap_in_force_is_recorded(tmp_path):
+    """`seconds` alone cannot tell "hit the wall" from "took that long",
+    and a ledger accumulates runs at different caps."""
+    ledger = Ledger(tmp_path / "l.sqlite")
+    ledger.discover("/tmp/a.scad", 1, 1.0, "sha")
+    ledger.record("/tmp/a.scad", CLASS_TIMEOUT, seconds=60.1, timeout_s=60.0)
+    row = ledger._db.execute(
+        "select status, seconds, timeout_s from files where path='/tmp/a.scad'"
+    ).fetchone()
+    assert row == (CLASS_TIMEOUT, 60.1, 60.0)
+    ledger.close()
+
+
+def test_an_older_ledger_gains_the_column(tmp_path):
+    """Ledgers predating this column must open, not fail."""
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE files (path TEXT PRIMARY KEY, size INTEGER, mtime REAL,"
+        " sha256 TEXT, status TEXT NOT NULL, message TEXT, seconds REAL,"
+        " attempts INTEGER NOT NULL DEFAULT 0, meshed TEXT, duplicate_of TEXT,"
+        " updated REAL)"
+    )
+    con.commit()
+    con.close()
+    ledger = Ledger(path)
+    assert "timeout_s" in {r[1] for r in ledger._db.execute("PRAGMA table_info(files)")}
+    ledger.close()

@@ -123,6 +123,14 @@ class Ledger:
             ("volume", "REAL"),
             ("scad_volume", "REAL"),
             ("colors", "TEXT"),
+            # The cap in force for this conversion. A timeout's `seconds`
+            # is that cap, not a duration: the model wanted longer and we
+            # stopped it. Recording which cap makes a row's timing
+            # interpretable on its own, and comparable only against rows
+            # that ran under the same one -- a ledger accumulates runs at
+            # different settings, so `seconds` alone cannot tell "hit the
+            # wall" from "took that long".
+            ("timeout_s", "REAL"),
         ):
             if column not in present:
                 self._db.execute(f"ALTER TABLE files ADD COLUMN {column} {kind}")
@@ -236,12 +244,14 @@ class Ledger:
         volume: float | None = None,
         scad_volume: float | None = None,
         colors: dict[str, float] | None = None,
+        timeout_s: float | None = None,
     ) -> None:
         with self._lock:
             self._db.execute(
                 "UPDATE files SET status=?, message=?, seconds=?, meshed=?,"
                 " duplicate_of=?, traceback=?, warnings=?, stage=?, volume=?,"
-                " scad_volume=?, colors=?, attempts=attempts+1, updated=? WHERE path=?",
+                " scad_volume=?, colors=?, timeout_s=?, attempts=attempts+1,"
+                " updated=? WHERE path=?",
                 (
                     status,
                     message,
@@ -254,6 +264,7 @@ class Ledger:
                     volume,
                     scad_volume,
                     json.dumps(colors) if colors else None,
+                    timeout_s,
                     time.time(),
                     path,
                 ),
@@ -688,6 +699,14 @@ class Batch:
         self._retire(state)
 
     def _interpret(self, state: WorkerState, task: Task, line: str) -> dict[str, Any]:
+        # Every outcome carries how long it took, including the ones where
+        # the worker never got to say so. A conversion killed for time or
+        # memory is exactly the one worth timing, and those were the rows
+        # that had no duration at all: of 2,261 timeouts in the corpus,
+        # 2,202 recorded nothing, and every memory kill and crash recorded
+        # nothing. The supervisor knows when it dispatched the task, so it
+        # can answer even when the worker cannot.
+        elapsed = round(time.time() - state.started, 3)
         if line:
             try:
                 return json.loads(line)
@@ -695,6 +714,7 @@ class Batch:
                 return {
                     "status": CLASS_ERROR,
                     "message": f"unparseable result: {line[:200]}",
+                    "seconds": elapsed,
                 }
         # EOF: the worker is gone. Either we killed it or it crashed.
         proc = state.proc
@@ -704,11 +724,13 @@ class Batch:
             return {
                 "status": CLASS_TIMEOUT,
                 "message": (
-                    f"killed after {time.time() - state.started:.0f}s; Python stack "
+                    f"killed after {elapsed:.0f}s; Python stack "
                     f"at the hang is in logs/worker-{state.index}.log"
                 ),
+                "seconds": elapsed,
             }
         if state.kill_reason == "abort":
+            # Requeued, not finished: it will be timed when it runs.
             return {"status": STATUS_PENDING}
         if state.kill_reason == "memory":
             return {
@@ -717,6 +739,7 @@ class Batch:
                     f"killed for memory: {state.kill_detail}. Retry with fewer "
                     "workers (-j) or a higher --max-rss-gb"
                 ),
+                "seconds": elapsed,
             }
         detail = f"signal {-code}" if code is not None and code < 0 else f"exit {code}"
         return {
@@ -725,6 +748,7 @@ class Batch:
                 f"worker died ({detail}); faulthandler stack, if any, is in "
                 f"logs/worker-{state.index}.log"
             ),
+            "seconds": elapsed,
         }
 
     def _record(self, task: Task, result: dict[str, Any]) -> None:
@@ -734,6 +758,7 @@ class Batch:
         fields = {
             "message": result.get("message"),
             "seconds": result.get("seconds"),
+            "timeout_s": self.timeout,
             "meshed": result.get("meshed") or None,
             "traceback": result.get("traceback"),
             "warnings": result.get("openscad_warnings") or None,
