@@ -173,16 +173,30 @@ def _rgba(shape: Shape) -> tuple | None:
     return tuple(shape.color) if shape.color is not None else None
 
 
-def _color_leaves(shapes: Iterable[Shape]) -> list[Shape]:
+def _color_leaves(shapes: Iterable[Shape], acc: Location | None = None) -> list[Shape]:
     """Expand colorless Compounds whose children carry authored colors,
     so partitioning sees each colored body -- a nested disjoint colored
-    group arrives as such a Compound."""
+    group arrives as such a Compound.
+
+    Ancestor locations are composed onto each expanded child, the same
+    reason ``world_leaves`` does it: a moved Compound carries the move on
+    itself and its children stay in the frame they were built in, so a
+    child handed to a boolean without it is in the wrong place. Expanding
+    without composing put every body of ``translate([20, 0, 0]) union() {
+    color(...) ... }`` back at the origin, where the partition cut a
+    cylinder against a sphere it believed was sitting on top of it. The
+    volumes then disagreed with the plain fuse, and every color in the
+    model was dropped to return correct geometry.
+    """
     out: list[Shape] = []
     for shape in shapes:
         if shape._color is None and shape.children and _carries_color(shape):
-            out.extend(_color_leaves(list(shape.children)))
-        else:
+            here = (acc or Location()) * shape.location
+            out.extend(_color_leaves(list(shape.children), here))
+        elif acc is None:
             out.append(shape)
+        else:
+            out.append(_recolored(shape.moved(acc), _rgba(shape), shape.label))
     return out
 
 
@@ -727,22 +741,59 @@ def assemble(bodies: list[Shape], label: str = "") -> Shape:
 
 
 def checked(bodies: list[Shape], plain: Shape, operation: str) -> Shape:
-    """The color-preserving result of *operation*, or the plain boolean
-    result when the pieces do not add up to it: correct geometry beats
-    color fidelity, and the substitution is announced, never silent."""
+    """The color-preserving result of *operation*, or as much of it as adds
+    up: correct geometry beats color fidelity, and the substitution is
+    announced, never silent."""
     if not bodies:
         return plain
     result = assemble(bodies)
-    if not math.isclose(
+    if math.isclose(
         total_volume(result), total_volume(plain), rel_tol=1e-6, abs_tol=VOLUME_EPS
     ):
+        return result
+    patched = _with_missing_material(bodies, plain)
+    if patched is not None:
         warnings.warn(
-            f"solid123d: color-preserving {operation} lost volume to a boolean "
-            "glitch; returning the plain result without colors",
+            f"solid123d: color-preserving {operation} did not account for all "
+            "of the material; the remainder is carried as an uncolored body "
+            "so the colors that did partition correctly survive",
             stacklevel=4,
         )
-        return plain
-    return result
+        return patched
+    warnings.warn(
+        f"solid123d: color-preserving {operation} lost volume to a boolean "
+        "glitch; returning the plain result without colors",
+        stacklevel=4,
+    )
+    return plain
+
+
+def _with_missing_material(bodies: list[Shape], plain: Shape) -> Shape | None:
+    """*bodies* plus whatever of *plain* they failed to account for.
+
+    Dropping every color because one body came up short is a heavy price:
+    a model whose far group partitions badly lost the colors of parts
+    nowhere near it. The material the pieces missed is recoverable -- it is
+    ``plain`` minus what they cover -- and carrying it as an uncolored body
+    keeps the total right while leaving every color that did partition
+    correctly in place.
+
+    None when that cut fails or does not restore the volume, in which case
+    the caller falls back to the plain result as before. A wrong total is
+    never worth a right color.
+    """
+    try:
+        missing = _cut(bodies_of(plain), _operands(bodies))
+    except Exception:  # noqa: BLE001 -- any failure means fall back to plain
+        return None
+    if total_volume(missing) <= VOLUME_EPS:
+        return None
+    patched = assemble([*bodies, missing])
+    if not math.isclose(
+        total_volume(patched), total_volume(plain), rel_tol=1e-6, abs_tol=VOLUME_EPS
+    ):
+        return None
+    return patched
 
 
 def baked_topods(shape: TopoDS_Shape) -> TopoDS_Shape:

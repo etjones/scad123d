@@ -18,6 +18,7 @@ real STEP output in slicers. Three regimes, gated on authored color:
 import math
 
 import pytest
+from build123d import Box, Color, Compound, Location, Sphere
 
 import solid123d as s
 
@@ -185,3 +186,78 @@ class TestColorGroups:
         shape = s.color("red", alpha=0.5)(s.cube(1))
         assert tuple(shape.color) == pytest.approx((1.0, 0.0, 0.0, 0.5))
         assert math.isclose(tuple(shape.color)[3], 0.5)
+
+
+def _colored(shape, rgb):
+    shape.color = Color(*rgb)
+    return shape
+
+
+class TestPartitionUsesWorldCoordinates:
+    """A moved Compound carries the move on itself and its children stay in
+    the frame they were built in, so expanding a nested colored group
+    without composing the ancestor location hands the partition bodies in
+    the wrong place."""
+
+    def test_a_moved_colored_group_partitions_where_it_sits(self):
+        from solid123d._common import _color_leaves
+
+        inner = Compound(
+            children=[
+                _colored(Box(10, 10, 10), (1, 0, 0)),
+                _colored(Sphere(6), (1, 0, 1)),
+            ]
+        )
+        moved = inner.moved(Location((20, 0, 0)))
+        leaves = _color_leaves([moved])
+        assert len(leaves) == 2
+        for leaf in leaves:
+            box = leaf.bounding_box()
+            assert box.min.X > 5, (
+                f"leaf left behind at x={box.min.X:.1f}; the partition would "
+                "cut it against geometry 20mm away that it overlaps there"
+            )
+
+    def test_an_unmoved_group_is_unchanged(self):
+        from solid123d._common import _color_leaves
+
+        inner = Compound(
+            children=[
+                _colored(Box(10, 10, 10), (1, 0, 0)),
+                _colored(Sphere(6), (1, 0, 1)),
+            ]
+        )
+        leaves = _color_leaves([inner])
+        assert len(leaves) == 2
+        assert all(leaf.bounding_box().min.X < 0 for leaf in leaves)
+
+
+class TestPartialColorSalvage:
+    """Dropping every color because one body came up short is a heavy
+    price: a model whose far group partitioned badly lost the colors of
+    parts nowhere near it."""
+
+    def test_the_unaccounted_material_is_carried_uncolored(self):
+        from solid123d._common import checked, total_volume
+
+        plain = Box(20, 10, 10)  # 2000
+        covered = _colored(Box(10, 10, 10).moved(Location((-5, 0, 0))), (1, 0, 0))
+        result = checked([covered], plain, "union")
+        assert total_volume(result) == pytest.approx(2000, rel=1e-6)
+        colors = (
+            [b.color for b in result.children] if result.children else [result.color]
+        )
+        assert any(c is not None for c in colors), "the red body must survive"
+        assert any(c is None for c in colors), "the remainder must be uncolored"
+
+    def test_overlapping_bodies_still_drop_color(self):
+        """Bodies that overlap would export doubled material, so correct
+        geometry wins there and the plain result is returned."""
+        from solid123d._common import checked, total_volume
+
+        plain = Box(10, 10, 10)
+        a = _colored(Box(10, 10, 10), (1, 0, 0))
+        b = _colored(Box(10, 10, 10), (0, 0, 1))  # the same material twice
+        with pytest.warns(UserWarning, match="lost volume"):
+            result = checked([a, b], plain, "union")
+        assert total_volume(result) == pytest.approx(1000, rel=1e-6)
