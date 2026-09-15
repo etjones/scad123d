@@ -5,6 +5,7 @@ import pytest
 from build123d import Box, Pos, Shape, Sphere
 
 from solid123d import occt_workarounds
+from solid123d._common import total_volume
 
 EXPECTED_CUT = 87.9646
 EXPECTED_FUSE = 599.9646
@@ -188,3 +189,51 @@ class TestNestedCompoundOperands:
         bounds = occt_workarounds._volume_bounds(BRepAlgoAPI_Fuse(), [a], [b])
         assert bounds == pytest.approx((1000, 2000))
         assert not occt_workarounds._plausible(-1500, bounds)
+
+
+class TestEmptyIntersectionIsChecked:
+    """OCCT returns an empty Common for geometry it merely found hard. A
+    thread built the way every OpenSCAD thread library builds one -- small
+    polyhedra unioned, then trimmed by intersecting a box -- came back
+    empty, and the model it came from was 18% short with no warning
+    anywhere: the shapes were valid and BOPAlgo_ArgumentAnalyzer flagged
+    nothing, because the sliver faces the union left are just above
+    Precision::Confusion.
+    """
+
+    def test_shapes_that_cannot_meet_are_not_retried(self):
+        """An empty answer from separated shapes is the right answer, and
+        the bounding boxes settle it without paying for four retries."""
+        from solid123d import booleans
+
+        calls = []
+        real = booleans.boolean
+
+        def counted(args, tools, op):
+            calls.append(op)
+            return real(args, tools, op)
+
+        original, booleans.boolean = booleans.boolean, counted
+        try:
+            out = booleans.intersection()(Box(1, 1, 1), Pos(50, 0, 0) * Box(1, 1, 1))
+        finally:
+            booleans.boolean = original
+        assert total_volume(out) == 0
+        assert len(calls) == 1, "a separated pair must not be retried"
+
+    def test_overlapping_boxes_that_are_genuinely_empty_still_return_empty(self):
+        """Overlapping bounding boxes are not overlapping shapes. Two
+        L-shapes can share a box and touch nothing; the retries run and the
+        empty answer stands, rather than becoming an error."""
+        from solid123d import booleans
+
+        a = Box(10, 2, 2)
+        b = Pos(0, 8, 8) * Box(2, 10, 2)
+        out = booleans.intersection()(a, b)
+        assert total_volume(out) == pytest.approx(0, abs=1e-9)
+
+    def test_an_ordinary_intersection_is_unchanged(self):
+        from solid123d import booleans
+
+        out = booleans.intersection()(Box(10, 10, 10), Pos(5, 0, 0) * Box(10, 10, 10))
+        assert total_volume(out) == pytest.approx(500, rel=1e-9)
