@@ -32,6 +32,12 @@ from ._common import (
 )
 from .hull import analytic_hull
 from .minkowski import analytic_minkowski
+from .occt_workarounds import BOOLEAN_RETRY_FRACTIONS
+
+# Faces on an operand before an empty intersection is worth a second
+# look. Well above anything a handful of primitives produces, well
+# below the thousands a fused thread or lattice carries.
+SLIVER_FACE_COUNT = 200
 
 Applier = Callable[..., Shape]
 
@@ -97,7 +103,88 @@ def _intersect_plain(shapes: list[Shape]) -> Shape:
     """
     result = shapes[0]
     for other in shapes[1:]:
-        result = boolean([result], [other], BRepAlgoAPI_Common())
+        result = _common_or_retry(result, other)
+    return result
+
+
+def _boxes_overlap(a: Shape, b: Shape) -> bool:
+    """Do these two shapes' bounding boxes share any volume?
+
+    Conservative on purpose: boxes that overlap say nothing about whether
+    the shapes do, so this can only ever raise a suspicion. Boxes that do
+    *not* overlap are proof the shapes cannot, which is the direction that
+    matters here.
+    """
+    one, two = a.bounding_box(), b.bounding_box()
+    return (
+        one.min.X < two.max.X
+        and two.min.X < one.max.X
+        and one.min.Y < two.max.Y
+        and two.min.Y < one.max.Y
+        and one.min.Z < two.max.Z
+        and two.min.Z < one.max.Z
+    )
+
+
+def _sliver_prone(a: Shape, b: Shape) -> bool:
+    """Is either operand complex enough to carry the slivers that make OCCT
+    give up?
+
+    The retries are not free -- four more booleans on shapes that may be
+    large -- so they have to be earned. Slivers come from fusing many small
+    bodies: the thread that prompted this is 288 polyhedra unioned into
+    5,496 faces, 1,218 of them under a millionth of a square millimetre.
+    Two boxes have twelve faces between them and no such hazard, and an
+    empty intersection of simple shapes is simply an empty intersection.
+
+    Without this gate a model whose intersections are legitimately empty
+    pays for the retries on every one: infinitycube.scad went from 31
+    seconds to 138, straight past the timeout.
+    """
+    return max(len(a.faces()), len(b.faces())) >= SLIVER_FACE_COUNT
+
+
+def _common_or_retry(a: Shape, b: Shape) -> Shape:
+    """The common part of *a* and *b*, retried fuzzily if it comes back
+    empty from shapes whose bounding boxes overlap.
+
+    An empty intersection of two shapes that cannot possibly meet is the
+    right answer, and the bounding boxes settle that for free. An empty one
+    from shapes that *do* share a box is a claim worth checking, because
+    OCCT will return it for geometry it merely found hard.
+
+    A thread built the way every OpenSCAD thread library builds one -- 288
+    small polyhedra unioned, then trimmed to length by intersecting a box
+    -- came back empty. The thread was valid, the box was valid, and
+    BOPAlgo_ArgumentAnalyzer flagged nothing, because the 1,218 sliver
+    faces the union left behind are all just above Precision::Confusion.
+    OCCT is not indifferent to them the way a mesh kernel is. A fuzzy value
+    coarser than the slivers and finer than the real features returns the
+    answer: 39.53 against the zero the plain call gave, and the model it
+    came from went from 18% short to 0.1%.
+    """
+    result = boolean([a], [b], BRepAlgoAPI_Common())
+    # Topology, not mass properties: OCCT recomputes those from scratch on
+    # every access, and this runs on every intersection in every model. An
+    # empty result has nothing in it to find, which is the only question
+    # being asked here.
+    if result.solids() or result.faces():
+        return result
+    if not _sliver_prone(a, b) or not _boxes_overlap(a, b):
+        return result
+    diagonal = max(a.bounding_box().diagonal, b.bounding_box().diagonal)
+    for fraction in BOOLEAN_RETRY_FRACTIONS:
+        operation = BRepAlgoAPI_Common()
+        operation.SetFuzzyValue(diagonal * fraction)
+        try:
+            candidate = boolean([a], [b], operation)
+        except Exception:  # noqa: BLE001, S112 -- a coarser value may still work
+            continue
+        if candidate.solids() or candidate.faces():
+            return candidate
+    # Every retry still says empty. It may genuinely be -- overlapping
+    # boxes are not overlapping shapes -- so this is not an error, and the
+    # empty result stands.
     return result
 
 
