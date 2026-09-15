@@ -599,3 +599,35 @@ class TestKilledWorkersAreStillTimed:
             self._state(None), _task_stub(), '{"status": "ok", "seconds": 0.25}'
         )
         assert result["seconds"] == 0.25
+
+
+def test_the_cap_in_force_is_recorded(tmp_path):
+    """`seconds` alone cannot tell "hit the wall" from "took that long",
+    and a ledger accumulates runs at different caps."""
+    ledger = Ledger(tmp_path / "l.sqlite")
+    ledger.discover("/tmp/a.scad", 1, 1.0, "sha")
+    ledger.record("/tmp/a.scad", CLASS_TIMEOUT, seconds=60.1, timeout_s=60.0)
+    row = ledger._db.execute(
+        "select status, seconds, timeout_s from files where path='/tmp/a.scad'"
+    ).fetchone()
+    assert row == (CLASS_TIMEOUT, 60.1, 60.0)
+    ledger.close()
+
+
+def test_an_older_ledger_gains_the_column(tmp_path):
+    """Ledgers predating this column must open, not fail."""
+    import sqlite3
+
+    path = tmp_path / "old.sqlite"
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE files (path TEXT PRIMARY KEY, size INTEGER, mtime REAL,"
+        " sha256 TEXT, status TEXT NOT NULL, message TEXT, seconds REAL,"
+        " attempts INTEGER NOT NULL DEFAULT 0, meshed TEXT, duplicate_of TEXT,"
+        " updated REAL)"
+    )
+    con.commit()
+    con.close()
+    ledger = Ledger(path)
+    assert "timeout_s" in {r[1] for r in ledger._db.execute("PRAGMA table_info(files)")}
+    ledger.close()

@@ -123,6 +123,14 @@ class Ledger:
             ("volume", "REAL"),
             ("scad_volume", "REAL"),
             ("colors", "TEXT"),
+            # The cap in force for this conversion. A timeout's `seconds`
+            # is that cap, not a duration: the model wanted longer and we
+            # stopped it. Recording which cap makes a row's timing
+            # interpretable on its own, and comparable only against rows
+            # that ran under the same one -- a ledger accumulates runs at
+            # different settings, so `seconds` alone cannot tell "hit the
+            # wall" from "took that long".
+            ("timeout_s", "REAL"),
         ):
             if column not in present:
                 self._db.execute(f"ALTER TABLE files ADD COLUMN {column} {kind}")
@@ -236,12 +244,14 @@ class Ledger:
         volume: float | None = None,
         scad_volume: float | None = None,
         colors: dict[str, float] | None = None,
+        timeout_s: float | None = None,
     ) -> None:
         with self._lock:
             self._db.execute(
                 "UPDATE files SET status=?, message=?, seconds=?, meshed=?,"
                 " duplicate_of=?, traceback=?, warnings=?, stage=?, volume=?,"
-                " scad_volume=?, colors=?, attempts=attempts+1, updated=? WHERE path=?",
+                " scad_volume=?, colors=?, timeout_s=?, attempts=attempts+1,"
+                " updated=? WHERE path=?",
                 (
                     status,
                     message,
@@ -254,6 +264,7 @@ class Ledger:
                     volume,
                     scad_volume,
                     json.dumps(colors) if colors else None,
+                    timeout_s,
                     time.time(),
                     path,
                 ),
@@ -747,6 +758,7 @@ class Batch:
         fields = {
             "message": result.get("message"),
             "seconds": result.get("seconds"),
+            "timeout_s": self.timeout,
             "meshed": result.get("meshed") or None,
             "traceback": result.get("traceback"),
             "warnings": result.get("openscad_warnings") or None,
