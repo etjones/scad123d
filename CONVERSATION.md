@@ -2432,3 +2432,34 @@ Done, both halves verified end to end on macOS.
   `brew trust`), `pkgconf` and `clang-format` added, Ninja Release build.
 - Limits noted in the plan doc: GUI blocks during conversion, no stdout,
   Windows quoting untested.
+
+### User
+
+> Start Phase 1
+
+### Assistant
+
+Phase 1 baseline is on `feature/step-export` in the OpenSCAD checkout
+(commit "Built-in STEP export through an OpenCASCADE B-rep evaluator").
+`ENABLE_OCCT=ON` builds against Homebrew OCCT 7.9.3.
+
+- `OcctBuilder`: recursive walk of the node tree (no visitor state
+  machine): primitives, transforms (uniform-scale/rotation via `gp_Trsf`,
+  shear via `GTransform`, solids re-oriented outward after reflections,
+  2D stays in XY, flattening removes), booleans, linear/rotate extrude
+  (scale via lofts, twist falls back), polyhedron, polygon, text, colors
+  (outermost wins, partitioned unions, cutters don't paint). Everything
+  else renders through `GeometryEvaluator` and is sewn into solids.
+- `OcctBoolean`: N-ary ops on decomposed bodies, volume bounds,
+  gained-pieces, material-left-in-tools, fuzzy ladder, guarded unify.
+- `export_step_native`: XDE document, product per body, grouped by color.
+- `OcctBridge`: the only file that includes both OpenSCAD logging/tree/
+  PolySet and no OCCT, because OCCT's `class Message` collides with
+  `printutils.h`.
+- Verified: 8 of 14 scad123d fixtures match to float precision, the
+  other 6 are hull/minkowski fallbacks equal to OpenSCAD's mesh to 1e-6.
+  Found and fixed: a 6-significant-figure rotation tripping the
+  uniform-scale detector (cylinder became B-spline, +0.86% volume).
+- Colors verified on a six-case model; GUI menu export verified through
+  the built-in engine. Preferences fields added (engine, $fn threshold).
+- Open items recorded in the plan doc.

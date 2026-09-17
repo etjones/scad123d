@@ -91,6 +91,35 @@ then `cmake -B build -G Ninja -DEXPERIMENTAL=ON
 
 ### Phase 1: native OCCT evaluator (3 to 5 weeks for the baseline)
 
+**Status (2026-09-17): baseline landed** on `feature/step-export` (second
+commit). `ENABLE_OCCT=ON` links Homebrew OCCT 7.9.3 and adds
+`src/geometry/occt/` (`OcctBuilder`, `OcctBoolean`, `OcctMesh`,
+`OcctBridge`) and `src/io/export_step_native.cc`. Settings
+`export-step/engine` (`builtin` default, `external`) and
+`export-step/facet-threshold` (20), also in Preferences > Advanced.
+Verified against `tests/fixtures/*.csg` + `metrics.json` with the
+scratchpad checker (`step_metrics.py`, needs OCP): booleans, extrusions,
+facets, params, polyhedron, primitives, transforms, twod match to ~1e-14;
+the five hull/minkowski fixtures take the mesh path and match OpenSCAD's
+own render to 1e-6 (the fixtures expect the analytic rungs, Phase 2).
+Colors verified on a six-case model (grouping, precedence, outer-wins,
+cutter-does-not-paint). GUI menu export runs through the built-in engine.
+
+Lessons: OCCT's global `class Message` collides with `printutils.h`
+(reached via `Tree.h` and `PolySet.h`), hence `OcctBridge`; a rigid
+transform read from six-significant-figure `.csg` text has column norms
+differing by ~3e-7, so the uniform-scale detector uses 1e-6 or the
+cylinder is approximated as B-splines; STEP writes pure red/green/blue
+as `DRAUGHTING_PRE_DEFINED_COLOUR`, not `COLOUR_RGB`.
+
+Still open in Phase 1: progress/cancel (the GUI blocks during a long
+build), the fuse "bodies overlap" invariant (only piece-count and volume
+bounds are ported), non-manifold polyhedron handling matches OpenSCAD
+only for free edges, an in-tree regression test (the checker needs OCP;
+a metrics debug export would let ctest compare JSON), cut-face colors
+from cutters as the preview paints them (contract says no; preview says
+yes; needs a decision), Windows/Linux builds.
+
 **Build.** `option(ENABLE_OCCT ...)` default OFF, `find_package(OpenCASCADE)`,
 link only the toolkits needed: TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
 TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool TKShHealing TKOffset TKFillet TKMesh
