@@ -2406,3 +2406,29 @@ defaulting to `uvx scad2step` without bundling `uv` (stopgap; first run
 downloads ~200 MB). Fallback follows the user's `--backend`: Manifold is fast
 and rejects non-manifold input, CGAL is exact and slow, and the fallback's
 job is to reproduce whatever OpenSCAD would render.
+
+### User
+
+> Yes, start Phase 0
+
+### Assistant
+
+Done, both halves verified end to end on macOS.
+
+- **scad123d PR #51** (`feature/csg-input`): `scad2step` accepts a `.csg`
+  input; `-D`/`-p` rejected for it. Two tests, suite 748 passed.
+- **OpenSCAD branch `feature/step-export`** (local commit on the upstream
+  checkout, not pushed): `FileFormat::STEP`, `src/io/export_step.{h,cc}`
+  (temp `.csg` + `popen` of the configured command, output forwarded to the
+  log), `-o model.step` in the CLI with `-O export-step/command=...`, the
+  `Export as STEP...` menu item mirroring the CSG case, and a
+  Preferences > Advanced > STEP Export command field defaulting to
+  `uvx scad2step`.
+- Verified: CLI export with the local checkout's scad2step and with the
+  released 0.8.0 via `uvx` (works today, since OpenSCAD re-exports a `.csg`
+  input); GUI menu item exercised through the save dialog, file written,
+  console shows converter output.
+- First OpenSCAD build on this machine: Homebrew deps installed (tap needed
+  `brew trust`), `pkgconf` and `clang-format` added, Ninja Release build.
+- Limits noted in the plan doc: GUI blocks during conversion, no stdout,
+  Windows quoting untested.

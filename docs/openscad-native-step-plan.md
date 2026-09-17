@@ -76,6 +76,19 @@ plus a user-facing stopgap, not as a stepping stone.
 
 Recommendation: do Phase 0, skip embedded Python entirely.
 
+**Status (2026-09-17): done, on branch `feature/step-export` in the
+OpenSCAD checkout** (one commit, not pushed; scad123d side is PR #51).
+Verified on macOS: `openscad -o demo.step demo.scad` and the menu item both
+produce a STEP file, the temp `.csg` is removed, converter output lands in
+the console. The default `uvx scad2step` works with the released scad123d
+0.8.0 too, because OpenSCAD accepts a `.csg` file as input and re-exports
+it; PR #51 just skips that round trip. Known limits: the GUI blocks while
+the converter runs (no progress or cancel), STEP to stdout is refused, and
+Windows quoting of the command line is untested. Build notes: Homebrew deps
+per `scripts/macosx-build-homebrew.sh` (the tap must be `brew trust`ed),
+then `cmake -B build -G Ninja -DEXPERIMENTAL=ON
+-DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix qscintilla2)"`.
+
 ### Phase 1: native OCCT evaluator (3 to 5 weeks for the baseline)
 
 **Build.** `option(ENABLE_OCCT ...)` default OFF, `find_package(OpenCASCADE)`,
