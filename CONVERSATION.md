@@ -2489,3 +2489,21 @@ calls, because `SphereNode::createGeometry` returns an empty PolySet for
 r <= 0. So current OpenSCAD does not build a polyhedron from them
 either; the evaluator's empty result matches. If an older release did,
 that behavior is gone upstream.
+
+### User
+
+> Is there a reason you didn't port the revolved translates rung, or just
+> that it was a lot of code and you weren't sure how specific we should be?
+
+### Assistant
+
+Only the second. Ported it (`OcctRevolvedHull.cc`, fourth commit on
+`feature/step-export`): support-function envelope of the (z, r) profile,
+normal-fan realization (prisms along polygon edges, revolutions around
+vertices), ruled loft for all-line profiles, axis conjugation for a
+tilted shared axis, Steiner volume self-check. Seven idiom files match
+the Python pipeline exactly. Two fallback bugs surfaced and were fixed:
+rotate_extrude's axis check (padded bbox) and collinear zero-area
+triangles from Manifold's hull leaving free edges after sewing (now
+repaired before sewing). All 16 idioms and all 13 fixtures pass. Every
+solid123d rung is now in the C++ evaluator.

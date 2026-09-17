@@ -217,12 +217,19 @@ Components are exploded before classification. All 14 fixtures match to
 ~1e-13; `scratch/openscad-native/idioms/compare.py` checks eight idiom
 files against the Python pipeline (all match to 1e-6, same face counts).
 
-**Not yet ported:** the revolved-translates rung (`hull() cornercopy()`
-of identical revolution solids: tapered pads, filleted posts, turned
-legs; solid123d `hull.py` lines 619 to 1210, the largest single rung) and
-the coplanar-sphere "rounded coin" case (Rung 2.5, unexplored in Python
-too). Those subtrees take the mesh path today, matching OpenSCAD's
-render exactly.
+**Revolved-translates rung ported too** (fourth commit,
+`OcctRevolvedHull.cc`): seven idiom files (tapered pads, filleted posts,
+stacked bevels, turned leg, tilted axis, two posts, torus posts) match
+the Python pipeline exactly. Two fallback fixes came out of them:
+rotate_extrude's axis check used a tolerance-padded box, and Manifold's
+hull emits zero-area collinear triangles that left T-junctions after
+sewing; they are now repaired by inserting the middle vertex into the
+neighbor across the long edge. Fallback meshes are triangulated before
+sewing and coplanar triangles merged after, so a fallback region comes
+out with about a third of the faces the Python path produces.
+
+**Not ported:** only the coplanar-sphere "rounded coin" case (Rung 2.5,
+unexplored in Python too). Every rung solid123d has is now in.
 
 **Decision recorded (2026-09-17):** cut faces are not painted with the
 cutter's color, as the contract says; revisit only if upstream asks.
