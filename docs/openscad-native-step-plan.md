@@ -254,6 +254,24 @@ hull of circles (15 of 21 remaining 2D fallbacks in the corpus).
 
 ### Phase 3: packaging and upstreaming
 
+**Mac release built (2026-09-17):** `scripts/macosx-deploy-homebrew.sh
+build-release` in the OpenSCAD checkout produces
+`release-mac/OpenSCAD.app` (189 MB, arm64, Qt + OCCT + all Homebrew
+dylibs bundled, zero references to /opt/homebrew, ad-hoc signed) and
+`release-mac/OpenSCAD-<date>.dmg` (77 MB). Build recipe:
+`cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+-DENABLE_OCCT=ON -DEXPERIMENTAL=OFF -DENABLE_TESTS=OFF
+-DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix
+qscintilla2);$(brew --prefix opencascade)"`. `ENABLE_TESTS=OFF` because
+upstream's tests/CMakeLists.txt references an experimental-only test when
+EXPERIMENTAL is off (a pre-existing upstream issue). Ad-hoc signing means
+Gatekeeper will ask the user to allow it (right-click > Open, or
+`xattr -d com.apple.quarantine`); notarization needs an Apple developer
+identity. The project's `macosx-sanity-check.py` reports false
+"not found" errors for `@rpath`/`@loader_path` references that dyld
+resolves fine; a `DYLD_PRINT_LIBRARIES` trace shows every library
+loading from the bundle or the OS.
+
 macOS: OCCT into `macosx-build-dependencies.sh` and `macdeployqt` picks up
 the dylibs. Windows: msys2 `mingw-w64-opencascade` and the vcpkg manifest.
 Linux: distro `libocct-*-dev`. Each adds roughly 60 to 100 MB of libraries

@@ -2521,3 +2521,19 @@ Steiner volume 2rA + (pi r^2/2)P + 4/3 pi r^3). Tested rather than
 assumed: the revolved-translates rung already builds it exactly (three
 coin files match to 1e-13, 10 faces for a rectangle), so the ROADMAP's
 "unexplored Rung 2.5" note is stale. Plan doc updated.
+
+### User
+
+> Great. Let's build for a Mac release
+
+### Assistant
+
+Built `release-mac/OpenSCAD.app` and `OpenSCAD-2026.09.17.dmg` from a
+clean Release configuration (OCCT on, experimental off, tests off) with
+a new `scripts/macosx-deploy-homebrew.sh` (macdeployqt, scrub of
+Homebrew rpaths and install names, ad-hoc signing, dmg). One link error
+surfaced: the evaluator referenced the experimental-only RoofNode; now
+every unhandled polygon node falls back through AbstractPolyNode.
+Verified: no /opt/homebrew references, signature valid, a dyld trace
+shows all libraries from the bundle or the OS, CLI and GUI exports work
+from the sealed bundle. Not notarized (needs an Apple identity).
