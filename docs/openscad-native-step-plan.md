@@ -228,8 +228,14 @@ neighbor across the long edge. Fallback meshes are triangulated before
 sewing and coplanar triangles merged after, so a fallback region comes
 out with about a third of the faces the Python path produces.
 
-**Not ported:** only the coplanar-sphere "rounded coin" case (Rung 2.5,
-unexplored in Python too). Every rung solid123d has is now in.
+**Rung 2.5 (coplanar equal spheres, the "rounded coin") turns out to be
+covered by the revolved-translates rung:** a sphere is a solid of
+revolution about the plane normal, so the fan construction yields the
+exact shape (two flat polygon caps, a half-cylinder per edge, a
+spherical wedge per vertex). `coin_rect`, `coin_tri` and `coin_tilted`
+match the Steiner volume 2rA + (pi r^2/2)P + 4/3 pi r^3 to 1e-13. The
+Python ROADMAP entry predates phase B and is stale. Every rung solid123d
+has is now in, and this case besides.
 
 **Decision recorded (2026-09-17):** cut faces are not painted with the
 cutter's color, as the contract says; revisit only if upstream asks.

@@ -2507,3 +2507,17 @@ rotate_extrude's axis check (padded bbox) and collinear zero-area
 triangles from Manifold's hull leaving free edges after sewing (now
 repaired before sewing). All 16 idioms and all 13 fixtures pass. Every
 solid123d rung is now in the C++ evaluator.
+
+### User
+
+> Can you describe the geometry of the rounded coin case to me?
+
+### Assistant
+
+Described it (hull of equal spheres with coplanar, non-collinear
+centers = flat polygon of centers Minkowski a ball: two flat caps at
++-r, a half-cylinder per polygon edge, a spherical wedge per vertex;
+Steiner volume 2rA + (pi r^2/2)P + 4/3 pi r^3). Tested rather than
+assumed: the revolved-translates rung already builds it exactly (three
+coin files match to 1e-13, 10 faces for a rectangle), so the ROADMAP's
+"unexplored Rung 2.5" note is stale. Plan doc updated.
