@@ -205,6 +205,31 @@ for many minutes, and the GUI must stay cancellable.
 
 ### Phase 2: analytic rungs (3 to 4 weeks, optional, incremental)
 
+**Status (2026-09-17): the core rungs landed** (`src/geometry/occt/OcctHull.cc`,
+third commit on `feature/step-export`). Ported: equal-radius spheres
+(offset of the convex hull of centers; capsule when collinear), two
+spheres of any radii (sewn caps and tangent cone), parallel equal-radius
+cylinders sharing a span, all-polyhedral children (Manifold convex hull
+of the vertices, coplanar facets merged by the mesh builder), two discs,
+straight-edged polygons, and minkowski with a ball at the origin
+(sphere, circle, or a many-vertex tessellated kernel such as BOSL2's).
+Components are exploded before classification. All 14 fixtures match to
+~1e-13; `scratch/openscad-native/idioms/compare.py` checks eight idiom
+files against the Python pipeline (all match to 1e-6, same face counts).
+
+**Not yet ported:** the revolved-translates rung (`hull() cornercopy()`
+of identical revolution solids: tapered pads, filleted posts, turned
+legs; solid123d `hull.py` lines 619 to 1210, the largest single rung) and
+the coplanar-sphere "rounded coin" case (Rung 2.5, unexplored in Python
+too). Those subtrees take the mesh path today, matching OpenSCAD's
+render exactly.
+
+**Decision recorded (2026-09-17):** cut faces are not painted with the
+cutter's color, as the contract says; revisit only if upstream asks.
+`sphere(0)` inside `hull()` produces nothing in current OpenSCAD
+("Current top level object is empty", 2025.07 and master), so the
+evaluator's empty result for a zero-radius sphere matches.
+
 Port `solid123d/hull.py` (1298 lines) and `minkowski.py` rung by rung, each
 gated as today: attempt analytic, validate against a closed form, fall back
 to mesh on mismatch. Order by corpus frequency: minkowski with a

@@ -2463,3 +2463,29 @@ Phase 1 baseline is on `feature/step-export` in the OpenSCAD checkout
 - Colors verified on a six-case model; GUI menu export verified through
   the built-in engine. Preferences fields added (engine, $fn threshold).
 - Open items recorded in the plan doc.
+
+### User
+
+> Let's not color with the cutter's color. If we have to do it after
+> talking with upstream, we can add it then. Please proceed with Phase 2.
+> (Mid-turn:) One thing we have NOT handled in scad123d, but perhaps
+> should: the hull of r=0 spheres is a valid polyhedron in OpenSCAD, but
+> not in scad123d.
+
+### Assistant
+
+Phase 2 core rungs are in (`OcctHull.cc`, third commit on
+`feature/step-export`): equal-radius spheres, two spheres of any radii,
+parallel cylinders, polyhedral children (Manifold hull), two discs,
+polygons, and minkowski with a ball (sphere, circle, or tessellated
+kernel). All 14 fixtures match to ~1e-13; eight idiom files (BOSL2
+`cuboid(rounding)`, corner posts, keyhole, two-sphere hull, 2D minkowski)
+match the Python pipeline to 1e-6 with identical face counts. Not
+ported yet: the revolved-translates rung (the largest, ~600 lines).
+
+On `sphere(0)`: checked directly. Both the installed 2025.07 and master
+give "Current top level object is empty" for a hull of four `sphere(0)`
+calls, because `SphereNode::createGeometry` returns an empty PolySet for
+r <= 0. So current OpenSCAD does not build a polyhedron from them
+either; the evaluator's empty result matches. If an older release did,
+that behavior is gone upstream.
