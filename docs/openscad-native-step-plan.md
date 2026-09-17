@@ -266,6 +266,35 @@ hull of circles (15 of 21 remaining 2D fallbacks in the corpus).
 
 ### Phase 3: packaging and upstreaming
 
+**Universal macOS release (2026-09-17), through upstream's own path:**
+`scripts/macosx-build-dependencies.sh -d -a -x` builds all 27
+dependencies fat (arm64 + x86_64, macOS 12+) into `../libraries/install`
+(here `~/Dropbox/Projects/libraries` is a symlink to
+`~/openscad-libraries`, 697 MB, kept out of Dropbox); `build_opencascade`
+was added to the script (OCCT 7.9.3, modelling + OCAF + data exchange
+only, 17 min). Then `DEPLOYDIR=$PWD/build-universal
+scripts/release-common.sh -v <version>` with `-DENABLE_OCCT=ON` now in
+its macOS `CMAKE_CONFIG`. Result: `build-universal/OpenSCAD.app`, fat,
+269 MB, 26 OCCT dylibs bundled, no prefix references, runs under Rosetta
+too; ad-hoc signed and packaged as `OpenSCAD-<date>-universal.dmg`
+(107 MB). Environment the script assumes and does not set itself:
+`source scripts/setenv-macos.sh` first (pkg-config path, or harfbuzz
+picks Homebrew's arm64 graphite2), `DEVELOPER_DIR` pointing at a full
+Xcode (Qt's configure refuses the Command Line Tools), and the system
+`seq`. One script defect fixed: harfbuzz installed to a relative prefix
+instead of `$DEPLOYDIR`. Upstream's `macosx-sanity-check.py` flags
+`@rpath` references that dyld resolves inside the bundle; a
+`DYLD_PRINT_LIBRARIES` trace is the reliable check.
+
+**CI on the fork (etjones/openscad#1):** format, tidy, Ubuntu 22.04
+(without OCCT) pass; Ubuntu 24.04 (OCCT 7.6) builds and passes the
+[occt] unit tests, and the exact step-metrics comparison is gated to
+OCCT >= 7.8 because 7.6 leaves different valid topology (a capsule as 4
+faces, touching solids merged). Windows (msys2, OCCT 7.9.3) crashes with
+an access violation (0xC0000005) in every model that reaches a boolean
+cut and in two unit tests; a verbose unit-test step was added to locate
+it. macOS Intel pending at the time of writing.
+
 **Mac release built (2026-09-17):** `scripts/macosx-deploy-homebrew.sh
 build-release` in the OpenSCAD checkout produces
 `release-mac/OpenSCAD.app` (189 MB, arm64, Qt + OCCT + all Homebrew

@@ -2584,3 +2584,28 @@ the coincident-surface cut and the seam-bug unify guard), mesh repair,
 and the hull rungs against closed forms. Three commits on
 `feature/step-export`. Not covered: the external-engine path and the
 preferences UI.
+
+### User
+
+> Fork to etjones, enable CI, incorporate features and tests; build a
+> universal macOS app the way upstream does; replace the flaky
+> regression input; status checks along the way.
+
+### Assistant
+
+Fork `etjones/openscad`, PR #1, workflows enabled (needed a click in
+the user's Chrome). CI wired for OCCT on all three platforms. Fixes
+from CI: OCCT 7.6 instance-method GetColor; 22.04 (OCCT 7.5, no CMake
+config) builds without OCCT; step-metrics gated to OCCT >= 7.8 for
+topology differences; getpid removed for Windows. Windows still
+crashes (access violation in cuts); diagnostic step added.
+Regression inputs: rev_torus_posts replaced by five deterministic
+models (resize, twist, minkowski of cubes, projection, collinear-vertex
+hull), each verified identical over five runs; 37 files.
+Universal build: `build_opencascade` added to
+macosx-build-dependencies.sh; three environment restarts (pkg-config
+path via setenv-macos.sh, harfbuzz relative prefix fixed in the script,
+DEVELOPER_DIR for Xcode); all 27 deps fat; release-common.sh with
+ENABLE_OCCT produced a fat 269 MB app, verified on arm64 and Rosetta;
+`OpenSCAD-2026.09.17-universal.dmg` on the Desktop. Self-inflicted API
+rate-limit from parallel gh watchers; now one 5-minute poller.
