@@ -98,7 +98,7 @@ commit). `ENABLE_OCCT=ON` links Homebrew OCCT 7.9.3 and adds
 `export-step/engine` (`builtin` default, `external`) and
 `export-step/facet-threshold` (20), also in Preferences > Advanced.
 Verified against `tests/fixtures/*.csg` + `metrics.json` with the
-scratchpad checker (`step_metrics.py`, needs OCP): booleans, extrusions,
+checker in `scratch/openscad-native/step_metrics.py` (needs OCP; `uv run python` from this repo): booleans, extrusions,
 facets, params, polyhedron, primitives, transforms, twod match to ~1e-14;
 the five hull/minkowski fixtures take the mesh path and match OpenSCAD's
 own render to 1e-6 (the fixtures expect the analytic rungs, Phase 2).
