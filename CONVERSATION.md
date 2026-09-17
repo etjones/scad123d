@@ -2537,3 +2537,29 @@ every unhandled polygon node falls back through AbstractPolyNode.
 Verified: no /opt/homebrew references, signature valid, a dyld trace
 shows all libraries from the bundle or the OS, CLI and GUI exports work
 from the sealed bundle. Not notarized (needs an Apple identity).
+
+### User
+
+> scratch/dual_color.scad exports with intact colors if the last cube has
+> center=false, but loses ALL colors if center=true. I think it's caused
+> by the intersection of a sphere's seam with the surface of a cube.
+> (Mid-turn:) Failing on the seam is reasonable; optimally we'd lose
+> color on one object, not all. Is this possible?
+
+### Assistant
+
+Not the seam. Traced with a debug env var (`OPENSCAD_OCCT_DEBUG=1`):
+the raw booleans were all correct; the inner union partitioned fine.
+The file's top-level implicit union then re-partitioned all four
+bodies: its "nothing overlaps" test missed by 1.8e-5 of integration
+noise against a 1e-9 tolerance, and cutting the red cube-minus-sphere
+by the sphere it exactly abuts returned empty, so the safety net
+dropped every color. (UnifySameDomain does exhibit the seam bug on the
+fused cube+sphere, 1106.8 -> 1036.9 and invalid, but the volume guard
+already rejects it.) Fixed three ways: disjointness tolerance 1e-6;
+cut only by higher bodies that actually share material (touching bodies
+keep their color and OCCT never cuts along a coincident surface); and
+when a cut is still implausible, merge only that body with its
+colliders into one uncolored body, everything else keeps its color.
+Colors intact on both variants; 18/18 idioms and 13/13 fixtures. Release
+rebuilt and the Desktop dmg refreshed.
