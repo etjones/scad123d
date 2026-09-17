@@ -2563,3 +2563,24 @@ when a cut is still implausible, merge only that body with its
 colliders into one uncolored body, everything else keeps its color.
 Colors intact on both variants; 18/18 idioms and 13/13 fixtures. Release
 rebuilt and the Desktop dmg refreshed.
+
+### User
+
+> What's the status of tests added to the OpenSCAD source? Did we add
+> tests for all our added functionality? ... Do it, starting with the
+> metrics export and regression inputs.
+
+### Assistant
+
+None existed in the tree; all verification had been scratch scripts
+needing OCP. Added: (1) `--export-format step-metrics`, JSON
+measurements of the built B-rep plus a STEP write/read-back through
+XDE (colors read back as surface colors, which the lookup now checks
+first); (2) 33 regression inputs in `tests/data/scad/step/` with
+expected JSON, `step-metrics_*` under ctest, 33/33 passing, every
+round trip equal to its built shape including per-color volumes;
+(3) Catch2 `[occt]` unit tests, 47 assertions across booleans (incl.
+the coincident-surface cut and the seam-bug unify guard), mesh repair,
+and the hull rungs against closed forms. Three commits on
+`feature/step-export`. Not covered: the external-engine path and the
+preferences UI.

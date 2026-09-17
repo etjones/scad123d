@@ -112,13 +112,25 @@ differing by ~3e-7, so the uniform-scale detector uses 1e-6 or the
 cylinder is approximated as B-splines; STEP writes pure red/green/blue
 as `DRAUGHTING_PRE_DEFINED_COLOUR`, not `COLOUR_RGB`.
 
+**Tests in the OpenSCAD tree (2026-09-17):** `--export-format
+step-metrics` writes JSON measurements (extent, bbox, centroid, face and
+solid counts, volume per color) of the built B-rep and again of the
+written STEP read back through XDE, rounded to four decimals. 33 inputs
+in `tests/data/scad/step/` (fixtures, hull idioms, color models) with
+expected files in `tests/regression/step-metrics/`, registered as
+`step-metrics_*` under `ENABLE_OCCT`; every round trip matches its built
+shape, colors included. Catch2 cases in `src/geometry/occt/Occt_test.cc`
+(tag `[occt]`, 47 assertions) cover the boolean invariants, the guarded
+unify against the seam bug, mesh-to-solid, the collinear-triangle
+repair, and the hull rungs against closed forms. Regenerate expected
+files with the loop in the commit message of c8b65bee8 when geometry
+changes deliberately. Not covered: the external (scad2step) engine path
+and the preferences UI.
+
 Still open in Phase 1: progress/cancel (the GUI blocks during a long
 build), the fuse "bodies overlap" invariant (only piece-count and volume
 bounds are ported), non-manifold polyhedron handling matches OpenSCAD
-only for free edges, an in-tree regression test (the checker needs OCP;
-a metrics debug export would let ctest compare JSON), cut-face colors
-from cutters as the preview paints them (contract says no; preview says
-yes; needs a decision), Windows/Linux builds.
+only for free edges, Windows/Linux builds.
 
 **Build.** `option(ENABLE_OCCT ...)` default OFF, `find_package(OpenCASCADE)`,
 link only the toolkits needed: TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep
