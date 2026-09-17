@@ -96,6 +96,28 @@ def test_converts_a_file_to_step(tmp_path, capsys):
     assert "wrote" in capsys.readouterr().out
 
 
+def test_converts_an_exported_csg_file_without_openscad(tmp_path, capsys):
+    csg = tmp_path / "box.csg"
+    csg.write_text("group() {\n\tcube(size = [10, 5, 5], center = false);\n}\n")
+    output = tmp_path / "box.step"
+
+    exit_code = main([str(csg), "-o", str(output)])
+
+    assert exit_code == 0
+    assert output.exists()
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_overrides_are_rejected_for_csg_input(tmp_path, capsys):
+    csg = tmp_path / "box.csg"
+    csg.write_text("cube(size = [1, 1, 1], center = false);\n")
+
+    exit_code = main([str(csg), "-D", "x=1"])
+
+    assert exit_code == 1
+    assert ".csg" in capsys.readouterr().err
+
+
 @pytest.mark.needs_openscad
 def test_default_output_path_is_used_when_not_specified(tmp_path):
     scad = tmp_path / "box.scad"

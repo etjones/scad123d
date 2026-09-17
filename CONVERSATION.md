@@ -2344,3 +2344,65 @@ of CPU without finishing. Before, it converted in seconds to 27,480 --
 fast, and 19x away from OpenSCAD's 1,438.69. Under the batch runner it
 becomes a `timeout` rather than a hang. Faithful and slow beat fast and
 wrong here, but it is a real trade and not a free one.
+
+## 2026-09-17 — STEP export inside OpenSCAD: survey and plan
+
+### User
+
+> Take the experience from this project (especially its tests and regression
+> files) and add STEP export directly to the OpenSCAD app. One route: OpenSCAD
+> creates its own Python environment, installs scad123d, and calls it from the
+> Export to STEP menu item, as a proof of concept. The other: incorporate the
+> OCCT C++ kernel into an OpenSCAD checkout (~/Projects/openscad) and send
+> OpenSCAD geometry through it on STEP export. Consider lessons learned, draw
+> up questions, make a plan.
+
+### Assistant
+
+Surveyed OpenSCAD master (`4c1d479`, 2026-09-16) and wrote the plan to
+`docs/openscad-native-step-plan.md`. Findings that shape it:
+
+- OpenSCAD has no OCCT anywhere; Manifold-beside-CGAL is the precedent for a
+  second kernel.
+- Exporters get an already-meshed `Geometry`; only CSG export walks the
+  `AbstractNode` tree. STEP export must take the CSG path.
+- In-tree, two scad123d workarounds disappear: `TransformNode::toString`
+  emits 6 significant figures (hence Gram-Schmidt), and `$fn` provenance is
+  readable from `modinst->arguments` instead of guessed by magnitude.
+- The Python engine is `ENABLE_PYTHON`, default OFF, experimental, with a
+  venv/pip mechanism. Possible, but a subprocess `scad2step tmp.csg` from a
+  new `FileFormat::STEP` is a far cheaper proof of concept.
+
+Plan: Phase 0 subprocess PoC (days); Phase 1 native `OcctEvaluator` parallel
+to `GeometryEvaluator` with in-process mesh fallback (run `GeometryEvaluator`
+on the subtree, sew the PolySet), the boolean invariants and healing ported
+from `occt_workarounds.py`/`heal.py`, XDE STEP writer grouped by color, tests
+via metrics round-trip and the existing `scad123d-batch` corpus harness
+(3 to 5 weeks); Phase 2 analytic hull/minkowski rungs; Phase 3 packaging.
+
+Eight questions posed: upstream vs fork; skip embedded Python (recommended);
+Phase 1 scope; `$fn` policy with exact provenance (recommend call-site and
+below threshold); colors now or later; platform order; fallback backend;
+whether a standalone C++ `scad2step` middle option is worth it (recommend
+against).
+
+### User (answers)
+
+> Personal build for now, definitely intended for upstream release. No
+> embedded Python, but `uvx scad2step` could be the command, maybe embed a
+> uvx install. Phase 1 scope fine; porting the existing analytic rungs is
+> reasonable too. Facet only below an adjustable threshold: lots of existing
+> code sets $fn only because there was no better option. STEP colors must
+> look identical to the preview's color() usage; now or later, but it is a
+> requirement. macOS first. No opinion on the fallback backend (Manifold
+> faster but errors sometimes?). Standalone C++ scad2step is difficulty for
+> no workflow improvement.
+
+### Assistant
+
+Recorded as a Decisions section in `docs/openscad-native-step-plan.md`,
+replacing the questions. Two notes: Phase 0's command becomes a preference
+defaulting to `uvx scad2step` without bundling `uv` (stopgap; first run
+downloads ~200 MB). Fallback follows the user's `--backend`: Manifold is fast
+and rejects non-manifold input, CGAL is exact and slow, and the fallback's
+job is to reproduce whatever OpenSCAD would render.
