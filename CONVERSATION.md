@@ -2344,3 +2344,280 @@ of CPU without finishing. Before, it converted in seconds to 27,480 --
 fast, and 19x away from OpenSCAD's 1,438.69. Under the batch runner it
 becomes a `timeout` rather than a hang. Faithful and slow beat fast and
 wrong here, but it is a real trade and not a free one.
+
+## 2026-09-17 — STEP export inside OpenSCAD: survey and plan
+
+### User
+
+> Take the experience from this project (especially its tests and regression
+> files) and add STEP export directly to the OpenSCAD app. One route: OpenSCAD
+> creates its own Python environment, installs scad123d, and calls it from the
+> Export to STEP menu item, as a proof of concept. The other: incorporate the
+> OCCT C++ kernel into an OpenSCAD checkout (~/Projects/openscad) and send
+> OpenSCAD geometry through it on STEP export. Consider lessons learned, draw
+> up questions, make a plan.
+
+### Assistant
+
+Surveyed OpenSCAD master (`4c1d479`, 2026-09-16) and wrote the plan to
+`docs/openscad-native-step-plan.md`. Findings that shape it:
+
+- OpenSCAD has no OCCT anywhere; Manifold-beside-CGAL is the precedent for a
+  second kernel.
+- Exporters get an already-meshed `Geometry`; only CSG export walks the
+  `AbstractNode` tree. STEP export must take the CSG path.
+- In-tree, two scad123d workarounds disappear: `TransformNode::toString`
+  emits 6 significant figures (hence Gram-Schmidt), and `$fn` provenance is
+  readable from `modinst->arguments` instead of guessed by magnitude.
+- The Python engine is `ENABLE_PYTHON`, default OFF, experimental, with a
+  venv/pip mechanism. Possible, but a subprocess `scad2step tmp.csg` from a
+  new `FileFormat::STEP` is a far cheaper proof of concept.
+
+Plan: Phase 0 subprocess PoC (days); Phase 1 native `OcctEvaluator` parallel
+to `GeometryEvaluator` with in-process mesh fallback (run `GeometryEvaluator`
+on the subtree, sew the PolySet), the boolean invariants and healing ported
+from `occt_workarounds.py`/`heal.py`, XDE STEP writer grouped by color, tests
+via metrics round-trip and the existing `scad123d-batch` corpus harness
+(3 to 5 weeks); Phase 2 analytic hull/minkowski rungs; Phase 3 packaging.
+
+Eight questions posed: upstream vs fork; skip embedded Python (recommended);
+Phase 1 scope; `$fn` policy with exact provenance (recommend call-site and
+below threshold); colors now or later; platform order; fallback backend;
+whether a standalone C++ `scad2step` middle option is worth it (recommend
+against).
+
+### User (answers)
+
+> Personal build for now, definitely intended for upstream release. No
+> embedded Python, but `uvx scad2step` could be the command, maybe embed a
+> uvx install. Phase 1 scope fine; porting the existing analytic rungs is
+> reasonable too. Facet only below an adjustable threshold: lots of existing
+> code sets $fn only because there was no better option. STEP colors must
+> look identical to the preview's color() usage; now or later, but it is a
+> requirement. macOS first. No opinion on the fallback backend (Manifold
+> faster but errors sometimes?). Standalone C++ scad2step is difficulty for
+> no workflow improvement.
+
+### Assistant
+
+Recorded as a Decisions section in `docs/openscad-native-step-plan.md`,
+replacing the questions. Two notes: Phase 0's command becomes a preference
+defaulting to `uvx scad2step` without bundling `uv` (stopgap; first run
+downloads ~200 MB). Fallback follows the user's `--backend`: Manifold is fast
+and rejects non-manifold input, CGAL is exact and slow, and the fallback's
+job is to reproduce whatever OpenSCAD would render.
+
+### User
+
+> Yes, start Phase 0
+
+### Assistant
+
+Done, both halves verified end to end on macOS.
+
+- **scad123d PR #51** (`feature/csg-input`): `scad2step` accepts a `.csg`
+  input; `-D`/`-p` rejected for it. Two tests, suite 748 passed.
+- **OpenSCAD branch `feature/step-export`** (local commit on the upstream
+  checkout, not pushed): `FileFormat::STEP`, `src/io/export_step.{h,cc}`
+  (temp `.csg` + `popen` of the configured command, output forwarded to the
+  log), `-o model.step` in the CLI with `-O export-step/command=...`, the
+  `Export as STEP...` menu item mirroring the CSG case, and a
+  Preferences > Advanced > STEP Export command field defaulting to
+  `uvx scad2step`.
+- Verified: CLI export with the local checkout's scad2step and with the
+  released 0.8.0 via `uvx` (works today, since OpenSCAD re-exports a `.csg`
+  input); GUI menu item exercised through the save dialog, file written,
+  console shows converter output.
+- First OpenSCAD build on this machine: Homebrew deps installed (tap needed
+  `brew trust`), `pkgconf` and `clang-format` added, Ninja Release build.
+- Limits noted in the plan doc: GUI blocks during conversion, no stdout,
+  Windows quoting untested.
+
+### User
+
+> Start Phase 1
+
+### Assistant
+
+Phase 1 baseline is on `feature/step-export` in the OpenSCAD checkout
+(commit "Built-in STEP export through an OpenCASCADE B-rep evaluator").
+`ENABLE_OCCT=ON` builds against Homebrew OCCT 7.9.3.
+
+- `OcctBuilder`: recursive walk of the node tree (no visitor state
+  machine): primitives, transforms (uniform-scale/rotation via `gp_Trsf`,
+  shear via `GTransform`, solids re-oriented outward after reflections,
+  2D stays in XY, flattening removes), booleans, linear/rotate extrude
+  (scale via lofts, twist falls back), polyhedron, polygon, text, colors
+  (outermost wins, partitioned unions, cutters don't paint). Everything
+  else renders through `GeometryEvaluator` and is sewn into solids.
+- `OcctBoolean`: N-ary ops on decomposed bodies, volume bounds,
+  gained-pieces, material-left-in-tools, fuzzy ladder, guarded unify.
+- `export_step_native`: XDE document, product per body, grouped by color.
+- `OcctBridge`: the only file that includes both OpenSCAD logging/tree/
+  PolySet and no OCCT, because OCCT's `class Message` collides with
+  `printutils.h`.
+- Verified: 8 of 14 scad123d fixtures match to float precision, the
+  other 6 are hull/minkowski fallbacks equal to OpenSCAD's mesh to 1e-6.
+  Found and fixed: a 6-significant-figure rotation tripping the
+  uniform-scale detector (cylinder became B-spline, +0.86% volume).
+- Colors verified on a six-case model; GUI menu export verified through
+  the built-in engine. Preferences fields added (engine, $fn threshold).
+- Open items recorded in the plan doc.
+
+### User
+
+> Let's not color with the cutter's color. If we have to do it after
+> talking with upstream, we can add it then. Please proceed with Phase 2.
+> (Mid-turn:) One thing we have NOT handled in scad123d, but perhaps
+> should: the hull of r=0 spheres is a valid polyhedron in OpenSCAD, but
+> not in scad123d.
+
+### Assistant
+
+Phase 2 core rungs are in (`OcctHull.cc`, third commit on
+`feature/step-export`): equal-radius spheres, two spheres of any radii,
+parallel cylinders, polyhedral children (Manifold hull), two discs,
+polygons, and minkowski with a ball (sphere, circle, or tessellated
+kernel). All 14 fixtures match to ~1e-13; eight idiom files (BOSL2
+`cuboid(rounding)`, corner posts, keyhole, two-sphere hull, 2D minkowski)
+match the Python pipeline to 1e-6 with identical face counts. Not
+ported yet: the revolved-translates rung (the largest, ~600 lines).
+
+On `sphere(0)`: checked directly. Both the installed 2025.07 and master
+give "Current top level object is empty" for a hull of four `sphere(0)`
+calls, because `SphereNode::createGeometry` returns an empty PolySet for
+r <= 0. So current OpenSCAD does not build a polyhedron from them
+either; the evaluator's empty result matches. If an older release did,
+that behavior is gone upstream.
+
+### User
+
+> Is there a reason you didn't port the revolved translates rung, or just
+> that it was a lot of code and you weren't sure how specific we should be?
+
+### Assistant
+
+Only the second. Ported it (`OcctRevolvedHull.cc`, fourth commit on
+`feature/step-export`): support-function envelope of the (z, r) profile,
+normal-fan realization (prisms along polygon edges, revolutions around
+vertices), ruled loft for all-line profiles, axis conjugation for a
+tilted shared axis, Steiner volume self-check. Seven idiom files match
+the Python pipeline exactly. Two fallback bugs surfaced and were fixed:
+rotate_extrude's axis check (padded bbox) and collinear zero-area
+triangles from Manifold's hull leaving free edges after sewing (now
+repaired before sewing). All 16 idioms and all 13 fixtures pass. Every
+solid123d rung is now in the C++ evaluator.
+
+### User
+
+> Can you describe the geometry of the rounded coin case to me?
+
+### Assistant
+
+Described it (hull of equal spheres with coplanar, non-collinear
+centers = flat polygon of centers Minkowski a ball: two flat caps at
++-r, a half-cylinder per polygon edge, a spherical wedge per vertex;
+Steiner volume 2rA + (pi r^2/2)P + 4/3 pi r^3). Tested rather than
+assumed: the revolved-translates rung already builds it exactly (three
+coin files match to 1e-13, 10 faces for a rectangle), so the ROADMAP's
+"unexplored Rung 2.5" note is stale. Plan doc updated.
+
+### User
+
+> Great. Let's build for a Mac release
+
+### Assistant
+
+Built `release-mac/OpenSCAD.app` and `OpenSCAD-2026.09.17.dmg` from a
+clean Release configuration (OCCT on, experimental off, tests off) with
+a new `scripts/macosx-deploy-homebrew.sh` (macdeployqt, scrub of
+Homebrew rpaths and install names, ad-hoc signing, dmg). One link error
+surfaced: the evaluator referenced the experimental-only RoofNode; now
+every unhandled polygon node falls back through AbstractPolyNode.
+Verified: no /opt/homebrew references, signature valid, a dyld trace
+shows all libraries from the bundle or the OS, CLI and GUI exports work
+from the sealed bundle. Not notarized (needs an Apple identity).
+
+### User
+
+> scratch/dual_color.scad exports with intact colors if the last cube has
+> center=false, but loses ALL colors if center=true. I think it's caused
+> by the intersection of a sphere's seam with the surface of a cube.
+> (Mid-turn:) Failing on the seam is reasonable; optimally we'd lose
+> color on one object, not all. Is this possible?
+
+### Assistant
+
+Not the seam. Traced with a debug env var (`OPENSCAD_OCCT_DEBUG=1`):
+the raw booleans were all correct; the inner union partitioned fine.
+The file's top-level implicit union then re-partitioned all four
+bodies: its "nothing overlaps" test missed by 1.8e-5 of integration
+noise against a 1e-9 tolerance, and cutting the red cube-minus-sphere
+by the sphere it exactly abuts returned empty, so the safety net
+dropped every color. (UnifySameDomain does exhibit the seam bug on the
+fused cube+sphere, 1106.8 -> 1036.9 and invalid, but the volume guard
+already rejects it.) Fixed three ways: disjointness tolerance 1e-6;
+cut only by higher bodies that actually share material (touching bodies
+keep their color and OCCT never cuts along a coincident surface); and
+when a cut is still implausible, merge only that body with its
+colliders into one uncolored body, everything else keeps its color.
+Colors intact on both variants; 18/18 idioms and 13/13 fixtures. Release
+rebuilt and the Desktop dmg refreshed.
+
+### User
+
+> What's the status of tests added to the OpenSCAD source? Did we add
+> tests for all our added functionality? ... Do it, starting with the
+> metrics export and regression inputs.
+
+### Assistant
+
+None existed in the tree; all verification had been scratch scripts
+needing OCP. Added: (1) `--export-format step-metrics`, JSON
+measurements of the built B-rep plus a STEP write/read-back through
+XDE (colors read back as surface colors, which the lookup now checks
+first); (2) 33 regression inputs in `tests/data/scad/step/` with
+expected JSON, `step-metrics_*` under ctest, 33/33 passing, every
+round trip equal to its built shape including per-color volumes;
+(3) Catch2 `[occt]` unit tests, 47 assertions across booleans (incl.
+the coincident-surface cut and the seam-bug unify guard), mesh repair,
+and the hull rungs against closed forms. Three commits on
+`feature/step-export`. Not covered: the external-engine path and the
+preferences UI.
+
+### User
+
+> Fork to etjones, enable CI, incorporate features and tests; build a
+> universal macOS app the way upstream does; replace the flaky
+> regression input; status checks along the way.
+
+### Assistant
+
+Fork `etjones/openscad`, PR #1, workflows enabled (needed a click in
+the user's Chrome). CI wired for OCCT on all three platforms. Fixes
+from CI: OCCT 7.6 instance-method GetColor; 22.04 (OCCT 7.5, no CMake
+config) builds without OCCT; step-metrics gated to OCCT >= 7.8 for
+topology differences; getpid removed for Windows. Windows still
+crashes (access violation in cuts); diagnostic step added.
+Regression inputs: rev_torus_posts replaced by five deterministic
+models (resize, twist, minkowski of cubes, projection, collinear-vertex
+hull), each verified identical over five runs; 37 files.
+Universal build: `build_opencascade` added to
+macosx-build-dependencies.sh; three environment restarts (pkg-config
+path via setenv-macos.sh, harfbuzz relative prefix fixed in the script,
+DEVELOPER_DIR for Xcode); all 27 deps fat; release-common.sh with
+ENABLE_OCCT produced a fat 269 MB app, verified on arm64 and Rosetta;
+`OpenSCAD-2026.09.17-universal.dmg` on the Desktop. Self-inflicted API
+rate-limit from parallel gh watchers; now one 5-minute poller.
+
+### Assistant (CI follow-up)
+
+Windows crash located with gdb on CI: `Extrema_ExtCC::Perform` inside
+msys2's opencascade 7.9.3-3 (GCC 16 build), via the boolean kernel and
+`BRepClass3d_SolidClassifier`; nothing of ours on the stack. Windows
+job now builds without OCCT, with a comment pointing at the PR. macOS
+Intel cancels at 90 minutes during Homebrew installs, same as upstream.
+Linux fully green (24.04 with OCCT 7.6, metrics gated to >= 7.8).
+Diagnostic lessons: a crash discards buffered stdout on a pipe, so
+per-process exit codes or gdb, not verbose flags; children in a `while
+read` loop must get `< /dev/null`; the msys2 shell runs with `set -e`.

@@ -138,7 +138,12 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="scad2step",
         description="Convert an OpenSCAD file to a STEP file.",
     )
-    parser.add_argument("input", type=Path, nargs="?", help="the .scad file to convert")
+    parser.add_argument(
+        "input",
+        type=Path,
+        nargs="?",
+        help="the .scad file to convert (or a .csg file already exported by OpenSCAD)",
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -272,6 +277,15 @@ class _Conversion:
         self.openscad_warnings: list[str] = []
 
     def export(self) -> str:
+        if self.input.suffix.lower() == ".csg":
+            # OpenSCAD's own flattened export: every module, variable and
+            # include is already resolved, so there is nothing to evaluate
+            # and nothing an override could apply to.
+            if self.overrides:
+                raise Scad123dError(
+                    "-D and -p apply to .scad input, not to a .csg file"
+                )
+            return self.input.read_text()
         text, stderr = export_csg_with_warnings(
             self.input, self.overrides or None, self.timeout
         )

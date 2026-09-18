@@ -438,7 +438,10 @@ result per line, if you'd rather drive it from your own tooling.
   Don't point this at a `.scad` file from someone you don't trust.
 - **Just want a STEP file, no Python?** `uvx scad2step yourfile.scad -o
   out.step` does exactly that from the command line — see
-  [scad2step](https://github.com/etjones/scad2step).
+  [scad2step](https://github.com/etjones/scad2step). It also accepts a
+  `.csg` file that OpenSCAD has already exported (`openscad -o model.csg
+  model.scad`), which is how OpenSCAD's own *Export as STEP* menu item
+  calls it.
 - **Customizer parameter sets apply automatically.** If a saved OpenSCAD
   customizer file sits next to your input (`model.scad` + `model.json`),
   `scad2step model.scad` applies it — `-P name` picks a set, `-D name=value`
