@@ -290,10 +290,15 @@ instead of `$DEPLOYDIR`. Upstream's `macosx-sanity-check.py` flags
 (without OCCT) pass; Ubuntu 24.04 (OCCT 7.6) builds and passes the
 [occt] unit tests, and the exact step-metrics comparison is gated to
 OCCT >= 7.8 because 7.6 leaves different valid topology (a capsule as 4
-faces, touching solids merged). Windows (msys2, OCCT 7.9.3) crashes with
-an access violation (0xC0000005) in every model that reaches a boolean
-cut and in two unit tests; a verbose unit-test step was added to locate
-it. macOS Intel pending at the time of writing.
+faces, touching solids merged). Windows (msys2): gdb backtraces put the crash inside
+`Extrema_ExtCC::Perform` in the msys2 `opencascade-7.9.3-3` DLL (built
+with GCC 16, which had a MinGW regression that spring), reached from the
+boolean kernel and from `BRepClass3d_SolidClassifier`; box-only
+booleans, sewing, offsets and mesh conversion work. The Windows job now
+builds without `ENABLE_OCCT` until that package is fixed; a vcpkg/MSVC
+build would be the alternative. macOS Intel: the job is cancelled at
+its 90-minute limit while still installing Homebrew packages, and
+upstream's own runs of that workflow show the same, so it is not ours.
 
 **Mac release built (2026-09-17):** `scripts/macosx-deploy-homebrew.sh
 build-release` in the OpenSCAD checkout produces

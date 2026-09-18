@@ -2609,3 +2609,15 @@ DEVELOPER_DIR for Xcode); all 27 deps fat; release-common.sh with
 ENABLE_OCCT produced a fat 269 MB app, verified on arm64 and Rosetta;
 `OpenSCAD-2026.09.17-universal.dmg` on the Desktop. Self-inflicted API
 rate-limit from parallel gh watchers; now one 5-minute poller.
+
+### Assistant (CI follow-up)
+
+Windows crash located with gdb on CI: `Extrema_ExtCC::Perform` inside
+msys2's opencascade 7.9.3-3 (GCC 16 build), via the boolean kernel and
+`BRepClass3d_SolidClassifier`; nothing of ours on the stack. Windows
+job now builds without OCCT, with a comment pointing at the PR. macOS
+Intel cancels at 90 minutes during Homebrew installs, same as upstream.
+Linux fully green (24.04 with OCCT 7.6, metrics gated to >= 7.8).
+Diagnostic lessons: a crash discards buffered stdout on a pipe, so
+per-process exit codes or gdb, not verbose flags; children in a `while
+read` loop must get `< /dev/null`; the msys2 shell runs with `set -e`.
