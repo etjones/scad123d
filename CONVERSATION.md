@@ -2867,3 +2867,6 @@ pushed to `feature/step-export`.
 **Assistant:** feature/step-export Windows CI: 2743/2743 passed. Restored
 upstream's qt5/qt6 matrix and default allocator in windows.yml (pushed);
 PR statement and plan updated.
+
+**Assistant:** Restored qt5/qt6 Windows matrix on feature/step-export: both
+jobs green, 2743/2743 each (run 36215604524).
