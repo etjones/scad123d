@@ -556,7 +556,11 @@ probe jobs built their own OCCT at explicit -O2 while the Windows job
 built at default -O3. Cache is now restore + early save.
 
 Fix in windows.yml: `-DCMAKE_CXX_FLAGS_RELEASE="-O2 -DNDEBUG"` (cache key
-occt-7.9.3-<msystem>-src-O2-v2). Confirmation run 36202500221 pending.
+occt-7.9.3-UCRT64-src-O2-v2). Confirmed: run 36202500221 went 32 -> 1
+failure (seam_split built bbox 4.9913 vs 5.0, a bound not a measurement;
+bboxes now held to 1% like face counts), and run 36212180240 on
+feature/step-export passed 2743/2743. Ported to feature/step-export with
+upstream's qt5/qt6 matrix restored.
 MXE: probe-mxe.exe (GCC 11, static) passes on windows-latest. To do:
 report to msys2 (package) and OCCT/GCC (reduced case wanted); link
 OpenSCAD's MXE release build against the MXE opencascade package; port

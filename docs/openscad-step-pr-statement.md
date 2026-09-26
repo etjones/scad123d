@@ -87,7 +87,8 @@ behaviour in) the kernel's curve-curve extrema, so any point classified
 against a boolean result segfaults inside the kernel before our code runs.
 A standalone probe pins it to one pass, `-fipa-cp-clone`, which -O3 turns
 on; the same sources at -O2 pass. The job therefore builds OpenCASCADE
-7.9.3 from source at -O2, cached, and we will report the package to msys2.
+7.9.3 from source at -O2, cached, and passes all 2743 tests; we will report
+the package to msys2.
 The shipped Windows binary is cross-compiled with MXE and GCC 11, where
 the kernel is fine but no OpenCASCADE package existed; we wrote one
 (static, the STEP and XDE toolkits) and the probe runs clean on Windows

@@ -2863,3 +2863,7 @@ OpenCASCADE unit tests pass; the one remaining step-metrics failure is
 `seam_split`'s built bbox z-extent (4.9913 on macOS vs 5.0 on Windows,
 volumes identical). Held bounding boxes to 1% in `compare_stepmetrics`,
 pushed to `feature/step-export`.
+
+**Assistant:** feature/step-export Windows CI: 2743/2743 passed. Restored
+upstream's qt5/qt6 matrix and default allocator in windows.yml (pushed);
+PR statement and plan updated.
