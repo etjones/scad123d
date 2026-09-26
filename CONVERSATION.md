@@ -1786,7 +1786,7 @@ The remaining interoperability question is practical: **which STEP viewer/CAD ap
 
 No implementation changes made; only the design discussion is recorded.
 
-Verification details: pure-build123d probes deliberately did not import solid123d (so its monkeypatches could not influence the native behavior). Overlapping 10 mm cubes at x=0 and x=5, colored red/blue, fused to one red solid of volume1500. A child moved from assembly `head` to assembly `white` left `head.children` empty. A yellow solid with a red selected-face wrapper exported only `DRAUGHTING_PRE_DEFINED_COLOUR('yellow')`; a fresh wrapper for that face had color None. An uncolored child's color remained cached red after its parent was changed from red to blue. XDE LayerTool assigned the same shape to `Color/Yellow` and `Selection/Head`; WriteStream returned IFSelect_RetDone and produced two PRESENTATION_LAYER_ASSIGNMENT entities referencing the same representation item. All export probes used BytesIO; no STEP/STL artifacts or production code changed. The layer option is not yet tested in the user's receiving applications. OCCT reference: https://dev.opencascade.org/doc/refman/html/class_x_c_a_f_doc___layer_tool.html .
+Verification details: pure-build123d probes deliberately did not import solid123d (so its monkeypatches could not influence the native behavior). Overlapping 10 mm cubes at x=0 and x=5, colored red/blue, fused to one red solid of volume1500. A child moved from assembly `head` to assembly `white` left `head.children` empty. A yellow solid with a red selected-face wrapper exported only `DRAUGHTING_PRE_DEFINED_color('yellow')`; a fresh wrapper for that face had color None. An uncolored child's color remained cached red after its parent was changed from red to blue. XDE LayerTool assigned the same shape to `Color/Yellow` and `Selection/Head`; WriteStream returned IFSelect_RetDone and produced two PRESENTATION_LAYER_ASSIGNMENT entities referencing the same representation item. All export probes used BytesIO; no STEP/STL artifacts or production code changed. The layer option is not yet tested in the user's receiving applications. OCCT reference: https://dev.opencascade.org/doc/refman/html/class_x_c_a_f_doc___layer_tool.html .
 
 **User**: Using build123d.Compound to manage color feels too heavy. STEP
 supports layers, a partition separate from the group hierarchy. Research
@@ -2344,3 +2344,529 @@ of CPU without finishing. Before, it converted in seconds to 27,480 --
 fast, and 19x away from OpenSCAD's 1,438.69. Under the batch runner it
 becomes a `timeout` rather than a hang. Faithful and slow beat fast and
 wrong here, but it is a real trade and not a free one.
+
+## 2026-09-17 — STEP export inside OpenSCAD: survey and plan
+
+### User
+
+> Take the experience from this project (especially its tests and regression
+> files) and add STEP export directly to the OpenSCAD app. One route: OpenSCAD
+> creates its own Python environment, installs scad123d, and calls it from the
+> Export to STEP menu item, as a proof of concept. The other: incorporate the
+> OCCT C++ kernel into an OpenSCAD checkout (~/Projects/openscad) and send
+> OpenSCAD geometry through it on STEP export. Consider lessons learned, draw
+> up questions, make a plan.
+
+### Assistant
+
+Surveyed OpenSCAD master (`4c1d479`, 2026-09-16) and wrote the plan to
+`docs/openscad-native-step-plan.md`. Findings that shape it:
+
+- OpenSCAD has no OCCT anywhere; Manifold-beside-CGAL is the precedent for a
+  second kernel.
+- Exporters get an already-meshed `Geometry`; only CSG export walks the
+  `AbstractNode` tree. STEP export must take the CSG path.
+- In-tree, two scad123d workarounds disappear: `TransformNode::toString`
+  emits 6 significant figures (hence Gram-Schmidt), and `$fn` provenance is
+  readable from `modinst->arguments` instead of guessed by magnitude.
+- The Python engine is `ENABLE_PYTHON`, default OFF, experimental, with a
+  venv/pip mechanism. Possible, but a subprocess `scad2step tmp.csg` from a
+  new `FileFormat::STEP` is a far cheaper proof of concept.
+
+Plan: Phase 0 subprocess PoC (days); Phase 1 native `OcctEvaluator` parallel
+to `GeometryEvaluator` with in-process mesh fallback (run `GeometryEvaluator`
+on the subtree, sew the PolySet), the boolean invariants and healing ported
+from `occt_workarounds.py`/`heal.py`, XDE STEP writer grouped by color, tests
+via metrics round-trip and the existing `scad123d-batch` corpus harness
+(3 to 5 weeks); Phase 2 analytic hull/minkowski rungs; Phase 3 packaging.
+
+Eight questions posed: upstream vs fork; skip embedded Python (recommended);
+Phase 1 scope; `$fn` policy with exact provenance (recommend call-site and
+below threshold); colors now or later; platform order; fallback backend;
+whether a standalone C++ `scad2step` middle option is worth it (recommend
+against).
+
+### User (answers)
+
+> Personal build for now, definitely intended for upstream release. No
+> embedded Python, but `uvx scad2step` could be the command, maybe embed a
+> uvx install. Phase 1 scope fine; porting the existing analytic rungs is
+> reasonable too. Facet only below an adjustable threshold: lots of existing
+> code sets $fn only because there was no better option. STEP colors must
+> look identical to the preview's color() usage; now or later, but it is a
+> requirement. macOS first. No opinion on the fallback backend (Manifold
+> faster but errors sometimes?). Standalone C++ scad2step is difficulty for
+> no workflow improvement.
+
+### Assistant
+
+Recorded as a Decisions section in `docs/openscad-native-step-plan.md`,
+replacing the questions. Two notes: Phase 0's command becomes a preference
+defaulting to `uvx scad2step` without bundling `uv` (stopgap; first run
+downloads ~200 MB). Fallback follows the user's `--backend`: Manifold is fast
+and rejects non-manifold input, CGAL is exact and slow, and the fallback's
+job is to reproduce whatever OpenSCAD would render.
+
+### User
+
+> Yes, start Phase 0
+
+### Assistant
+
+Done, both halves verified end to end on macOS.
+
+- **scad123d PR #51** (`feature/csg-input`): `scad2step` accepts a `.csg`
+  input; `-D`/`-p` rejected for it. Two tests, suite 748 passed.
+- **OpenSCAD branch `feature/step-export`** (local commit on the upstream
+  checkout, not pushed): `FileFormat::STEP`, `src/io/export_step.{h,cc}`
+  (temp `.csg` + `popen` of the configured command, output forwarded to the
+  log), `-o model.step` in the CLI with `-O export-step/command=...`, the
+  `Export as STEP...` menu item mirroring the CSG case, and a
+  Preferences > Advanced > STEP Export command field defaulting to
+  `uvx scad2step`.
+- Verified: CLI export with the local checkout's scad2step and with the
+  released 0.8.0 via `uvx` (works today, since OpenSCAD re-exports a `.csg`
+  input); GUI menu item exercised through the save dialog, file written,
+  console shows converter output.
+- First OpenSCAD build on this machine: Homebrew deps installed (tap needed
+  `brew trust`), `pkgconf` and `clang-format` added, Ninja Release build.
+- Limits noted in the plan doc: GUI blocks during conversion, no stdout,
+  Windows quoting untested.
+
+### User
+
+> Start Phase 1
+
+### Assistant
+
+Phase 1 baseline is on `feature/step-export` in the OpenSCAD checkout
+(commit "Built-in STEP export through an OpenCASCADE B-rep evaluator").
+`ENABLE_OCCT=ON` builds against Homebrew OCCT 7.9.3.
+
+- `OcctBuilder`: recursive walk of the node tree (no visitor state
+  machine): primitives, transforms (uniform-scale/rotation via `gp_Trsf`,
+  shear via `GTransform`, solids re-oriented outward after reflections,
+  2D stays in XY, flattening removes), booleans, linear/rotate extrude
+  (scale via lofts, twist falls back), polyhedron, polygon, text, colors
+  (outermost wins, partitioned unions, cutters don't paint). Everything
+  else renders through `GeometryEvaluator` and is sewn into solids.
+- `OcctBoolean`: N-ary ops on decomposed bodies, volume bounds,
+  gained-pieces, material-left-in-tools, fuzzy ladder, guarded unify.
+- `export_step_native`: XDE document, product per body, grouped by color.
+- `OcctBridge`: the only file that includes both OpenSCAD logging/tree/
+  PolySet and no OCCT, because OCCT's `class Message` collides with
+  `printutils.h`.
+- Verified: 8 of 14 scad123d fixtures match to float precision, the
+  other 6 are hull/minkowski fallbacks equal to OpenSCAD's mesh to 1e-6.
+  Found and fixed: a 6-significant-figure rotation tripping the
+  uniform-scale detector (cylinder became B-spline, +0.86% volume).
+- Colors verified on a six-case model; GUI menu export verified through
+  the built-in engine. Preferences fields added (engine, $fn threshold).
+- Open items recorded in the plan doc.
+
+### User
+
+> Let's not color with the cutter's color. If we have to do it after
+> talking with upstream, we can add it then. Please proceed with Phase 2.
+> (Mid-turn:) One thing we have NOT handled in scad123d, but perhaps
+> should: the hull of r=0 spheres is a valid polyhedron in OpenSCAD, but
+> not in scad123d.
+
+### Assistant
+
+Phase 2 core rungs are in (`OcctHull.cc`, third commit on
+`feature/step-export`): equal-radius spheres, two spheres of any radii,
+parallel cylinders, polyhedral children (Manifold hull), two discs,
+polygons, and minkowski with a ball (sphere, circle, or tessellated
+kernel). All 14 fixtures match to ~1e-13; eight idiom files (BOSL2
+`cuboid(rounding)`, corner posts, keyhole, two-sphere hull, 2D minkowski)
+match the Python pipeline to 1e-6 with identical face counts. Not
+ported yet: the revolved-translates rung (the largest, ~600 lines).
+
+On `sphere(0)`: checked directly. Both the installed 2025.07 and master
+give "Current top level object is empty" for a hull of four `sphere(0)`
+calls, because `SphereNode::createGeometry` returns an empty PolySet for
+r <= 0. So current OpenSCAD does not build a polyhedron from them
+either; the evaluator's empty result matches. If an older release did,
+that behavior is gone upstream.
+
+### User
+
+> Is there a reason you didn't port the revolved translates rung, or just
+> that it was a lot of code and you weren't sure how specific we should be?
+
+### Assistant
+
+Only the second. Ported it (`OcctRevolvedHull.cc`, fourth commit on
+`feature/step-export`): support-function envelope of the (z, r) profile,
+normal-fan realization (prisms along polygon edges, revolutions around
+vertices), ruled loft for all-line profiles, axis conjugation for a
+tilted shared axis, Steiner volume self-check. Seven idiom files match
+the Python pipeline exactly. Two fallback bugs surfaced and were fixed:
+rotate_extrude's axis check (padded bbox) and collinear zero-area
+triangles from Manifold's hull leaving free edges after sewing (now
+repaired before sewing). All 16 idioms and all 13 fixtures pass. Every
+solid123d rung is now in the C++ evaluator.
+
+### User
+
+> Can you describe the geometry of the rounded coin case to me?
+
+### Assistant
+
+Described it (hull of equal spheres with coplanar, non-collinear
+centers = flat polygon of centers Minkowski a ball: two flat caps at
++-r, a half-cylinder per polygon edge, a spherical wedge per vertex;
+Steiner volume 2rA + (pi r^2/2)P + 4/3 pi r^3). Tested rather than
+assumed: the revolved-translates rung already builds it exactly (three
+coin files match to 1e-13, 10 faces for a rectangle), so the ROADMAP's
+"unexplored Rung 2.5" note is stale. Plan doc updated.
+
+### User
+
+> Great. Let's build for a Mac release
+
+### Assistant
+
+Built `release-mac/OpenSCAD.app` and `OpenSCAD-2026.09.17.dmg` from a
+clean Release configuration (OCCT on, experimental off, tests off) with
+a new `scripts/macosx-deploy-homebrew.sh` (macdeployqt, scrub of
+Homebrew rpaths and install names, ad-hoc signing, dmg). One link error
+surfaced: the evaluator referenced the experimental-only RoofNode; now
+every unhandled polygon node falls back through AbstractPolyNode.
+Verified: no /opt/homebrew references, signature valid, a dyld trace
+shows all libraries from the bundle or the OS, CLI and GUI exports work
+from the sealed bundle. Not notarized (needs an Apple identity).
+
+### User
+
+> scratch/dual_color.scad exports with intact colors if the last cube has
+> center=false, but loses ALL colors if center=true. I think it's caused
+> by the intersection of a sphere's seam with the surface of a cube.
+> (Mid-turn:) Failing on the seam is reasonable; optimally we'd lose
+> color on one object, not all. Is this possible?
+
+### Assistant
+
+Not the seam. Traced with a debug env var (`OPENSCAD_OCCT_DEBUG=1`):
+the raw booleans were all correct; the inner union partitioned fine.
+The file's top-level implicit union then re-partitioned all four
+bodies: its "nothing overlaps" test missed by 1.8e-5 of integration
+noise against a 1e-9 tolerance, and cutting the red cube-minus-sphere
+by the sphere it exactly abuts returned empty, so the safety net
+dropped every color. (UnifySameDomain does exhibit the seam bug on the
+fused cube+sphere, 1106.8 -> 1036.9 and invalid, but the volume guard
+already rejects it.) Fixed three ways: disjointness tolerance 1e-6;
+cut only by higher bodies that actually share material (touching bodies
+keep their color and OCCT never cuts along a coincident surface); and
+when a cut is still implausible, merge only that body with its
+colliders into one uncolored body, everything else keeps its color.
+Colors intact on both variants; 18/18 idioms and 13/13 fixtures. Release
+rebuilt and the Desktop dmg refreshed.
+
+### User
+
+> What's the status of tests added to the OpenSCAD source? Did we add
+> tests for all our added functionality? ... Do it, starting with the
+> metrics export and regression inputs.
+
+### Assistant
+
+None existed in the tree; all verification had been scratch scripts
+needing OCP. Added: (1) `--export-format step-metrics`, JSON
+measurements of the built B-rep plus a STEP write/read-back through
+XDE (colors read back as surface colors, which the lookup now checks
+first); (2) 33 regression inputs in `tests/data/scad/step/` with
+expected JSON, `step-metrics_*` under ctest, 33/33 passing, every
+round trip equal to its built shape including per-color volumes;
+(3) Catch2 `[occt]` unit tests, 47 assertions across booleans (incl.
+the coincident-surface cut and the seam-bug unify guard), mesh repair,
+and the hull rungs against closed forms. Three commits on
+`feature/step-export`. Not covered: the external-engine path and the
+preferences UI.
+
+### User
+
+> Fork to etjones, enable CI, incorporate features and tests; build a
+> universal macOS app the way upstream does; replace the flaky
+> regression input; status checks along the way.
+
+### Assistant
+
+Fork `etjones/openscad`, PR #1, workflows enabled (needed a click in
+the user's Chrome). CI wired for OCCT on all three platforms. Fixes
+from CI: OCCT 7.6 instance-method GetColor; 22.04 (OCCT 7.5, no CMake
+config) builds without OCCT; step-metrics gated to OCCT >= 7.8 for
+topology differences; getpid removed for Windows. Windows still
+crashes (access violation in cuts); diagnostic step added.
+Regression inputs: rev_torus_posts replaced by five deterministic
+models (resize, twist, minkowski of cubes, projection, collinear-vertex
+hull), each verified identical over five runs; 37 files.
+Universal build: `build_opencascade` added to
+macosx-build-dependencies.sh; three environment restarts (pkg-config
+path via setenv-macos.sh, harfbuzz relative prefix fixed in the script,
+DEVELOPER_DIR for Xcode); all 27 deps fat; release-common.sh with
+ENABLE_OCCT produced a fat 269 MB app, verified on arm64 and Rosetta;
+`OpenSCAD-2026.09.17-universal.dmg` on the Desktop. Self-inflicted API
+rate-limit from parallel gh watchers; now one 5-minute poller.
+
+### Assistant (CI follow-up)
+
+Windows crash located with gdb on CI: `Extrema_ExtCC::Perform` inside
+msys2's opencascade 7.9.3-3 (GCC 16 build), via the boolean kernel and
+`BRepClass3d_SolidClassifier`; nothing of ours on the stack. Windows
+job now builds without OCCT, with a comment pointing at the PR. macOS
+Intel cancels at 90 minutes during Homebrew installs, same as upstream.
+Linux fully green (24.04 with OCCT 7.6, metrics gated to >= 7.8).
+Diagnostic lessons: a crash discards buffered stdout on a pipe, so
+per-process exit codes or gdb, not verbose flags; children in a `while
+read` loop must get `< /dev/null`; the msys2 shell runs with `set -e`.
+
+---
+
+**User:** Have we made a successful local universal build? Universal failed on GitHub (as upstream). Anything else to test? What would convince a skeptical maintainer worried about doubling executable size?
+
+**Assistant:** Local universal build succeeded: `release-universal/OpenSCAD.app` is fat (x86_64 + arm64), 269 MB, dmg 112 MB on Desktop. GitHub's macOS failure is the Intel runner timing out in Homebrew installs, not our build. Size numbers: OCCT is 26 dylibs, 93 MB fat / 37 MB arm64 uncompressed, ~33.5 MB compressed; upstream 2026.09.18 universal dmg is 73.5 MB, ours 112 MB (+53%, not double). ~12 MB fat is visualization toolkits (TKV3d/TKService/TKHLR/TKMesh/TKVCAF) pulled transitively by TKXCAF. Remaining homework list: corpus run (CodeCAD ~2k ok files) for crash-free rate + volume parity vs mesh; startup time/memory delta; lazy-load or trimmed OCCT build; LibraryInfo dialog entry; RELEASE_NOTES entry; upstream design issue before PR; license note (LGPL 2.1 + exception); export timing vs STL.
+
+---
+
+**User:** Any possibility of lazy-loading the dylibs?
+
+**Assistant:** Measured launch first. Options: macOS `-lazy_library` is gone from ld-prime; Linux has nothing beyond dlopen; MSVC `/DELAYLOAD` doesn't exist under msys2/GCC. Portable answer is an in-tree plugin (`libopenscad-step`) dlopen'd on first STEP export; the code is already isolated behind `OcctBridge` and two entry points. Recommended offering it only if maintainers object to the size.
+
+**User:** Put together a repeatable demonstration test set outside the committed tests that measures each objection, so a small markdown doc can show results.
+
+**Assistant:** Wrote `scratch/openscad-native/homework/` (homework.py + checks/size,launch,offbuild,corpus; README). Built `build-nocct` control (ENABLE_OCCT=OFF, same flags) and rebuilt the stale `build-release`. Findings recorded in the plan doc: launch +35 ms/+8 MB (so my earlier "negligible" claim was wrong in absolute terms), dmg +53%, OFF build clean, 49/50 corpus ok with 11 fallbacks, parity median 0.0%/p90 0.3%, STEP 2.7x STL median. Surfaced three open items: `$fa`/`$fs`-driven low fragment counts are not treated as faceting (14% gap on servo_rotate_rod), 1.9% round-trip drift on a fallback solid, one gear model times out.
+
+---
+
+**User:** Run 500 models and do the $fa/$fs fix.
+
+**Assistant:** Added `CurveDiscretizer::explicitSegmentCount(r)` (explicit `$fn`, else non-default `$fa`/`$fs`/`$fe` → `getCircularSegmentCount`, else nullopt) and switched the builder's sphere/cylinder/circle faceting to it (cylinder uses max(r1,r2) like OpenSCAD). New Catch2 case and `facets_fineness.scad` regression input; 46/46 tests pass. Servo rod now 617.3 vs mesh 631.1 (rest is default-fineness holes). Committed df3ba01d4, pushed to fork. 500-model corpus run started with the fixed binary.
+
+---
+
+**User:** We're effectively doubling app start time. Plan for mitigating it, and the negatives?
+
+**Assistant:** Framing: 36→73 ms is CLI cold start; GUI launch is Qt-dominated, so a few percent there; batch CLI use is where it truly doubles. Plan A: static-link OCCT into the executable for the release builds (cost is per dyld image, not per byte) — needs static OCCT in build_opencascade; Homebrew/distros gain nothing; small download savings; big single binary. Plan B: dlopen'd `openscad-step` module with versioned C entry point and loader; negatives: Windows exe→DLL symbol export is the hard part, ENABLE_EXPORTS slows binding, C++ ABI across the boundary requires same-build guard, runtime failure surface, no upstream precedent. Recommend measuring Plan A first.
+
+**Assistant (500-model results):** STL 488 ok / STEP 493 ok, 0 crashes, 3 timeouts, 92 fallbacks, parity median 0.0% p90 0.7%, 11 beyond 2%; STEP 2.2x STL median. Two "outliers" were inverted STL meshes (harness now uses |volume| and reports them). Real open items recorded in the plan: 39 models with unjoined unions inflating volume, three silent 10–20% undercounts, four "no geometry" errors, three timeouts.
+
+---
+
+**User:** Characterize the unjoined-union problem. Resolved in scad123d or outstanding there too?
+
+**Assistant:** Corrected my attribution: the 29 models that warned about unjoined unions all have parity ≤1.3% (their failed fuses are touching/near-coincident operands, so the unjoined compound costs almost nothing in volume), and solid123d has the identical fallback (`fuse_bodies` → `assemble(bodies)` with the same warning, plus a `bodies_overlap` detector the port replaced with a volume-bounds check). Outstanding in both, same shape. The big outlier pop_can_hold (2x) was something else: the cube cut returned both halves silently. Bisected with BREP dumps: the pre-cut solid carried a vertex with tolerance 45.8 mm, inflated by ShapeUpgrade_UnifySameDomain merging two sphere faces after the sphere scoop; native's volume guard rejected that unify result but unify had already mutated the shared input vertex. solid123d's guarded clean() runs on a copy (occt_workarounds.py) — the port dropped the copy. Fix: unify on BRepBuilderAPI_Copy + tolerance-growth guard; Catch2 test (box scooped by sphere, then halved) + `unify_scoop.scad` regression; 48/48 pass; pop_can_hold 102.5% → 0.1%. Commit pushed; 500-model run restarted.
+
+**User:** Paths to the unexplained files?
+
+**Assistant:** Listed the codecad dataset paths for screw_thread (15013_0), Hand_FingerControlMK6 (1580796_0), plant-pot-wall-mount (0868816_0), plus the smaller ones: screw_bit (132966_0), bacteriophagering (163839_0), dome (1564428_0), airvent (11277916_0); details in homework/results.json.
+
+**Assistant (500-model rerun, f589c4bfc):** STL 489 / STEP 493 ok, 0 crashes, 3 timeouts, 92 fallbacks, parity median 0.0% p90 0.7%, 10 beyond 2% (pop_can_hold gone), round-trip drift max 1.8%, STEP 2.2x STL median. Plan doc and memory updated.
+
+---
+
+**User:** Subjective take? "Mostly works, sometimes doesn't" isn't convincing. A better story?
+
+**Assistant:** Story is weaker than the result because: parity vs faceted mesh is the wrong yardstick (exactness reads as error); kernel failures, by-design fallbacks and not-ours disagreements share one bucket; seven silent disagreements exist. Better story = a guarantee: "every STEP is at least as accurate as the STL, checked per export". Plan: (1) self-check at export comparing B-rep volume to the mesh render, fall back to mesh on disagreement; (2) time budget + no-geometry → mesh so STEP never fails where STL succeeds; (3) fidelity tiers exact/mixed/meshed by count and volume; (4) closed-form and convergence tests for the exact tier; (5) settle the seven outliers against converged renders first.
+
+---
+
+**User:** STL export silently fails without an F6 render. Does STEP need a CGAL build first?
+
+**Assistant:** No: STEP export follows the CSG-export path and needs only the evaluated node tree from a preview (F5); it builds its own B-rep and runs the geometry evaluator itself for fallback subtrees. With no compile it logs "Nothing to export. Please try compiling first." Caveats: runs on the GUI thread under the GUI lock (no progress/cancel, known open item), exports the last compiled tree.
+
+---
+
+**User:** Did the 7 files fail to build STEP without warning?
+
+**Assistant:** No: they built, exited 0, no warning; their STEP volume differs from the mesh by 3.6–20.6% and we don't yet know which side is right (exact vs coarse mesh; silent wrong boolean; Manifold/CGAL disagreement). Converged high-$fn render is the first step to sort them.
+
+**User:** Show the paths to the seven.
+
+**Assistant:** Table of the seven codecad dataset paths with direction/size of the STEP-vs-mesh difference; exports in homework/work/corpus/<id>.{step,stl,json}.
+
+---
+
+**User:** Careful — that sounds like a bug where the cure can be worse than the disease. Tell me when changes apply and why they beat leaving the bug be. / Please proceed, then explain the changes. / Are you satisfied we have solutions for each of the 7? Is there a canonical upstream test suite? / Describe "splitting closed faces before writing".
+
+**Assistant:** Corpus A/B proved the caution right. Aggressive version (unverified fuse OR cut -> mesh): 3 repaired, 2 timeouts resolved, but 5 models worsened to 50-76% error, 2 new timeouts, fallbacks 92->112, total time 893->1730s. Refined to fall back only on unverified cut/intersection (an unjoined union is materially correct): worsened 0, fallbacks 92->95, 3 repairs hold, 1 timeout resolved; 2 models still time out. Profiled switch_stand: the time is entirely BRepBuilderAPI_Sewing::FindCandidates inside meshFallback, not in the new checks — the fallback's sewing is slow on large meshes.
+
+Seven outliers settled by a convergence test (recompute STEP and mesh at rising $fn): plant-pot FIXED, Hand FIXED, screw_thread caught->mesh, screw_bit/dome/airvent/servo_rotate_rod correct by design (converge to ~100%), bacteriophagering was a real file-level loss: a seam-carrying face did not survive the STEP round trip (30.74 -> 14.01). Fixed with OcctBoolean::splitClosedFaces (ShapeUpgrade_ShapeDivideClosed, 1 split point) applied per solid in writeStep, guarded at 0.5% extent. Verified geometrically lossless: sampled the split ellipsoid against its exact equation, deviation 8.9e-16 both before and after; volume measurement moves 0.2% on rational surfaces only (quadrature artifact), 0.0000% on sphere/cylinder/cone/torus.
+
+Upstream suite: 2812 ctest tests, 1801 expected files; render/preview/throwntogether PNG comparisons dominate; driven by tests/test_cmdline_tool.py with comparators by suffix (compare_json is exact equality); declared via add_cmdline_test/add_output_file_test/add_failing_test; CI runs ctest on all three platforms plus an examples pass and coverage on Linux. Ours: 41 step-metrics inputs + 12 Catch2 [occt] cases, same macros, same ctest.
+
+---
+
+**User:** Commit what you've got, run the 20 minute corpus, and we'll return to the others. Should the screw thread end up as a mesh — is there an analytic polyhedron that would be better? / Can CI run locally? Is there a local ctest process?
+
+**Assistant:** Committed ab1114cf4 (formatter-clean, 58 tests pass) and pushed. Corpus with the classifier fix: 3 repaired, 1 timeout resolved, 0 worsened, 2 timeouts remain, fallbacks 92->95, total export 893->1107s (was 1789s before the fix; model.scad 109s->14s). Screw thread: a polyhedron would be worse — the model is already all tori and planes; the loss is OCCT's cut failing on the fused coil. Distributing the difference over the union (algebraic identity) exports analytically with no fallback, 2685.9 vs faceted 2631.0, and faster. Local CI: ctest is the same runner CI uses (2812 tests); scripts/github-ci.sh reproduces the Linux job; scripts/beautify.sh --check is the Beautify job (our files clean); scripts/run-clang-tidy-cached.cc is code-tidy.
+
+---
+
+**User:** So, the screw thread is analytic, or a mesh? / and the proposed distribute-cut-over-union retry rung -- it / it's saying that a big set of unioned geometry might fail, so in that case try individual members?
+
+**Assistant:** Screw thread exports as a mesh: 4621 planar faces, 8 cylindrical (radius 12.5 = the central shaft), zero toroidal. The coil is entirely faceted; only the shaft stays analytic. Confirmed the rung's concept (difference distributes over union, so cut members individually when the fused cut fails) but CORRECTED my evidence: it worked on the reduced 3-turn coil (analytic, no fallback, faster) and does NOT work on the real 5-turn file -- the unions themselves then fail ("union came back damaged"), it still ends as a mesh (4843 planes, no tori), and it is 34.3s vs 18.8s. So the rung is not a proven fix for screw_thread; no corpus-scale evidence for it yet.
+
+---
+
+**User:** Implement never-fail-where-STL-succeeds and verify at export time, then a design document for upstream. / Where does step-export.md live?
+
+**Assistant:** Committed 16101bda3 (read-back verification + optional wall-clock budget via an OCCT progress indicator; mesh fallback exempt so the budget degrades rather than fails) and 807f2902c (doc/step-export.md, 219 lines). The four "no geometry" models are not ours — OpenSCAD's own render fails on them. Budget converts one timeout (gear: >180s -> 44s at budget 10); two remain, both sewing-bound. Corrected an earlier claim: my "budget can't interrupt" tests never ran because `timeout` is not installed here. Verification cost measured: corpus total 1179 -> 1344s (+14%), median +14%, up to +26s on large files, nothing else changed; doc updated with that number. File lives at /Users/jonese/Dropbox/Projects/openscad/doc/step-export.md (links resolve against scad123d, hence the dead link).
+
+---
+
+**User:** Fix the mesh stitching slowdown. / Does STEP support instancing? airpot has hundreds of identical shapes. / What would instancing take, would it save time/space, is it possible with our tree? / Where do we stand; is the corpus ours or OpenSCAD's? / Walk me through integrated vs separate-executable linking options.
+
+**Assistant:** Stitching (7a4adfc12): shells built directly from the mesh's index topology (sewing only as fallback) — switch_stand >180s -> 0.5s; subtree cache keyed on tree id string + inherited color — airpot (810 copies of one vent) never finished -> 31s, fallbacks 810 -> 1; bbox pre-filter + 512-test ceiling on containment checks. Corpus: 2 timeouts fixed, 0 worsened, total time -23%. qubit still unbounded (single OCCT boolean, IntersectShapes ignores UserBreak). braille_generator segfaults ~1/8 in CGAL Nef_3 with and without the cache, and in STL export too — pre-existing upstream flake.
+Instancing: possible (cache + Copy=false transforms -> shared TShapes -> XDE writes occurrences), but measured no gain: airpot's output is ONE 7438-face solid (vents fuse into the pot), Copy=false gave 31.1->32.7s, 28.8->29.5MB, 0 occurrences, and perturbed the hand's volume in the 7th digit; reverted. Corpus = CodeCAD (public dataset, 76,048 models, not ours, not OpenSCAD's); 6 saved snapshots comparable via compare_runs.py. Linking explainer: A (dynamic, current, matches upstream's other optional deps), B (static, kills launch cost, needs self-built OCCT), C (dlopen module, Windows symbol-export problem + ABI guard), D (separate exe — can't do fallbacks without becoming a second OpenSCAD).
+
+---
+
+**User:** Investigate qubit.scad — CGAL compiles it quickly; what makes it hard for STEP? / Shouldn't we ignore $fn above the threshold?
+
+**Assistant:** Cause: $fn=180 + hulls with no closed form -> mesh fallbacks at 17k-33k triangles -> OCCT boolean superlinear (5.5 s at 60, timeout at 180); the exact tier already ignores $fn, the fallback does not. Manifold::Simplify rejected (worse on both axes than rendering coarser). Added OcctHull::hullOfTessellation (hull of BRepMesh'd copies of the exact children at 60 segments), gated: only when OpenSCAD's own render exceeds 10k triangles, because ungated it made rack.13 (no $fn) 10x denser and a timeout. qubit never finished -> 73 s at 0.0% parity; regressed models restored. Unit test found BRepMesh won't re-mesh an already-meshed shape (fixed by meshing a copy). Manifold hull face counts are nondeterministic, so no metrics regression input; Catch2 test instead. Corpus validation running; docs updated.
+
+**User:** Describe the meshing rung, its budget, algorithm, trigger. / What tests verify it?
+
+**Assistant:** Described: closed forms -> render at model $fn -> if <= 10k triangles use render (matches STL) else BRepMesh copies of exact children at 2π/60 angular + 1e-3·diag linear, sort/dedupe nodes, Manifold quickhull, indexed shell build, coplanar merge; reported as fallback naming the triangle count. Tests: one Catch2 case (4 assertions on volume properties; the 180>60 assertion caught the re-mesh bug); the gate itself has no in-tree test because Manifold hull face counts are nondeterministic; options: sequential ExecutionContext, or a bridge helper to build trees in Catch2. Corpus for gated rung: qubit n/a -> 84.7s 0.0%, 0 worsened, 0 broke, 499 unchanged. Fixed the double render on the failure path; committed and pushed.
+
+**User:** Must tests use JSON string equality? Could we compare the dependable volume and ignore the triangulation?
+
+**Assistant:** No. Added `compare_stepmetrics` to upstream's test_cmdline_tool.py (dispatched by the new `.stepmetrics` suffix, as the harness already does per suffix): every number to 1e-9 relative, `faces` to 1%. Verified it fails on a 0.1% volume nudge and on one lost face of a 24-face model, and passes five faces off a 7,615-face hull. Renamed 41 expected files, restored hull_tessellated.scad as a regression input (3 spheres at $fn=180 -> tessellated rung). 42/42 pass three runs running. Committed and pushed.
+
+**User:** Corpus completion time now vs earlier runs (don't rerun)? / What do we get for the export-time verification?
+
+**Assistant:** Table of 8 saved runs: baseline 915 s / median 0.202 -> now 1195 s / 0.250 (+30% total, +24% median, p90 unchanged); verify ~+165 s, invariants net ~+100 s, stitching -280 s, hull rung neutral once qubit counts as a success. Remaining failures: 1 timeout (servo gear, OCCT boolean ignores cancel), 4 no-geometry models STL also fails, 1 CGAL flake. Verification: flags 2/495, one at 55% — Ergotron_post_lamp_adapter had read back 55% too large since the seam split (ab1114cf4), unnoticed because compare_runs ignored round trip. Cause: seam split breaks an ellipsoid trimmed at its equator by an equal-radius ring. Fix (5385acdf0): writeVerified writes split, reads back, rewrites unsplit on failure, keeps the faithful one; metrics share it; compare_runs reports round-trip drift; seam_kept.scad regression input added. 61 tests pass.
+
+**User:** Write a succinct PR statement: changes, engineering choices, alternatives; breadth over depth; mention startup time and the dlopen option not taken.
+
+**Assistant:** Wrote docs/openscad-step-pr-statement.md (~750 words): what it does; choices with alternatives (dependency/startup incl. static link and on-demand module, faceting, color, kernel trust with the measured union/cut policy, read-back check with recovery, time budget, fallback fineness); testing; platforms and limits; four questions for maintainers.
+
+**User:** Where have we come down on color in STEP? Selecting all areas of a color works; does that break or preclude other grouping?
+
+**Assistant:** color follows the preview (outermost wins; geometry never depends on color; later colored operand claims contested material; cutters never paint; localized uncolored merge on failure). In the file, color is carried twice: per-body STYLED_ITEM/color_RGB (what any CAD's select-by-color uses) and the assembly tree (root -> one sub-assembly per color named by hex -> bodies). The tree is therefore spent on color: no structural grouping at top level without nesting; layers are NOT written (docs said they were — corrected, 83a829299). Options if structural grouping is wanted: nest, move color to layers (few consumers honor), or rely on per-body color alone.
+
+**User:** Spending the whole assembly hierarchy on color is bad taste, but works better than the alternatives. Opinion?
+
+**Assistant:** Agree on both; keep it. Empirical reasons: the tree is the only grouping every consumer honors (layers ignored by FreeCAD/Fusion/slicers), and structural hierarchy mostly doesn't survive booleans while color is the one intent-bearing attribute that does; uncolored models get a flat tree anyway. Recommendation: present it as a default, not architecture — a `group-by-color` setting, on by default, with a direct PR question. Don't add layers as a hedge.
+
+**User:** Build the group-by-color setting, on by default, and add the PR question.
+
+**Assistant:** Added `export-step/group-by-color` (SettingsEntryBool, default true) through writer (`writeStep`/`writeVerified` take it), CLI (-O), GUI (MainWindow + Preferences checkbox). Verified: dual_color occurrences 7 -> 4 with it off, styled items unchanged, read-back colors identical. New cmdline test `step-metrics-flat` (dual_color, colors with the flag off) sharing the tolerant comparator; 63 tests pass. Design doc color section explains the trade and the setting; question 5 added there and in the PR statement. Committed and pushed.
+
+**User:** Is it correct to call the meshing triangle budget "10k by default"?
+
+**Assistant:** The number is right, "by default" is not: HULL_MESH_BUDGET (10,000) and HULL_FALLBACK_SEGMENTS (60) are constexpr constants, not settings. What's counted: triangles of OpenSCAD's own render of that hull node (tessellated), summed over that node's meshes; comparison is at-or-under. Docs already say "at most 10,000" without claiming adjustability. Left as constants on purpose; could become settings in the facet-threshold pattern if wanted.
+
+**User:** Are we really not building for Windows? Crucial; wouldn't submit without it.
+
+**Assistant:** Agreed it is a blocker, not a status. Facts gathered: msys2 job is test-only; shipped Windows binary is MXE (openscad/mxe, gcc11, static.posix); msys2 opencascade 7.9.3-3 (GCC 16, rebuilt after the TLS switch) segfaults in Extrema_ExtCC via SolidClassifier; msys2 also ships a CLANG64 opencascade; MXE has no opencascade package. Launched CI experiment (branch ci/windows-occt-toolchains, run 36165289679): OCCT on under UCRT64 and CLANG64. PR statement now says Windows is unresolved and blocks the PR; plan has a Windows section.
+
+**Assistant (Windows, continued):** Two-toolchain msys2 experiment: UCRT64/GCC16 with OCCT builds, 31/2743 tests fail, all ours, by SEGFAULT (crash confirmed, consistent); CLANG64 cannot build OpenSCAD itself (boost source_location under clang) — not a usable discriminator. Forked openscad/mxe -> etjones/mxe with src/opencascade.mk (7.9.3 static, DE/XCAF on, Draw/Tk/TBB/OpenGL/X11 off); MXE build running (run 36165690027). Added scripts/ci/occt-probe.cpp (sphere classify + sphere∪box) and occt-probe.yml: probe vs msys2 package, and vs OCCT built from source with GCC 16 at -O2 and -O1, to separate compiler from package.
+
+**User:** I have an old Windows box I could dig up — helpful?
+
+**Assistant:** Yes: (1) a symbolised gdb backtrace of the probe against a -g OCCT build, which CI can't give; (2) running the MXE-built binary, which MXE can't test on Linux. Needs 64-bit Win10/11, ~30 GB, a few cores, ideally OpenSSH reachable from the Mac so I can drive it. Wait for the probe results (1-2 h) before rushing it.
+
+**Assistant (Windows, continued):** First probe run failed to compile (M_PI under strict -std=c++17 on MinGW); OCCT from-source builds themselves succeeded in ~20 min each. Fixed flags (-std=gnu++17 -D_USE_MATH_DEFINES), scoped both experiment workflows to their own files, cancelled duplicate MXE runs; probe rerun 36172937082 and MXE run 36165690027 in progress.
+
+**Assistant (Windows, continued):** MXE build of OpenCASCADE 7.9.3 (static, GCC 11, x86_64-w64-mingw32.static.posix) SUCCEEDED in run 36165690027 (~87 min incl. building MXE's gcc). Extended mxe-occt.yml: cache mxe/usr+pkg, cross-compile the probe against the static libs, upload probe-mxe.exe, run it on a windows-latest job. This tests the shipped-binary toolchain directly.
+
+**Assistant (Windows, continued):** Probe v1 (sphere classify + sphere∪box) PASSES against the msys2 package and against GCC 16 source builds at -O2 and -O1 — so it does not reproduce the crash; the trigger is more specific. Candidates checked: quietOcct only lowers printer trace levels; OpenSCAD compiles with -frounding-math and links with --stack 8388608; the failing unit test classifies a point against a *boolean result* (box − sphere), whose intersection edges are what the classifier's ray-vs-edge Extrema_ExtCC chokes on. Probe v2 replicates OcctBoolean::cut exactly (N-ary cut, RunParallel off, unify on a copy, classify centroid of the result; plus fuse then cut) with -frounding-math and the stack flag; runs 36175750895 (msys2 x3) and 36175750892 (MXE + Windows) in progress.
+
+**Assistant (Windows, decisive result):** Probe v2 (exact cut-then-classify sequence): OCCT 7.9.3 built from source with msys2's GCC 16 at -O2 and -O1 → PROBE COMPLETE/OK; msys2 package 7.9.3-3 → Segmentation fault (exit 139) at the first classification against a boolean result — the OpenSCAD crash site. Compiler exonerated; package build at fault. Package differs: USE_TBB=ON (tbb12 + tbbmalloc), D3D, OpenVR, RapidJSON. Launched: probe v3 (package under MMGT_OPT=0/1/2 + source variant with USE_TBB=ON) run 36178876586; real Windows job with OpenCASCADE built from source (cached, USE_TBB=OFF) and ENABLE_OCCT=ON, full suite, run 36178875674; MXE v2 + Windows execution 36175750892 still running.
+
+**Assistant (Windows, continued):** Probe v3: the msys2 package segfaults under every allocator setting (default, MMGT_OPT=0/1/2) — not the runtime allocator. TBB-on source variant didn't configure (OCCT's tbb.cmake needs 3RDPARTY_TBB_* paths); rerunning with explicit paths, other variants dropped as settled.
+
+**Assistant (Windows, continued):** MXE OCCT build succeeded again (cache warm), but the static link of the probe failed on link order (TKTopAlgo/TKGeomAlgo symbols needed by earlier archives); fixed with -Wl,--start-group/--end-group; rerun 36182053535. Still pending: real Windows job (OCCT from source + full suite) 36178875674; TBB-on probe 36181502981.
+
+**Assistant (Windows, continued):** Probe v4: OCCT from source with GCC 16, -O2, USE_TBB=ON (msys2's tbb) → PROBE OK. So TBB is not it either. Every option from the package recipe works when built by us; only their binary fails. Remaining suspects: msys2's makepkg CXXFLAGS/LDFLAGS (notably --high-entropy-va/--default-image-base-high, _FORTIFY_SOURCE, stack-protector) and the package's patches. Fetching the flags for a probe v5 matrix.
+
+**Assistant (Windows, continued):** msys2 makepkg flags: CFLAGS/CXXFLAGS "-march=nocona -msahf -mtune=generic -O2 -pipe -Wp,-D_FORTIFY_SOURCE=2 -fstack-protector-strong -Wp,-D__USE_MINGW_ANSI_STDIO=1", LDFLAGS empty. Package patches include 0009-SSE2-detection-gcc.patch and 0014-aarch64-mm_alloc.patch (aligned-allocation/SSE2 related — suspicious for a segfault in vector math). Probe v5 (run 36184433599): source builds with full flags / arch-only flags / patches-only.
+
+**Assistant (Windows, continued):** Real Windows job 36178875674: qt5 job failed in msys2's own setup step (cmd.exe exit 1 during package install — infrastructure, nothing of ours ran); qt6 got past setup and is building OpenSCAD against the from-source OCCT. Will re-run qt5 when the run completes. Probe v5 (flags/patches) and MXE v3 (grouped link + Windows execution) still running.
+
+**Assistant (Windows, continued):** Probe v5: msys2's full makepkg flags (nocona/fortify/stack-protector) → PROBE OK; arch-only → OK. Flags exonerated. Patches-only variant failed because `patch` wasn't installed in the msys2 job; fixed (install: patch), rerun 36187326254. Only the package's own patches (incl. 0009-SSE2-detection-gcc, 0014-aarch64-mm_alloc) and its extra modules/options remain as suspects.
+
+**Assistant (Windows, turning point):** Real Windows job with OCCT built FROM SOURCE: qt6 still fails 32/2743, the same OCCT tests by SEGFAULT. So the msys2 package defect (real, probe-exposed) is NOT what crashes OpenSCAD; OpenSCAD's process has its own trigger. Probe v7 (run above): one binary driven by env vars — rounding mode up/down/zero (SSE) and x87 control word (CGAL-style), LoadLibrary of gmp/mpfr, tbb, Qt6Core/Gui, boost, and an -O3 build — against the cached source OCCT. qt5 job failed in msys2 package download (infra).
+
+**Assistant (Windows, continued):** Lead: OpenSCAD uses mimalloc (USE_MIMALLOC default ON; on Windows via mimalloc.dll + mimalloc-redirect.dll dynamic override; GMP redirected to mi_malloc). A replacement allocator that only partly reaches other modules on Windows would explain a heap-corruption segfault in allocation-heavy Extrema code that a bare probe never sees. Launched the Windows job with -DUSE_MIMALLOC=OFF (qt6, cached source OCCT).
+
+**Assistant (Windows, continued):** On msys2, OpenSCAD's CMake finds the msys2 mimalloc package (shared, MI_LINK_SHARED) rather than the submodule; mimalloc's Windows override patches CRT allocation entry points process-wide via mimalloc-redirect.dll. Hypothesis: OCCT's aligned allocations (used by math code) take a path the redirect covers on one side only → heap corruption → segfault in Extrema; explains crash only inside OpenSCAD, even with a good OCCT, and not on Unix where interposition is complete. Windows job with USE_MIMALLOC=OFF running (36187875036).
+
+## 2026-09-25 — Windows crash hunt, continued
+
+**Assistant:** Probe with all msys2 patches applied passes, so the package
+crash is not caused by its patches (nor, from earlier runs, by its compiler
+flags); cause still unknown, source build is the fix. Found why the probe
+jobs could not restore the cached OpenCASCADE: `actions/cache` only saves on
+a green job and every Windows run has failed its tests, so no cache was ever
+written. Split the cache into restore + early save on
+`ci/windows-occt-toolchains`, added a gdb backtrace step for crashing unit
+tests, dispatched a fresh Windows run (36189550738). Waiting on the
+mimalloc=OFF run (36187875036) and the MXE build.
+
+**Assistant:** MXE milestone: OpenCASCADE 7.9.3 built statically under
+openscad/mxe (GCC 11.5, x86_64-w64-mingw32.static.posix), the cross-compiled
+probe runs clean on windows-latest (cut, unify, fuse, classify all correct).
+The shipped-binary toolchain is therefore viable. Re-keyed the MXE cache on
+the recipe. Still waiting on the mimalloc=OFF msys2 job.
+
+**Assistant:** mimalloc ruled out: the Windows job with USE_MIMALLOC=OFF
+fails the identical 32 tests (openscad.exe exits 0xC0000005 on the first
+boolean model). New lead: the probe, run against the OpenCASCADE built by
+the Windows job (all modules, FreeType on), crashes even in its control
+condition, while the same sources built modelling-only in the probe job pass.
+Launched a four-way module-set experiment (run 36196532062); a gdb backtrace
+step waits on the fresh Windows run.
+
+**Assistant:** gdb backtrace from the Windows unit tests: SIGSEGV at a
+virtual call inside `Extrema_ExtCC::Perform` (libTKGeomBase.dll), reached
+from `BRepClass3d_SClassifier::Perform` via `OcctBoolean::interiorPoints`.
+Both frames are inside OpenCASCADE DLLs, and the standalone probe crashes
+against the same build, so OpenSCAD's own flags are not involved.
+Re-examined the builds: every build that passed was given -O2/-O1
+explicitly; the Windows job and the msys2 package (CMAKE_BUILD_TYPE=Release
+appended after makepkg's -O2) both compile at CMake's default -O3. Launched
+an -O3 vs -O2 probe (run 36198996262); cancelled the module-set run.
+
+**Assistant:** Windows crash root cause found: GCC 16.2 at -O3 (CMake's
+Release default) breaks OpenCASCADE 7.9.3's Extrema/BRepClass3d path;
+modelling-only at -O3 segfaults, all modules at -O2 pass. The msys2 package
+inherits -O3. Windows CI now builds OpenCASCADE at -O2 (dispatched);
+launched a probe over -O3 sub-passes to name the responsible optimization.
+
+**Assistant:** Sub-pass probe: -O3 -fno-ipa-cp-clone passes; -O3 minus
+vectorization or minus inline-functions still crashes; -O2 plus
+ipa-cp-clone/vectorize/peel crashes. GCC's interprocedural constant
+propagation cloning (-fipa-cp-clone, enabled at -O3) is the trigger.
+Launched a single-flag confirmation (-O2 -fipa-cp-clone, run 36204365015).
+
+**Assistant:** Confirmed: `-O2 -fipa-cp-clone` alone crashes the probe.
+Updated the PR statement, the upstream design doc and the plan doc with the
+Windows resolution; saved a memory note. Waiting on the -O2 Windows CI run.
+
+**User:** Set up a Windows 10 machine (palouse.local) as a secondary dev
+box; commit and push all step-export changes and documentation to the fork.
+
+**Assistant:** openscad: ported the Windows CI fix (OpenCASCADE from source
+at -O2, early cache save, gdb backtrace step), the probe and MXE workflows
+and the design-doc Windows section into `feature/step-export`, pushed to
+`fork` (etjones/openscad) as 17800fcc4. scad123d: committed the PR
+statement, plan and conversation log to `feature/csg-input`. Reverted a
+stray edit in tests/test_build.py that had renamed the STEP entity
+DRAUGHTING_PRE_DEFINED_COLOUR to "...color" (the entity is spelled COLOUR).
+
+**Assistant:** Windows CI with OpenCASCADE at -O2: 32 failures -> 1. All 13
+OpenCASCADE unit tests pass; the one remaining step-metrics failure is
+`seam_split`'s built bbox z-extent (4.9913 on macOS vs 5.0 on Windows,
+volumes identical). Held bounding boxes to 1% in `compare_stepmetrics`,
+pushed to `feature/step-export`.
+
+**Assistant:** feature/step-export Windows CI: 2743/2743 passed. Restored
+upstream's qt5/qt6 matrix and default allocator in windows.yml (pushed);
+PR statement and plan updated.
+
+**Assistant:** Restored qt5/qt6 Windows matrix on feature/step-export: both
+jobs green, 2743/2743 each (run 36215604524).
