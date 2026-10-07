@@ -4,7 +4,7 @@ Release notes for scad123d and the bundled solid123d. Newest first. Each
 entry says what changed and, where it matters, what to do about it. The
 **Breaking** list is the one to read when an upgrade stops working.
 
-## 0.9.0 (unreleased)
+## 0.9.0 (2026-10-07)
 
 ### Breaking
 

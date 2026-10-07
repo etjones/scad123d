@@ -2446,3 +2446,9 @@ with a **Breaking** list at the top of each release. Linked from the
 README and from the package's PyPI `Changelog` URL. The 0.9.0 entry is
 written; 0.8.0 is backfilled from the PRs since the 0.7.0 tag. Earlier
 releases point at their tags.
+
+## Release 0.9.0 (2026-10-07)
+
+Version bumped to 0.9.0 and the changelog entry dated; tagged `v0.9.0`,
+published to PyPI with `just publish`, and a GitHub release created
+from the changelog section.
