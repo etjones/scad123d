@@ -2436,3 +2436,13 @@ What OCP 8 renamed, and what we changed:
 Upstream's PR #1442 lists four change groups; the other two
 (`NCollection_Utf8String` -> `NCollection_String`, `BoundBox.Get()`)
 touch nothing we use. 746 passed, 4 skipped.
+
+## Release notes (2026-10-07)
+
+Reading build123d's release notes and its OCP 8 port PR is what made
+the kernel upgrade tractable, so scad123d now keeps the same courtesy:
+`CHANGELOG.md` at the repo root, newest first, a sentence per change,
+with a **Breaking** list at the top of each release. Linked from the
+README and from the package's PyPI `Changelog` URL. The 0.9.0 entry is
+written; 0.8.0 is backfilled from the PRs since the 0.7.0 tag. Earlier
+releases point at their tags.

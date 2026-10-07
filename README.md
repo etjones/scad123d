@@ -458,8 +458,10 @@ just fixtures  # regenerate committed .csg fixtures + reference metrics
 
 See [docs/REFERENCE.md](https://github.com/etjones/scad123d/blob/main/docs/REFERENCE.md)
 for exactly how the import works and the precise behavior of every option,
-and [ROADMAP.md](https://github.com/etjones/scad123d/blob/main/ROADMAP.md)
-for what's planned next.
+[ROADMAP.md](https://github.com/etjones/scad123d/blob/main/ROADMAP.md)
+for what's planned next, and
+[CHANGELOG.md](https://github.com/etjones/scad123d/blob/main/CHANGELOG.md)
+for what changed in each release, breaking changes first.
 
 ## License
 

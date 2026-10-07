@@ -26,6 +26,7 @@ dependencies = [
 Homepage = "https://github.com/etjones/scad123d"
 Repository = "https://github.com/etjones/scad123d"
 Issues = "https://github.com/etjones/scad123d/issues"
+Changelog = "https://github.com/etjones/scad123d/blob/main/CHANGELOG.md"
 
 [project.scripts]
 scad2step = "scad123d.cli:main"
