@@ -419,7 +419,7 @@ def bodies_overlap(result: Shape) -> bool:
     points: dict[int, list[Vector]] = {}
     for i, piece in enumerate(pieces):
         for j in range(len(pieces)):
-            if i == j or not boxes[i].overlaps(boxes[j]):
+            if i == j or not boxes[i].intersects(boxes[j]):
                 continue
             if i not in points:
                 points[i] = _interior_points(piece)

@@ -1050,7 +1050,7 @@ def _fan_solid(hull_pts: list[Point2], chain: list[tuple]) -> Shape | None:
     exp = TopExp_Explorer(sew.SewedShape(), TopAbs_SHELL)
     if not exp.More():
         return None
-    solid = BRepBuilderAPI_MakeSolid(TopoDS.Shell_s(exp.Current())).Solid()
+    solid = BRepBuilderAPI_MakeSolid(TopoDS.Shell(exp.Current())).Solid()
     fix = ShapeFix_Solid(solid)
     fix.Perform()
     return Compound.cast(fix.Solid())

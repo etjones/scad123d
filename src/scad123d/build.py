@@ -13,9 +13,11 @@ import warnings
 from dataclasses import dataclass, field
 
 from build123d import Shape
+from OCP.collections import (
+    IndexedDataMap_TopoDS_Shape_List_TopoDS_Shape_TopTools_ShapeMapHasher,
+)
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCP.TopExp import TopExp
-from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape
 
 import solid123d as s1
 from solid123d import polyhedron
@@ -188,7 +190,7 @@ def _free_edges(shape: Shape) -> int:
     already sewn coincident vertices together -- an index-level duplicate
     corner is not a free edge.
     """
-    ancestors = TopTools_IndexedDataMapOfShapeListOfShape()
+    ancestors = IndexedDataMap_TopoDS_Shape_List_TopoDS_Shape_TopTools_ShapeMapHasher()
     TopExp.MapShapesAndAncestors_s(shape.wrapped, TopAbs_EDGE, TopAbs_FACE, ancestors)
     return sum(
         1

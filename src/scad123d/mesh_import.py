@@ -155,7 +155,7 @@ def _shells_topologically(
                 vertices[key[0]], vertices[key[1]]
             ).Edge()
         e = edges[key]
-        return e if (a, b) == key else TopoDS.Edge_s(e.Reversed())
+        return e if (a, b) == key else TopoDS.Edge(e.Reversed())
 
     components: list[_Component] = []
     for members in _components(triangles):
@@ -196,10 +196,10 @@ def _shells_by_sewing(
     components: list[_Component] = []
     explorer = TopExp_Explorer(sewing.SewedShape(), TopAbs_ShapeEnum.TopAbs_SHELL)
     while explorer.More():
-        shell = TopoDS.Shell_s(explorer.Current())
+        shell = TopoDS.Shell(explorer.Current())
         volume = Solid(BRepBuilderAPI_MakeSolid(shell).Solid()).volume
         if volume < 0:
-            shell = TopoDS.Shell_s(shell.Reversed())
+            shell = TopoDS.Shell(shell.Reversed())
             volume = -volume
         probe = Shell(shell).faces()[0].center()
         components.append(_Component(shell, volume, (probe.X, probe.Y, probe.Z)))
@@ -261,7 +261,7 @@ def _assemble(components: list[_Component]) -> tuple[Shape, float]:
         maker = BRepBuilderAPI_MakeSolid(comp.shell)
         for j, other in enumerate(components):
             if parent[j] == i:
-                maker.Add(TopoDS.Shell_s(other.shell.Reversed()))
+                maker.Add(TopoDS.Shell(other.shell.Reversed()))
         solids.append(Solid(maker.Solid()))
     shape: Shape = solids[0] if len(solids) == 1 else Compound(solids)
     return shape, expected

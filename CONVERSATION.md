@@ -2344,3 +2344,33 @@ of CPU without finishing. Before, it converted in seconds to 27,480 --
 fast, and 19x away from OpenSCAD's 1,438.69. Under the batch runner it
 becomes a `timeout` rather than a hang. Faithful and slow beat fast and
 wrong here, but it is a real trade and not a free one.
+
+## build123d 0.13 / OCCT 8 (2026-10-07)
+
+A fresh install of scad123d 0.8.0 died at `import scad123d` with
+`cannot import name 'TopTools_IndexedDataMapOfShapeListOfShape'`. The
+venv had resolved build123d 0.13.0, which moves the kernel to OCP 8.0.1
+(release notes: "otherwise identical to v0.12.0"). Evan chose to follow
+the break rather than tolerate both kernels: require build123d >= 0.13
+and write to the new API only.
+
+What OCP 8 renamed, and what we changed:
+
+- Typed collections now live in `OCP.collections` under generic names.
+  `TopTools_IndexedDataMapOfShapeListOfShape` is
+  `IndexedDataMap_TopoDS_Shape_List_TopoDS_Shape_TopTools_ShapeMapHasher`
+  (`build.py`), `TDF_LabelSequence` is `Sequence_TDF_Label` (test_export).
+- Downcasts lost their static suffix: `TopoDS.Edge_s(...)` is
+  `TopoDS.Edge(...)`. Six call sites in `mesh_import.py`, `solids.py`,
+  `hull.py`. This was the cause of 52 of the 53 failures; none of the
+  other `_s` statics we call changed.
+- build123d 0.12 (which we skipped) redefined `BoundBox.overlaps` to
+  exclude containment. `bodies_overlap` used it as a may-share-material
+  pre-filter, so a crescent inside the circle it was cut from was never
+  sampled. `intersects` is the inclusive test and restores the check.
+- build123d 0.13 requires Python >= 3.11, < 3.15; `requires-python` and
+  the CI matrix (3.10 -> 3.11) follow.
+
+Upstream's PR #1442 lists four change groups; the other two
+(`NCollection_Utf8String` -> `NCollection_String`, `BoundBox.Get()`)
+touch nothing we use. 746 passed, 4 skipped.
