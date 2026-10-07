@@ -7,12 +7,13 @@ from pathlib import Path
 import pytest
 from build123d import Solid
 from OCP.BRepGProp import BRepGProp
+from OCP.collections import Sequence_TDF_Label
 from OCP.GProp import GProp_GProps
 from OCP.Quantity import Quantity_ColorRGBA
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
-from OCP.TDF import TDF_Label, TDF_LabelSequence
+from OCP.TDF import TDF_Label
 from OCP.TDocStd import TDocStd_Document
 from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDoc import (
@@ -44,7 +45,7 @@ def _color_of(label: TDF_Label, shapes, colors) -> tuple | None:
     under a subshape label -- so look there too before giving up.
     """
     candidates = [label]
-    subs = TDF_LabelSequence()
+    subs = Sequence_TDF_Label()
     XCAFDoc_ShapeTool.GetSubShapes_s(label, subs)
     candidates += [subs.Value(i) for i in range(1, subs.Length() + 1)]
     color = Quantity_ColorRGBA()
@@ -92,7 +93,7 @@ def read_step(path: Path) -> list[tuple[tuple[str, ...], tuple | None, float]]:
             target = label
         names = (*names, _name(target))
         if XCAFDoc_ShapeTool.IsAssembly_s(target):
-            components = TDF_LabelSequence()
+            components = Sequence_TDF_Label()
             XCAFDoc_ShapeTool.GetComponents_s(target, components)
             for i in range(1, components.Length() + 1):
                 walk(components.Value(i), names)
@@ -100,7 +101,7 @@ def read_step(path: Path) -> list[tuple[tuple[str, ...], tuple | None, float]]:
         rgba = _color_of(target, shapes, colors)
         out.append((names, rgba, _volume(XCAFDoc_ShapeTool.GetShape_s(label))))
 
-    free = TDF_LabelSequence()
+    free = Sequence_TDF_Label()
     shapes.GetFreeShapes(free)
     for i in range(1, free.Length() + 1):
         walk(free.Value(i), ())

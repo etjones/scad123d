@@ -2406,3 +2406,43 @@ defaulting to `uvx scad2step` without bundling `uv` (stopgap; first run
 downloads ~200 MB). Fallback follows the user's `--backend`: Manifold is fast
 and rejects non-manifold input, CGAL is exact and slow, and the fallback's
 job is to reproduce whatever OpenSCAD would render.
+
+## build123d 0.13 / OCCT 8 (2026-10-07)
+
+A fresh install of scad123d 0.8.0 died at `import scad123d` with
+`cannot import name 'TopTools_IndexedDataMapOfShapeListOfShape'`. The
+venv had resolved build123d 0.13.0, which moves the kernel to OCP 8.0.1
+(release notes: "otherwise identical to v0.12.0"). Evan chose to follow
+the break rather than tolerate both kernels: require build123d >= 0.13
+and write to the new API only.
+
+What OCP 8 renamed, and what we changed:
+
+- Typed collections now live in `OCP.collections` under generic names.
+  `TopTools_IndexedDataMapOfShapeListOfShape` is
+  `IndexedDataMap_TopoDS_Shape_List_TopoDS_Shape_TopTools_ShapeMapHasher`
+  (`build.py`), `TDF_LabelSequence` is `Sequence_TDF_Label` (test_export).
+- Downcasts lost their static suffix: `TopoDS.Edge_s(...)` is
+  `TopoDS.Edge(...)`. Six call sites in `mesh_import.py`, `solids.py`,
+  `hull.py`. This was the cause of 52 of the 53 failures; none of the
+  other `_s` statics we call changed.
+- build123d 0.12 (which we skipped) redefined `BoundBox.overlaps` to
+  exclude containment. `bodies_overlap` used it as a may-share-material
+  pre-filter, so a crescent inside the circle it was cut from was never
+  sampled. `intersects` is the inclusive test and restores the check.
+- build123d 0.13 requires Python >= 3.11, < 3.15; `requires-python` and
+  the CI matrix (3.10 -> 3.11) follow.
+
+Upstream's PR #1442 lists four change groups; the other two
+(`NCollection_Utf8String` -> `NCollection_String`, `BoundBox.Get()`)
+touch nothing we use. 746 passed, 4 skipped.
+
+## Release notes (2026-10-07)
+
+Reading build123d's release notes and its OCP 8 port PR is what made
+the kernel upgrade tractable, so scad123d now keeps the same courtesy:
+`CHANGELOG.md` at the repo root, newest first, a sentence per change,
+with a **Breaking** list at the top of each release. Linked from the
+README and from the package's PyPI `Changelog` URL. The 0.9.0 entry is
+written; 0.8.0 is backfilled from the PRs since the 0.7.0 tag. Earlier
+releases point at their tags.

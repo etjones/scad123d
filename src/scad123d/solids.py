@@ -291,7 +291,7 @@ def _keeping(source: Shape, rebuilt: Shape) -> Shape:
 
 def _right_side_out(solid: Solid) -> Solid:
     shells = [
-        Shell([Face(TopoDS.Face_s(f.wrapped.Reversed())) for f in sh.faces()])
+        Shell([Face(TopoDS.Face(f.wrapped.Reversed())) for f in sh.faces()])
         for sh in solid.shells()
     ]
     outer = max(shells, key=lambda s: math.prod(s.bounding_box().size))
